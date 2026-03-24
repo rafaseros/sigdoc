@@ -18,7 +18,11 @@ class DocumentRepository(ABC):
         ...
 
     @abstractmethod
+    async def delete(self, document_id: UUID) -> None:
+        ...
+
+    @abstractmethod
     async def list_paginated(
-        self, page: int = 1, size: int = 20, template_id: UUID | None = None
+        self, page: int = 1, size: int = 20, template_id: UUID | None = None, created_by: UUID | None = None
     ) -> tuple[list[Document], int]:
         ...

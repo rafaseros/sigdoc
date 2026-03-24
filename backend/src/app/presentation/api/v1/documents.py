@@ -157,6 +157,19 @@ async def download_document(
     )
 
 
+@router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_document(
+    document_id: UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+    service: DocumentService = Depends(get_document_service),
+):
+    """Delete a generated document and its file."""
+    try:
+        await service.delete_document(document_id)
+    except DocumentNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Documento no encontrado")
+
+
 @router.get("", response_model=DocumentListResponse)
 async def list_documents(
     page: int = Query(1, ge=1),
@@ -166,7 +179,8 @@ async def list_documents(
     service: DocumentService = Depends(get_document_service),
 ):
     """List generated documents with pagination."""
-    documents, total = await service.list_documents(page=page, size=size, template_id=template_id)
+    created_by = None if current_user.role == "admin" else str(current_user.user_id)
+    documents, total = await service.list_documents(page=page, size=size, template_id=template_id, created_by=created_by)
 
     items = [
         DocumentResponse(

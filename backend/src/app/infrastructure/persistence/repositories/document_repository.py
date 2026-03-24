@@ -1,5 +1,6 @@
 from uuid import UUID
 
+from sqlalchemy import delete as delete_stmt
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -32,8 +33,13 @@ class SQLAlchemyDocumentRepository(DocumentRepositoryPort):
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def delete(self, document_id: UUID) -> None:
+        stmt = delete_stmt(DocumentModel).where(DocumentModel.id == document_id)
+        await self._session.execute(stmt)
+        await self._session.flush()
+
     async def list_paginated(
-        self, page: int = 1, size: int = 20, template_id: UUID | None = None
+        self, page: int = 1, size: int = 20, template_id: UUID | None = None, created_by: UUID | None = None
     ) -> tuple[list, int]:
         # Base query
         stmt = select(DocumentModel).options(selectinload(DocumentModel.template_version))
@@ -47,6 +53,11 @@ class SQLAlchemyDocumentRepository(DocumentRepositoryPort):
             count_stmt = count_stmt.join(TemplateVersionModel, DocumentModel.template_version_id == TemplateVersionModel.id).where(
                 TemplateVersionModel.template_id == template_id
             )
+
+        # Filter by creator (non-admin users only see their own documents)
+        if created_by:
+            stmt = stmt.where(DocumentModel.created_by == created_by)
+            count_stmt = count_stmt.where(DocumentModel.created_by == created_by)
 
         # Get total count
         total_result = await self._session.execute(count_stmt)

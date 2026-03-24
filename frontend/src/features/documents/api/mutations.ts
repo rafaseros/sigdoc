@@ -1,5 +1,6 @@
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/shared/lib/api-client";
+import { documentKeys } from "./keys";
 
 interface GenerateRequest {
   template_version_id: string;
@@ -59,6 +60,18 @@ interface BulkGenerateResponse {
   document_count: number;
   download_url: string;
   errors: Array<{ row: number; error: string }>;
+}
+
+export function useDeleteDocument() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (documentId: string): Promise<void> => {
+      await apiClient.delete(`/documents/${documentId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: documentKeys.lists() });
+    },
+  });
 }
 
 export function useBulkGenerate() {

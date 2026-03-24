@@ -129,16 +129,31 @@ class DocumentService:
             path=minio_path,
         )
 
+    async def delete_document(self, document_id: uuid.UUID) -> None:
+        """Delete a document record and its file from MinIO."""
+        document = await self._doc_repo.get_by_id(document_id)
+        if not document:
+            raise DocumentNotFoundError(f"Document {document_id} not found")
+        # Delete from MinIO
+        try:
+            await self._storage.delete_file(self.DOCUMENTS_BUCKET, document.minio_path)
+        except Exception:
+            pass  # File may already be gone
+        # Delete from DB
+        await self._doc_repo.delete(document_id)
+
     async def list_documents(
         self,
         page: int = 1,
         size: int = 20,
         template_id: str | None = None,
+        created_by: str | None = None,
     ) -> tuple[list, int]:
         """List documents with pagination."""
         tpl_uuid = uuid.UUID(template_id) if template_id else None
+        created_by_uuid = uuid.UUID(created_by) if created_by else None
         return await self._doc_repo.list_paginated(
-            page=page, size=size, template_id=tpl_uuid
+            page=page, size=size, template_id=tpl_uuid, created_by=created_by_uuid
         )
 
     # ── Bulk generation methods ──────────────────────────────────────────
