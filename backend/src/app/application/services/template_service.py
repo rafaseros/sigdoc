@@ -1,6 +1,6 @@
 import uuid
 
-from app.domain.exceptions import InvalidTemplateError, TemplateNotFoundError
+from app.domain.exceptions import DomainError, InvalidTemplateError, TemplateNotFoundError
 from app.domain.ports.storage_service import StorageService
 from app.domain.ports.template_engine import TemplateEngine
 from app.domain.ports.template_repository import TemplateRepository
@@ -159,7 +159,15 @@ class TemplateService:
 
     async def delete_template(self, template_id: uuid.UUID) -> None:
         """Delete template and all its versions from DB. MinIO files remain for now."""
+        from sqlalchemy.exc import IntegrityError
+
         template = await self._repository.get_by_id(template_id)
         if not template:
             raise TemplateNotFoundError(f"Template {template_id} not found")
-        await self._repository.delete(template_id)
+        try:
+            await self._repository.delete(template_id)
+        except IntegrityError:
+            raise DomainError(
+                "No se puede eliminar esta plantilla porque tiene documentos generados. "
+                "Elimine los documentos primero."
+            )

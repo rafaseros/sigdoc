@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 
 from app.application.services import get_template_service
 from app.application.services.template_service import TemplateService
-from app.domain.exceptions import InvalidTemplateError, TemplateNotFoundError
+from app.domain.exceptions import DomainError, InvalidTemplateError, TemplateNotFoundError
 from app.presentation.middleware.tenant import CurrentUser, get_current_user
 from app.presentation.schemas.template import (
     TemplateListResponse,
@@ -229,5 +229,10 @@ async def delete_template(
     except TemplateNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Template not found",
+            detail="Plantilla no encontrada",
+        )
+    except DomainError as e:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(e),
         )
