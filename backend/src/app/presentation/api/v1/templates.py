@@ -133,7 +133,11 @@ async def list_templates(
     service: TemplateService = Depends(get_template_service),
 ):
     """List templates with pagination and optional search."""
-    templates, total = await service.list_templates(page=page, size=size, search=search)
+    # Non-admin users only see their own templates
+    created_by = None if current_user.role == "admin" else str(current_user.user_id)
+    templates, total = await service.list_templates(
+        page=page, size=size, search=search, created_by=created_by
+    )
 
     items = []
     for t in templates:

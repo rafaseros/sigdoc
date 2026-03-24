@@ -15,7 +15,11 @@ class TemplateRepository(ABC):
 
     @abstractmethod
     async def list_paginated(
-        self, page: int = 1, size: int = 20, search: str | None = None
+        self,
+        page: int = 1,
+        size: int = 20,
+        search: str | None = None,
+        created_by: UUID | None = None,
     ) -> tuple[list[Template], int]:
         ...
 

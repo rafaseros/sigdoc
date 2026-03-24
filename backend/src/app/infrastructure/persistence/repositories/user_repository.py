@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.ports.user_repository import UserRepository
@@ -26,6 +26,43 @@ class SQLAlchemyUserRepository(UserRepository):
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def create(self, user):
-        # For MVP, not needed beyond seed
-        raise NotImplementedError
+    async def create(self, user: UserModel) -> UserModel:
+        self._session.add(user)
+        await self._session.flush()
+        return user
+
+    async def list_by_tenant(self, page: int = 1, size: int = 20) -> tuple[list, int]:
+        """List all users in the tenant (auto-filtered by do_orm_execute)."""
+        count_stmt = select(func.count()).select_from(UserModel)
+        total_result = await self._session.execute(count_stmt)
+        total = total_result.scalar_one()
+
+        offset = (page - 1) * size
+        stmt = (
+            select(UserModel)
+            .order_by(UserModel.created_at.desc())
+            .offset(offset)
+            .limit(size)
+        )
+        result = await self._session.execute(stmt)
+        users = list(result.scalars().all())
+
+        return users, total
+
+    async def update(self, user_id: UUID, **kwargs) -> UserModel | None:
+        """Update user fields."""
+        user = await self.get_by_id(user_id)
+        if not user:
+            return None
+        for key, value in kwargs.items():
+            if hasattr(user, key):
+                setattr(user, key, value)
+        await self._session.flush()
+        return user
+
+    async def deactivate(self, user_id: UUID) -> None:
+        """Soft delete: set is_active=False."""
+        user = await self.get_by_id(user_id)
+        if user:
+            user.is_active = False
+            await self._session.flush()

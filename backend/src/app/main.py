@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
-from app.presentation.api.v1 import auth, templates, documents, health
+from app.presentation.api.v1 import auth, templates, documents, health, users
 
 
 @asynccontextmanager
@@ -35,6 +35,7 @@ def create_app() -> FastAPI:
     app.include_router(auth.router, prefix=f"{settings.api_v1_prefix}/auth", tags=["auth"])
     app.include_router(templates.router, prefix=f"{settings.api_v1_prefix}/templates", tags=["templates"])
     app.include_router(documents.router, prefix=f"{settings.api_v1_prefix}/documents", tags=["documents"])
+    app.include_router(users.router, prefix=f"{settings.api_v1_prefix}/users", tags=["users"])
 
     return app
 

@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.infrastructure.auth.jwt_handler import (
+    hash_password,
     verify_password,
     create_access_token,
     create_refresh_token,
@@ -9,13 +10,14 @@ from app.infrastructure.auth.jwt_handler import (
 )
 from app.infrastructure.persistence.database import get_session
 from app.infrastructure.persistence.repositories.user_repository import SQLAlchemyUserRepository
-from app.presentation.middleware.tenant import get_current_user, CurrentUser
+from app.presentation.middleware.tenant import get_current_user, get_tenant_session, CurrentUser
 from app.presentation.schemas.auth import (
     LoginRequest,
     TokenResponse,
     RefreshRequest,
     UserResponse,
 )
+from app.presentation.schemas.user import ChangePasswordRequest
 
 router = APIRouter()
 
@@ -93,3 +95,30 @@ async def get_me(
         role=user.role,
         tenant_id=str(user.tenant_id),
     )
+
+
+@router.post("/change-password", status_code=status.HTTP_200_OK)
+async def change_password(
+    request: ChangePasswordRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_tenant_session),
+):
+    """Change the current user's password."""
+    repo = SQLAlchemyUserRepository(session)
+    user = await repo.get_by_id(current_user.user_id)
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Usuario no encontrado",
+        )
+
+    if not verify_password(request.current_password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="La contraseña actual es incorrecta",
+        )
+
+    await repo.update(current_user.user_id, hashed_password=hash_password(request.new_password))
+
+    return {"message": "Contraseña actualizada correctamente"}

@@ -28,7 +28,11 @@ class SQLAlchemyTemplateRepository(TemplateRepositoryPort):
         return result.scalar_one_or_none()
 
     async def list_paginated(
-        self, page: int = 1, size: int = 20, search: str | None = None
+        self,
+        page: int = 1,
+        size: int = 20,
+        search: str | None = None,
+        created_by: UUID | None = None,
     ) -> tuple[list, int]:
         # Base query
         stmt = select(TemplateModel).options(selectinload(TemplateModel.versions))
@@ -39,6 +43,12 @@ class SQLAlchemyTemplateRepository(TemplateRepositoryPort):
             search_filter = TemplateModel.name.ilike(f"%{search}%")
             stmt = stmt.where(search_filter)
             count_stmt = count_stmt.where(search_filter)
+
+        # Apply created_by filter (non-admin users only see their own templates)
+        if created_by is not None:
+            created_by_filter = TemplateModel.created_by == created_by
+            stmt = stmt.where(created_by_filter)
+            count_stmt = count_stmt.where(created_by_filter)
 
         # Get total count
         total_result = await self._session.execute(count_stmt)

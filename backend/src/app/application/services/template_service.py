@@ -143,10 +143,19 @@ class TemplateService:
         return template
 
     async def list_templates(
-        self, page: int = 1, size: int = 20, search: str | None = None
+        self,
+        page: int = 1,
+        size: int = 20,
+        search: str | None = None,
+        created_by: str | None = None,
     ) -> tuple[list, int]:
-        """List templates with pagination and optional search."""
-        return await self._repository.list_paginated(page=page, size=size, search=search)
+        """List templates with pagination, optional search, and optional user filter."""
+        from uuid import UUID as _UUID
+
+        created_by_uuid = _UUID(created_by) if created_by else None
+        return await self._repository.list_paginated(
+            page=page, size=size, search=search, created_by=created_by_uuid
+        )
 
     async def delete_template(self, template_id: uuid.UUID) -> None:
         """Delete template and all its versions from DB. MinIO files remain for now."""

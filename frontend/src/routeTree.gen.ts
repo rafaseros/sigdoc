@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AuthenticatedRouteImport } from './routes/_authenticated'
 import { Route as AuthenticatedIndexRouteImport } from './routes/_authenticated/index'
+import { Route as AuthenticatedUsersIndexRouteImport } from './routes/_authenticated/users/index'
 import { Route as AuthenticatedTemplatesIndexRouteImport } from './routes/_authenticated/templates/index'
 import { Route as AuthenticatedTemplatesTemplateIdRouteImport } from './routes/_authenticated/templates/$templateId'
 import { Route as AuthenticatedDocumentsGenerateVersionIdRouteImport } from './routes/_authenticated/documents/generate/$versionId'
@@ -29,6 +30,11 @@ const AuthenticatedRoute = AuthenticatedRouteImport.update({
 const AuthenticatedIndexRoute = AuthenticatedIndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => AuthenticatedRoute,
+} as any)
+const AuthenticatedUsersIndexRoute = AuthenticatedUsersIndexRouteImport.update({
+  id: '/users/',
+  path: '/users/',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
 const AuthenticatedTemplatesIndexRoute =
@@ -61,6 +67,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/templates/$templateId': typeof AuthenticatedTemplatesTemplateIdRoute
   '/templates/': typeof AuthenticatedTemplatesIndexRoute
+  '/users/': typeof AuthenticatedUsersIndexRoute
   '/documents/bulk/$versionId': typeof AuthenticatedDocumentsBulkVersionIdRoute
   '/documents/generate/$versionId': typeof AuthenticatedDocumentsGenerateVersionIdRoute
 }
@@ -69,6 +76,7 @@ export interface FileRoutesByTo {
   '/': typeof AuthenticatedIndexRoute
   '/templates/$templateId': typeof AuthenticatedTemplatesTemplateIdRoute
   '/templates': typeof AuthenticatedTemplatesIndexRoute
+  '/users': typeof AuthenticatedUsersIndexRoute
   '/documents/bulk/$versionId': typeof AuthenticatedDocumentsBulkVersionIdRoute
   '/documents/generate/$versionId': typeof AuthenticatedDocumentsGenerateVersionIdRoute
 }
@@ -79,6 +87,7 @@ export interface FileRoutesById {
   '/_authenticated/': typeof AuthenticatedIndexRoute
   '/_authenticated/templates/$templateId': typeof AuthenticatedTemplatesTemplateIdRoute
   '/_authenticated/templates/': typeof AuthenticatedTemplatesIndexRoute
+  '/_authenticated/users/': typeof AuthenticatedUsersIndexRoute
   '/_authenticated/documents/bulk/$versionId': typeof AuthenticatedDocumentsBulkVersionIdRoute
   '/_authenticated/documents/generate/$versionId': typeof AuthenticatedDocumentsGenerateVersionIdRoute
 }
@@ -89,6 +98,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/templates/$templateId'
     | '/templates/'
+    | '/users/'
     | '/documents/bulk/$versionId'
     | '/documents/generate/$versionId'
   fileRoutesByTo: FileRoutesByTo
@@ -97,6 +107,7 @@ export interface FileRouteTypes {
     | '/'
     | '/templates/$templateId'
     | '/templates'
+    | '/users'
     | '/documents/bulk/$versionId'
     | '/documents/generate/$versionId'
   id:
@@ -106,6 +117,7 @@ export interface FileRouteTypes {
     | '/_authenticated/'
     | '/_authenticated/templates/$templateId'
     | '/_authenticated/templates/'
+    | '/_authenticated/users/'
     | '/_authenticated/documents/bulk/$versionId'
     | '/_authenticated/documents/generate/$versionId'
   fileRoutesById: FileRoutesById
@@ -136,6 +148,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof AuthenticatedIndexRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/users/': {
+      id: '/_authenticated/users/'
+      path: '/users'
+      fullPath: '/users/'
+      preLoaderRoute: typeof AuthenticatedUsersIndexRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
     '/_authenticated/templates/': {
@@ -173,6 +192,7 @@ interface AuthenticatedRouteChildren {
   AuthenticatedIndexRoute: typeof AuthenticatedIndexRoute
   AuthenticatedTemplatesTemplateIdRoute: typeof AuthenticatedTemplatesTemplateIdRoute
   AuthenticatedTemplatesIndexRoute: typeof AuthenticatedTemplatesIndexRoute
+  AuthenticatedUsersIndexRoute: typeof AuthenticatedUsersIndexRoute
   AuthenticatedDocumentsBulkVersionIdRoute: typeof AuthenticatedDocumentsBulkVersionIdRoute
   AuthenticatedDocumentsGenerateVersionIdRoute: typeof AuthenticatedDocumentsGenerateVersionIdRoute
 }
@@ -181,6 +201,7 @@ const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedIndexRoute: AuthenticatedIndexRoute,
   AuthenticatedTemplatesTemplateIdRoute: AuthenticatedTemplatesTemplateIdRoute,
   AuthenticatedTemplatesIndexRoute: AuthenticatedTemplatesIndexRoute,
+  AuthenticatedUsersIndexRoute: AuthenticatedUsersIndexRoute,
   AuthenticatedDocumentsBulkVersionIdRoute:
     AuthenticatedDocumentsBulkVersionIdRoute,
   AuthenticatedDocumentsGenerateVersionIdRoute:
