@@ -1,0 +1,16 @@
+FROM python:3.12-slim
+
+WORKDIR /code
+
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+
+ENV PYTHONPATH=/code/src
+
+COPY backend/pyproject.toml backend/README.md ./
+RUN pip install --no-cache-dir -e .
+
+COPY backend/src ./src
+COPY backend/alembic ./alembic
+COPY backend/alembic.ini ./alembic.ini
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4", "--proxy-headers"]
