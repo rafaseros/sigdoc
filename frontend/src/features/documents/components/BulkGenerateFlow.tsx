@@ -73,7 +73,7 @@ export function BulkGenerateFlow({
         "response" in err &&
         (err as { response?: { data?: { detail?: string } } }).response?.data
           ?.detail;
-      toast.error(detail || "Error al generar los documentos");
+      toast.error((detail as string) || "Error al generar los documentos");
     }
   };
 

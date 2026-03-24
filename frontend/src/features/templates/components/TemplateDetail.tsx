@@ -18,7 +18,6 @@ import {
   useDeleteTemplate,
   useUploadNewVersion,
 } from "@/features/templates/api";
-import type { Template } from "@/features/templates/api";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";

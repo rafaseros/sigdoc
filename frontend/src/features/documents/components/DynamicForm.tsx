@@ -27,7 +27,7 @@ function buildSchema(variables: string[]) {
 export function DynamicForm({
   templateVersionId,
   variables,
-  templateName,
+  templateName: _,
 }: DynamicFormProps) {
   const schema = buildSchema(variables);
   type FormData = z.infer<typeof schema>;
