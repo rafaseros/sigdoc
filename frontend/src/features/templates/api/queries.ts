@@ -1,0 +1,58 @@
+import { useQuery } from "@tanstack/react-query";
+import { apiClient } from "@/shared/lib/api-client";
+import { templateKeys } from "./keys";
+
+interface TemplateVersion {
+  id: string;
+  version: number;
+  variables: string[];
+  file_size: number;
+  created_at: string;
+}
+
+export interface Template {
+  id: string;
+  name: string;
+  description: string | null;
+  current_version: number;
+  variables: string[];
+  versions: TemplateVersion[];
+  created_at: string;
+  updated_at: string;
+}
+
+interface TemplateListResponse {
+  items: Template[];
+  total: number;
+  page: number;
+  size: number;
+}
+
+export function useTemplates(
+  filters: { page?: number; size?: number; search?: string } = {}
+) {
+  return useQuery({
+    queryKey: templateKeys.list(filters),
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (filters.page) params.set("page", String(filters.page));
+      if (filters.size) params.set("size", String(filters.size));
+      if (filters.search) params.set("search", filters.search);
+      const { data } = await apiClient.get<TemplateListResponse>(
+        `/templates?${params}`
+      );
+      return data;
+    },
+  });
+}
+
+export function useTemplate(id: string) {
+  return useQuery({
+    queryKey: templateKeys.detail(id),
+    queryFn: async () => {
+      const { data } = await apiClient.get<Template>(`/templates/${id}`);
+      return data;
+    },
+    enabled: !!id,
+  });
+}
