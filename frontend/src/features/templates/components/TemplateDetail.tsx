@@ -120,8 +120,16 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
         toast.success("Plantilla eliminada con éxito");
         navigate({ to: "/templates" });
       },
-      onError: () => {
-        toast.error("Error al eliminar la plantilla");
+      onError: (error: unknown) => {
+        const detail =
+          error &&
+          typeof error === "object" &&
+          "response" in error &&
+          (error as { response?: { data?: { detail?: string } } }).response
+            ?.data?.detail;
+        toast.error(
+          (detail as string) || "Error al eliminar la plantilla"
+        );
       },
     });
     setDeleteDialogOpen(false);
