@@ -37,12 +37,6 @@ function AuthenticatedLayout() {
               >
                 Plantillas
               </Link>
-              <Link
-                to="/documents"
-                className="text-sm font-medium text-muted-foreground transition-colors hover:text-foreground [&.active]:text-foreground"
-              >
-                Documentos
-              </Link>
               {isAdmin && (
                 <Link
                   to="/users"

@@ -34,6 +34,7 @@ import {
 } from "@/components/ui/dialog";
 
 import { TemplateDetailSkeleton } from "./TemplateDetailSkeleton";
+import { DocumentsTab } from "./DocumentsTab";
 
 function formatFileSize(bytes: number): string {
   if (bytes === 0) return "0 B";
@@ -237,6 +238,10 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
             <Clock className="size-3.5" />
             Versiones
           </TabsTrigger>
+          <TabsTrigger value="documents">
+            <Files className="size-3.5" />
+            Documentos
+          </TabsTrigger>
         </TabsList>
 
         {/* Info Tab */}
@@ -393,6 +398,11 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
                 </Card>
               ))}
           </div>
+        </TabsContent>
+
+        {/* Documents Tab */}
+        <TabsContent value="documents">
+          <DocumentsTab templateId={templateId} />
         </TabsContent>
       </Tabs>
     </div>
