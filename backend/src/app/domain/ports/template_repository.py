@@ -52,6 +52,7 @@ class TemplateRepository(ABC):
         version: int,
         minio_path: str,
         variables: list[str],
+        variables_meta: list[dict] | None = None,
         file_size: int,
     ) -> Template:
         """Create a template and its first version atomically."""

@@ -10,9 +10,15 @@ import { Label } from "@/components/ui/label";
 import { useGenerateDocument } from "../api/mutations";
 import { apiClient } from "@/shared/lib/api-client";
 
+interface VariableMeta {
+  name: string;
+  contexts: string[];
+}
+
 interface DynamicFormProps {
   templateVersionId: string;
   variables: string[];
+  variablesMeta?: VariableMeta[];
   templateName: string;
 }
 
@@ -27,6 +33,7 @@ function buildSchema(variables: string[]) {
 export function DynamicForm({
   templateVersionId,
   variables,
+  variablesMeta = [],
   templateName: _,
 }: DynamicFormProps) {
   const schema = buildSchema(variables);
@@ -36,6 +43,9 @@ export function DynamicForm({
     resolver: zodResolver(schema),
     defaultValues: Object.fromEntries(variables.map((v) => [v, ""])),
   });
+
+  // Watch all values for live preview
+  const watchedValues = form.watch();
 
   const generateMutation = useGenerateDocument();
   const [documentId, setDocumentId] = useState<string | null>(null);
@@ -81,21 +91,39 @@ export function DynamicForm({
   return (
     <div className="space-y-6">
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-        {variables.map((variable) => (
-          <div key={variable} className="space-y-2">
-            <Label htmlFor={variable}>{variable}</Label>
-            <Input
-              id={variable}
-              {...form.register(variable)}
-              placeholder={`Ingrese ${variable}`}
-            />
-            {form.formState.errors[variable] && (
-              <p className="text-sm text-destructive">
-                {form.formState.errors[variable]?.message as string}
-              </p>
-            )}
-          </div>
-        ))}
+        {variables.map((variable) => {
+          const meta = variablesMeta.find((m) => m.name === variable);
+          const currentValue = watchedValues[variable] || "";
+          return (
+            <div key={variable} className="space-y-2">
+              <Label htmlFor={variable} className="font-semibold">
+                {variable}
+              </Label>
+              {meta && meta.contexts.length > 0 && (
+                <div className="space-y-1">
+                  {meta.contexts.map((ctx, i) => (
+                    <ContextPreview
+                      key={i}
+                      context={ctx}
+                      variable={variable}
+                      value={currentValue}
+                    />
+                  ))}
+                </div>
+              )}
+              <Input
+                id={variable}
+                {...form.register(variable)}
+                placeholder={`Ingrese ${variable}`}
+              />
+              {form.formState.errors[variable] && (
+                <p className="text-sm text-destructive">
+                  {form.formState.errors[variable]?.message as string}
+                </p>
+              )}
+            </div>
+          );
+        })}
 
         <Button type="submit" disabled={generateMutation.isPending}>
           {generateMutation.isPending ? "Generando..." : "Generar Documento"}
@@ -114,5 +142,68 @@ export function DynamicForm({
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * Renders a paragraph context with the variable highlighted or replaced by the current value.
+ * - No value: variable name shown highlighted in blue
+ * - With value: replaced text shown highlighted in green
+ */
+function ContextPreview({
+  context,
+  variable,
+  value,
+}: {
+  context: string;
+  variable: string;
+  value: string;
+}) {
+  // Match both {{ variable }} and {{variable}} patterns
+  const pattern = new RegExp(
+    `\\{\\{\\s*${variable.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\}\\}`,
+    "g"
+  );
+
+  const parts: Array<{ text: string; isVariable: boolean }> = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(context)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push({ text: context.slice(lastIndex, match.index), isVariable: false });
+    }
+    parts.push({ text: match[0], isVariable: true });
+    lastIndex = match.index + match[0].length;
+  }
+
+  if (lastIndex < context.length) {
+    parts.push({ text: context.slice(lastIndex), isVariable: false });
+  }
+
+  // If no matches found, show context as-is
+  if (parts.length === 0) {
+    parts.push({ text: context, isVariable: false });
+  }
+
+  return (
+    <p className="text-xs text-muted-foreground bg-muted rounded px-2 py-1.5 font-mono leading-relaxed">
+      {parts.map((part, i) =>
+        part.isVariable ? (
+          <span
+            key={i}
+            className={
+              value
+                ? "bg-green-200 dark:bg-green-900 text-green-900 dark:text-green-100 px-1 rounded font-sans font-medium"
+                : "bg-blue-200 dark:bg-blue-900 text-blue-900 dark:text-blue-100 px-1 rounded"
+            }
+          >
+            {value || part.text}
+          </span>
+        ) : (
+          <span key={i}>{part.text}</span>
+        )
+      )}
+    </p>
   );
 }

@@ -3,8 +3,13 @@ from abc import ABC, abstractmethod
 
 class TemplateEngine(ABC):
     @abstractmethod
-    async def extract_variables(self, file_bytes: bytes) -> list[str]:
-        """Extract variable names from a template file."""
+    async def extract_variables(self, file_bytes: bytes) -> list[dict]:
+        """
+        Extract variable names and their surrounding paragraph context from a template file.
+
+        Returns a list of dicts:
+        [{"name": "variable_name", "contexts": ["paragraph text where it appears", ...]}, ...]
+        """
         ...
 
     @abstractmethod

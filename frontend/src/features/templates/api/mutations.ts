@@ -10,10 +10,18 @@ export interface ValidationError {
   suggestion: string | null;
 }
 
+export interface VariableSummary {
+  name: string;
+  count: number;
+  has_errors: boolean;
+}
+
 export interface ValidationResult {
   valid: boolean;
   variables: string[];
+  variable_summary: VariableSummary[];
   errors: ValidationError[];
+  warnings: ValidationError[];
   has_fixable_errors: boolean;
   has_unfixable_errors: boolean;
 }

@@ -66,6 +66,7 @@ function GeneratePage() {
 
   const currentVersion = template.versions.find((v) => v.id === versionId);
   const variables = currentVersion?.variables ?? template.variables;
+  const variablesMeta = currentVersion?.variables_meta ?? [];
 
   return (
     <div className="space-y-6">
@@ -136,6 +137,7 @@ function GeneratePage() {
             <DynamicForm
               templateVersionId={versionId}
               variables={[]}
+              variablesMeta={[]}
               templateName={template.name}
             />
           </CardContent>
@@ -149,6 +151,7 @@ function GeneratePage() {
             <DynamicForm
               templateVersionId={versionId}
               variables={variables}
+              variablesMeta={variablesMeta}
               templateName={template.name}
             />
           </CardContent>

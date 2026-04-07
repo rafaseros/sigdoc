@@ -23,6 +23,7 @@ class TemplateVersionModel(UUIDMixin, TenantMixin, Base):
     version: Mapped[int] = mapped_column(Integer, nullable=False)
     minio_path: Mapped[str] = mapped_column(String(500), nullable=False)
     variables: Mapped[list] = mapped_column(JSONB, default=list, server_default="[]")
+    variables_meta: Mapped[list] = mapped_column(JSONB, default=list, server_default="[]")
     file_size: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

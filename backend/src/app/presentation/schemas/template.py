@@ -3,10 +3,16 @@ from datetime import datetime
 from pydantic import BaseModel
 
 
+class VariableMeta(BaseModel):
+    name: str
+    contexts: list[str] = []
+
+
 class TemplateVersionResponse(BaseModel):
     id: str
     version: int
     variables: list[str]
+    variables_meta: list[VariableMeta] = []
     file_size: int
     created_at: datetime
 

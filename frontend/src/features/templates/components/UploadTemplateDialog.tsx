@@ -29,6 +29,8 @@ import {
   useValidateTemplate,
   useAutoFixTemplate,
   type ValidationResult,
+  type ValidationError,
+  type VariableSummary,
 } from "../api";
 
 type Step = "select" | "validating" | "valid" | "errors";
@@ -129,7 +131,7 @@ export function UploadTemplateDialog() {
         <UploadIcon className="size-4 mr-2" />
         Subir Plantilla
       </DialogTrigger>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Subir Plantilla</DialogTitle>
           <DialogDescription>
@@ -174,24 +176,31 @@ export function UploadTemplateDialog() {
         {step === "valid" && validation && (
           <form onSubmit={handleSubmit}>
             <div className="grid gap-4 py-4">
-              <div className="rounded-md border border-green-500/50 bg-green-500/5 p-3">
-                <div className="flex items-center gap-2">
-                  <CircleCheckIcon className="size-4 text-green-600 dark:text-green-400 shrink-0" />
-                  <p className="font-medium text-green-700 dark:text-green-400 text-sm">
-                    Plantilla válida — {validation.variables.length} variable(s)
-                    detectada(s)
-                  </p>
-                </div>
-                {validation.variables.length > 0 && (
-                  <div className="flex flex-wrap gap-1 mt-2 ml-6">
-                    {validation.variables.map((v) => (
-                      <Badge key={v} variant="secondary">
-                        {v}
-                      </Badge>
-                    ))}
-                  </div>
-                )}
+              <div className="flex items-center gap-2 rounded-md border border-green-500/50 bg-green-500/5 p-3">
+                <CircleCheckIcon className="size-4 text-green-600 dark:text-green-400 shrink-0" />
+                <p className="font-medium text-green-700 dark:text-green-400 text-sm">
+                  Plantilla válida — {validation.variable_summary.length} variable(s)
+                  detectada(s)
+                </p>
               </div>
+
+              {/* Variables table */}
+              {validation.variable_summary.length > 0 && (
+                <VariablesTable variables={validation.variable_summary} />
+              )}
+
+              {/* Warnings table (non-blocking) */}
+              {validation.warnings.length > 0 && (
+                <div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <CircleAlertIcon className="size-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                    <p className="font-medium text-amber-700 dark:text-amber-400 text-sm">
+                      {validation.warnings.length} advertencia(s) (no bloquean la subida)
+                    </p>
+                  </div>
+                  <IssuesTable issues={validation.warnings} />
+                </div>
+              )}
 
               {file && (
                 <div className="flex items-center gap-2 rounded-lg border border-input p-3">
@@ -254,37 +263,39 @@ export function UploadTemplateDialog() {
         {/* ERRORS — show error list + actions */}
         {step === "errors" && validation && (
           <div className="space-y-4 py-4">
-            <div className="rounded-md border border-destructive/50 bg-destructive/5 p-3">
+            {/* Errors table */}
+            <div>
               <div className="flex items-center gap-2 mb-2">
                 <CircleAlertIcon className="size-4 text-destructive shrink-0" />
                 <p className="font-medium text-destructive text-sm">
-                  Se encontraron {validation.errors.length} problema(s) en la
-                  plantilla:
+                  {validation.errors.length} error(es) — deben corregirse antes de subir
                 </p>
               </div>
-              <ul className="space-y-2 ml-6">
-                {validation.errors.map((error, i) => (
-                  <li key={i} className="flex items-start gap-2 text-sm">
-                    <Badge
-                      variant={error.fixable ? "outline" : "destructive"}
-                      className="mt-0.5 shrink-0"
-                    >
-                      {error.fixable ? "Auto-corregible" : "Manual"}
-                    </Badge>
-                    <div>
-                      <span className="text-muted-foreground">
-                        {error.message}
-                      </span>
-                      {error.suggestion && (
-                        <p className="text-xs text-muted-foreground/70 mt-0.5">
-                          Sugerencia: {error.suggestion}
-                        </p>
-                      )}
-                    </div>
-                  </li>
-                ))}
-              </ul>
+              <IssuesTable issues={validation.errors} />
             </div>
+
+            {/* Warnings table */}
+            {validation.warnings.length > 0 && (
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <CircleAlertIcon className="size-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                  <p className="font-medium text-amber-700 dark:text-amber-400 text-sm">
+                    {validation.warnings.length} advertencia(s)
+                  </p>
+                </div>
+                <IssuesTable issues={validation.warnings} />
+              </div>
+            )}
+
+            {/* Variables summary table */}
+            {validation.variable_summary.length > 0 && (
+              <div>
+                <p className="text-sm font-medium mb-2">
+                  Variables detectadas ({validation.variable_summary.length}):
+                </p>
+                <VariablesTable variables={validation.variable_summary} />
+              </div>
+            )}
 
             <div className="flex flex-wrap gap-2">
               {validation.has_fixable_errors &&
@@ -320,5 +331,82 @@ export function UploadTemplateDialog() {
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+function VariablesTable({ variables }: { variables: VariableSummary[] }) {
+  return (
+    <div className="rounded-md border overflow-hidden max-h-48 overflow-y-auto">
+      <table className="w-full text-sm">
+        <thead className="bg-muted sticky top-0">
+          <tr>
+            <th className="px-3 py-1.5 text-left font-medium">Variable</th>
+            <th className="px-3 py-1.5 text-center font-medium w-16">Usos</th>
+            <th className="px-3 py-1.5 text-center font-medium w-20">Estado</th>
+          </tr>
+        </thead>
+        <tbody>
+          {variables.map((v) => (
+            <tr key={v.name} className="border-t">
+              <td className="px-3 py-1.5 font-mono text-xs">
+                {"{{ "}
+                {v.name}
+                {" }}"}
+              </td>
+              <td className="px-3 py-1.5 text-center">{v.count}</td>
+              <td className="px-3 py-1.5 text-center">
+                <Badge
+                  variant={v.has_errors ? "destructive" : "secondary"}
+                  className="text-xs"
+                >
+                  {v.has_errors ? "Error" : "OK"}
+                </Badge>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function IssuesTable({ issues }: { issues: ValidationError[] }) {
+  return (
+    <div className="rounded-md border overflow-hidden max-h-48 overflow-y-auto">
+      <table className="w-full text-sm">
+        <thead className="bg-muted sticky top-0">
+          <tr>
+            <th className="px-3 py-1.5 text-left font-medium w-20">Tipo</th>
+            <th className="px-3 py-1.5 text-left font-medium">Variable</th>
+            <th className="px-3 py-1.5 text-left font-medium">Detalle</th>
+          </tr>
+        </thead>
+        <tbody>
+          {issues.map((issue, i) => (
+            <tr key={i} className="border-t">
+              <td className="px-3 py-1.5">
+                <Badge
+                  variant={issue.fixable ? "outline" : "destructive"}
+                  className="text-xs"
+                >
+                  {issue.fixable ? "Auto" : "Manual"}
+                </Badge>
+              </td>
+              <td className="px-3 py-1.5 font-mono text-xs">
+                {issue.variable || "—"}
+              </td>
+              <td className="px-3 py-1.5 text-muted-foreground">
+                <span>{issue.message}</span>
+                {issue.suggestion && (
+                  <span className="block text-xs mt-0.5 opacity-70">
+                    Sugerencia: <span className="font-mono">{issue.suggestion}</span>
+                  </span>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }

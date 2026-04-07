@@ -2,10 +2,16 @@ import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "@/shared/lib/api-client";
 import { templateKeys } from "./keys";
 
+interface VariableMeta {
+  name: string;
+  contexts: string[];
+}
+
 interface TemplateVersion {
   id: string;
   version: number;
   variables: string[];
+  variables_meta: VariableMeta[];
   file_size: number;
   created_at: string;
 }

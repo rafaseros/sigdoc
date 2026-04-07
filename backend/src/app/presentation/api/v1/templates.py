@@ -234,6 +234,7 @@ async def list_templates(
                     id=str(v.id),
                     version=v.version,
                     variables=v.variables,
+                    variables_meta=v.variables_meta or [],
                     file_size=v.file_size,
                     created_at=v.created_at,
                 )
@@ -280,6 +281,7 @@ async def get_template(
                 id=str(v.id),
                 version=v.version,
                 variables=v.variables,
+                variables_meta=v.variables_meta or [],
                 file_size=v.file_size,
                 created_at=v.created_at,
             )

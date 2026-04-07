@@ -10,6 +10,47 @@ from docxtpl import DocxTemplate
 from app.domain.ports.template_engine import TemplateEngine
 
 
+_MAX_CONTEXT_LENGTH = 120
+
+
+def _truncate_context(paragraph: str, variable: str) -> str:
+    """
+    Truncate a paragraph around the variable occurrence to ~120 chars.
+
+    If the paragraph is short enough, return it as-is.
+    Otherwise, extract a window centered on the variable and add ellipsis.
+    """
+    if len(paragraph) <= _MAX_CONTEXT_LENGTH:
+        return paragraph
+
+    # Find the variable pattern in the paragraph
+    pattern = re.compile(r"\{\{\s*" + re.escape(variable) + r"\s*\}\}")
+    match = pattern.search(paragraph)
+    if not match:
+        # Fallback: just truncate from the start
+        return paragraph[:_MAX_CONTEXT_LENGTH] + "..."
+
+    var_start = match.start()
+    var_end = match.end()
+    var_len = var_end - var_start
+
+    # Calculate available space for surrounding text
+    available = _MAX_CONTEXT_LENGTH - var_len
+    before = available // 2
+    after = available - before
+
+    # Calculate window boundaries
+    win_start = max(0, var_start - before)
+    win_end = min(len(paragraph), var_end + after)
+
+    snippet = paragraph[win_start:win_end]
+
+    prefix = "..." if win_start > 0 else ""
+    suffix = "..." if win_end < len(paragraph) else ""
+
+    return prefix + snippet + suffix
+
+
 def _camel_to_snake(name: str) -> str:
     """Convert camelCase/PascalCase to snake_case."""
     s1 = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", name)
@@ -27,18 +68,68 @@ class DocxTemplateEngine(TemplateEngine):
     - Always use autoescape=True to prevent XML injection from user-provided values.
     """
 
-    async def extract_variables(self, file_bytes: bytes) -> list[str]:
-        """Extract all Jinja2 variable names from a .docx template."""
+    async def extract_variables(self, file_bytes: bytes) -> list[dict]:
+        """
+        Extract all Jinja2 variable names AND their surrounding paragraph context
+        from a .docx template.
 
-        def _extract(data: bytes) -> list[str]:
-            # Write to temp file because DocxTemplate needs a file path or file-like object
+        Returns: [{"name": "variable", "contexts": ["...paragraph text..."]}, ...]
+        """
+
+        def _extract(data: bytes) -> list[dict]:
             with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp:
                 tmp.write(data)
                 tmp_path = tmp.name
             try:
+                # Use DocxTemplate to get variable names (reliable extraction)
                 tpl = DocxTemplate(tmp_path)
                 variables = tpl.get_undeclared_template_variables()
-                return sorted(variables)
+
+                # Use python-docx to extract paragraph context
+                doc = Document(tmp_path)
+                all_paragraphs: list[str] = []
+
+                # Collect paragraphs from body, headers, and footers
+                for para in doc.paragraphs:
+                    if para.text.strip():
+                        all_paragraphs.append(para.text)
+                for section in doc.sections:
+                    if section.header:
+                        for para in section.header.paragraphs:
+                            if para.text.strip():
+                                all_paragraphs.append(para.text)
+                    if section.footer:
+                        for para in section.footer.paragraphs:
+                            if para.text.strip():
+                                all_paragraphs.append(para.text)
+
+                # Build variable -> contexts mapping, tracking order of first appearance
+                var_contexts: dict[str, list[str]] = {}
+                var_order: list[str] = []  # preserves first-appearance order
+                var_pattern = re.compile(r"\{\{\s*(\w+)\s*\}\}")
+
+                for para_text in all_paragraphs:
+                    found_vars = var_pattern.findall(para_text)
+                    for var_name in found_vars:
+                        if var_name not in variables:
+                            continue
+                        if var_name not in var_contexts:
+                            var_contexts[var_name] = []
+                            var_order.append(var_name)
+                        context = _truncate_context(para_text, var_name)
+                        if context not in var_contexts[var_name]:
+                            var_contexts[var_name].append(context)
+
+                # Add any variables found by docxtpl but not in paragraphs (e.g. in tables)
+                for v in variables:
+                    if v not in var_contexts:
+                        var_contexts[v] = []
+                        var_order.append(v)
+
+                return [
+                    {"name": name, "contexts": var_contexts[name]}
+                    for name in var_order
+                ]
             finally:
                 os.unlink(tmp_path)
 
@@ -85,14 +176,19 @@ class DocxTemplateEngine(TemplateEngine):
         """
 
         def _validate_sync(data: bytes) -> dict:
+            from collections import Counter
+
             with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp:
                 tmp.write(data)
                 tmp_path = tmp.name
 
             try:
                 doc = Document(tmp_path)
-                errors: list[dict] = []
-                all_variables: set[str] = set()
+                errors: list[dict] = []    # Block upload
+                warnings: list[dict] = []  # Informational only
+                variable_counts: Counter = Counter()
+                variable_order: list[str] = []  # first-appearance order
+                error_variables: set[str] = set()
 
                 # Collect all paragraphs: body + headers + footers
                 all_paragraphs = list(doc.paragraphs)
@@ -105,34 +201,66 @@ class DocxTemplateEngine(TemplateEngine):
                 for para in all_paragraphs:
                     full_text = para.text
 
-                    # 1. No-space variables: {{var}}
+                    # 1. No-space variables: {{var}} — FIXABLE (auto-fix adds spaces)
                     no_space_matches = re.findall(r"\{\{(\w+)\}\}", full_text)
                     for match in no_space_matches:
-                        all_variables.add(match)
-                        suggested = _camel_to_snake(match.lower())
-                        errors.append({
-                            "type": "no_spaces",
-                            "message": (
-                                f"Variable sin espacios: {{{{{match}}}}}. "
-                                f"Use {{{{ {suggested} }}}}"
-                            ),
-                            "variable": match,
-                            "fixable": True,
-                            "suggestion": suggested,
-                        })
-
-                    # 2. Properly formatted variables {{ var }}
-                    proper_matches = re.findall(r"\{\{\s+(\w+)\s+\}\}", full_text)
-                    for match in proper_matches:
-                        all_variables.add(match)
-
-                        # Check uppercase / camelCase
+                        if match not in variable_counts:
+                            variable_order.append(match)
+                        variable_counts[match] += 1
+                        # Check if the NAME itself is bad (uppercase, special chars)
                         if match != match.lower() or re.search(r"[A-Z]", match):
+                            error_variables.add(match)
                             suggested = _camel_to_snake(match.lower())
                             errors.append({
                                 "type": "uppercase",
                                 "message": (
-                                    f"Variable con mayúsculas: {{{{ {match} }}}}. "
+                                    f"Nombre de variable inválido: {{{{{match}}}}}. "
+                                    f"Use {{{{ {suggested} }}}}"
+                                ),
+                                "variable": match,
+                                "fixable": True,
+                                "suggestion": suggested,
+                            })
+                        elif re.search(r"[^\x00-\x7F]", match):
+                            error_variables.add(match)
+                            errors.append({
+                                "type": "special_chars",
+                                "message": (
+                                    f"Variable con caracteres especiales: {{{{{match}}}}}. "
+                                    "Use solo letras ASCII, números y guiones bajos."
+                                ),
+                                "variable": match,
+                                "fixable": False,
+                                "suggestion": None,
+                            })
+                        else:
+                            # Name is OK but missing spaces — just a warning
+                            warnings.append({
+                                "type": "no_spaces",
+                                "message": (
+                                    f"Variable sin espacios: {{{{{match}}}}}. "
+                                    f"Se recomienda usar {{{{ {match} }}}}"
+                                ),
+                                "variable": match,
+                                "fixable": True,
+                                "suggestion": match,
+                            })
+
+                    # 2. Properly formatted variables {{ var }}
+                    proper_matches = re.findall(r"\{\{\s+(\w+)\s+\}\}", full_text)
+                    for match in proper_matches:
+                        if match not in variable_counts:
+                            variable_order.append(match)
+                        variable_counts[match] += 1
+
+                        # Check uppercase / camelCase — ERROR (blocks upload)
+                        if match != match.lower() or re.search(r"[A-Z]", match):
+                            error_variables.add(match)
+                            suggested = _camel_to_snake(match.lower())
+                            errors.append({
+                                "type": "uppercase",
+                                "message": (
+                                    f"Nombre de variable inválido: {{{{ {match} }}}}. "
                                     f"Use {{{{ {suggested} }}}}"
                                 ),
                                 "variable": match,
@@ -140,8 +268,9 @@ class DocxTemplateEngine(TemplateEngine):
                                 "suggestion": suggested,
                             })
 
-                        # Check special characters (accents, ñ, etc.)
-                        if re.search(r"[^\x00-\x7F]", match):
+                        # Check special characters — ERROR (blocks upload)
+                        elif re.search(r"[^\x00-\x7F]", match):
+                            error_variables.add(match)
                             errors.append({
                                 "type": "special_chars",
                                 "message": (
@@ -153,43 +282,29 @@ class DocxTemplateEngine(TemplateEngine):
                                 "suggestion": None,
                             })
 
-                    # Also check special chars in no-space variables
-                    for match in no_space_matches:
-                        if re.search(r"[^\x00-\x7F]", match):
-                            errors.append({
-                                "type": "special_chars",
-                                "message": (
-                                    f"Variable con caracteres especiales: {{{{{match}}}}}. "
-                                    "Use solo letras ASCII, números y guiones bajos."
-                                ),
-                                "variable": match,
-                                "fixable": False,
-                                "suggestion": None,
-                            })
-
-                    # 3. Split formatting — variable across multiple runs
+                    # 3. Split formatting — WARNING only (style issue, not blocking)
                     runs_text = [run.text for run in para.runs]
                     combined = "".join(runs_text)
                     combined_vars = re.findall(r"\{\{.*?\}\}", combined)
                     for cv in combined_vars:
                         found_in_single_run = any(cv in rt for rt in runs_text)
                         if not found_in_single_run:
-                            var_name = re.search(r"\{\{\s*(\w+)\s*\}\}", cv)
-                            name = var_name.group(1) if var_name else cv
-                            errors.append({
+                            var_name_match = re.search(r"\{\{\s*(\w+)\s*\}\}", cv)
+                            name = var_name_match.group(1) if var_name_match else cv
+                            warnings.append({
                                 "type": "split_format",
                                 "message": (
-                                    f"Variable con formato dividido: {cv}. "
-                                    "El formato (negrita, cursiva, etc.) debe ser uniforme "
-                                    "en toda la variable. Seleccione todo el marcador en Word "
-                                    "y aplique el formato de manera uniforme."
+                                    f"La variable {{{{ {name} }}}} tiene formato dividido. "
+                                    "Podría no funcionar correctamente. Se recomienda "
+                                    "seleccionar todo el marcador en Word y aplicar el "
+                                    "formato de manera uniforme."
                                 ),
                                 "variable": name,
                                 "fixable": False,
                                 "suggestion": None,
                             })
 
-                    # 4. Unclosed braces
+                    # 4. Unclosed braces — ERROR
                     if "{{" in full_text and "}}" not in full_text:
                         errors.append({
                             "type": "invalid_syntax",
@@ -201,8 +316,8 @@ class DocxTemplateEngine(TemplateEngine):
                             "suggestion": None,
                         })
 
-                # 5. No variables at all
-                if not all_variables and not errors:
+                # 5. No variables at all — ERROR
+                if not variable_counts and not errors:
                     errors.append({
                         "type": "no_variables",
                         "message": (
@@ -215,21 +330,39 @@ class DocxTemplateEngine(TemplateEngine):
                     })
 
                 # Deduplicate by (type, variable)
-                seen: set[tuple] = set()
-                unique_errors: list[dict] = []
-                for e in errors:
-                    key = (e["type"], e["variable"])
-                    if key not in seen:
-                        seen.add(key)
-                        unique_errors.append(e)
+                def _dedup(items: list[dict]) -> list[dict]:
+                    seen: set[tuple] = set()
+                    result: list[dict] = []
+                    for e in items:
+                        key = (e["type"], e["variable"])
+                        if key not in seen:
+                            seen.add(key)
+                            result.append(e)
+                    return result
+
+                unique_errors = _dedup(errors)
+                unique_warnings = _dedup(warnings)
 
                 has_fixable = any(e["fixable"] for e in unique_errors)
                 has_unfixable = any(not e["fixable"] for e in unique_errors)
 
+                # Build variable summary in document order
+                variable_summary = []
+                for var_name in variable_order:
+                    variable_summary.append({
+                        "name": var_name,
+                        "count": variable_counts[var_name],
+                        "has_errors": var_name in error_variables,
+                    })
+
                 return {
                     "valid": len(unique_errors) == 0,
-                    "variables": sorted(all_variables),
+                    "variables": [
+                        v for v in variable_order if v not in error_variables
+                    ],
+                    "variable_summary": variable_summary,
                     "errors": unique_errors,
+                    "warnings": unique_warnings,
                     "has_fixable_errors": has_fixable,
                     "has_unfixable_errors": has_unfixable,
                 }

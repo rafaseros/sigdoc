@@ -37,9 +37,12 @@ class TemplateService:
         """
         # 1. Extract variables (also validates it's a valid docx with Jinja2 tags)
         try:
-            variables = await self._engine.extract_variables(file_bytes)
+            variables_meta = await self._engine.extract_variables(file_bytes)
         except Exception as e:
             raise InvalidTemplateError(f"Invalid template file: {e}")
+
+        # Extract plain variable names for backwards compatibility
+        variables = [v["name"] for v in variables_meta]
 
         # 2. Generate IDs
         template_id = uuid.uuid4()
@@ -66,6 +69,7 @@ class TemplateService:
             version=version,
             minio_path=minio_path,
             variables=variables,
+            variables_meta=variables_meta,
             file_size=file_size,
         )
 
@@ -94,9 +98,12 @@ class TemplateService:
 
         # Extract variables (also validates it's a valid docx)
         try:
-            variables = await self._engine.extract_variables(file_bytes)
+            variables_meta = await self._engine.extract_variables(file_bytes)
         except Exception as e:
             raise InvalidTemplateError(f"Invalid template file: {e}")
+
+        # Extract plain variable names for backwards compatibility
+        variables = [v["name"] for v in variables_meta]
 
         # New version number
         new_version = template.current_version + 1
@@ -119,6 +126,7 @@ class TemplateService:
             version=new_version,
             minio_path=minio_path,
             variables=variables,
+            variables_meta=variables_meta,
             file_size=file_size,
         )
         await self._repository.create_version(version_model)

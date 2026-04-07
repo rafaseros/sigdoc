@@ -100,6 +100,7 @@ class SQLAlchemyTemplateRepository(TemplateRepositoryPort):
         version: int,
         minio_path: str,
         variables: list[str],
+        variables_meta: list[dict] | None = None,
         file_size: int,
     ) -> TemplateModel:
         """Create a template and its first version atomically."""
@@ -121,6 +122,7 @@ class SQLAlchemyTemplateRepository(TemplateRepositoryPort):
             version=version,
             minio_path=minio_path,
             variables=variables,
+            variables_meta=variables_meta or [],
             file_size=file_size,
         )
         self._session.add(version_model)
