@@ -1,10 +1,12 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi.responses import Response
 
 from app.application.services import get_template_service
 from app.application.services.template_service import TemplateService
 from app.domain.exceptions import DomainError, InvalidTemplateError, TemplateNotFoundError
+from app.infrastructure.templating import get_template_engine
 from app.presentation.middleware.tenant import CurrentUser, get_current_user
 from app.presentation.schemas.template import (
     TemplateListResponse,
@@ -20,6 +22,65 @@ ALLOWED_CONTENT_TYPES = {
 }
 
 
+def _validate_docx_upload(file: UploadFile) -> None:
+    """Raise HTTPException if the uploaded file is not a .docx."""
+    if file.content_type not in ALLOWED_CONTENT_TYPES and not (
+        file.filename and file.filename.endswith(".docx")
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Solo se aceptan archivos .docx",
+        )
+
+
+@router.post("/validate")
+async def validate_template(
+    file: UploadFile = File(...),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """Validate a .docx template without uploading it."""
+    _validate_docx_upload(file)
+
+    file_bytes = await file.read()
+    if len(file_bytes) == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El archivo está vacío",
+        )
+
+    engine = get_template_engine()
+    return await engine.validate(file_bytes)
+
+
+@router.post("/auto-fix")
+async def auto_fix_template(
+    file: UploadFile = File(...),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """Auto-fix fixable issues in a .docx template and return the corrected file."""
+    _validate_docx_upload(file)
+
+    file_bytes = await file.read()
+    if len(file_bytes) == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El archivo está vacío",
+        )
+
+    engine = get_template_engine()
+    fixed_bytes = await engine.auto_fix(file_bytes)
+
+    filename = file.filename or "template_corregido.docx"
+    if not filename.endswith("_corregido.docx"):
+        filename = filename.replace(".docx", "_corregido.docx")
+
+    return Response(
+        content=fixed_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.post("/upload", response_model=TemplateUploadResponse, status_code=status.HTTP_201_CREATED)
 async def upload_template(
     file: UploadFile = File(...),
@@ -29,20 +90,26 @@ async def upload_template(
     service: TemplateService = Depends(get_template_service),
 ):
     """Upload a new .docx template."""
-    # Validate file type
-    if file.content_type not in ALLOWED_CONTENT_TYPES and not (
-        file.filename and file.filename.endswith(".docx")
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Only .docx files are accepted",
-        )
+    _validate_docx_upload(file)
 
     file_bytes = await file.read()
     if len(file_bytes) == 0:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="File is empty",
+            detail="El archivo está vacío",
+        )
+
+    # Validate template before upload
+    engine = get_template_engine()
+    validation = await engine.validate(file_bytes)
+
+    if not validation["valid"]:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": "La plantilla tiene errores que deben corregirse antes de subirla.",
+                "validation": validation,
+            },
         )
 
     try:
@@ -79,20 +146,26 @@ async def upload_new_version(
     service: TemplateService = Depends(get_template_service),
 ):
     """Upload a new version of an existing template."""
-    # Validate file type
-    if file.content_type not in ALLOWED_CONTENT_TYPES and not (
-        file.filename and file.filename.endswith(".docx")
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Only .docx files are accepted",
-        )
+    _validate_docx_upload(file)
 
     file_bytes = await file.read()
     if len(file_bytes) == 0:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="File is empty",
+            detail="El archivo está vacío",
+        )
+
+    # Validate template before upload
+    engine = get_template_engine()
+    validation = await engine.validate(file_bytes)
+
+    if not validation["valid"]:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": "La plantilla tiene errores que deben corregirse antes de subirla.",
+                "validation": validation,
+            },
         )
 
     try:

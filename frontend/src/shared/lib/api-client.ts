@@ -15,4 +15,18 @@ apiClient.interceptors.request.use((config) => {
   return config;
 });
 
+apiClient.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    // On 401 from non-auth endpoints, clear tokens and redirect to login
+    const isAuthEndpoint = error.config?.url?.startsWith("/auth/");
+    if (error.response?.status === 401 && !isAuthEndpoint) {
+      localStorage.removeItem("access_token");
+      localStorage.removeItem("refresh_token");
+      window.location.replace("/login");
+    }
+    return Promise.reject(error);
+  }
+);
+
 export { apiClient };

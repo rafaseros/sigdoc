@@ -2,6 +2,59 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/shared/lib/api-client";
 import { templateKeys } from "./keys";
 
+export interface ValidationError {
+  type: string;
+  message: string;
+  variable: string | null;
+  fixable: boolean;
+  suggestion: string | null;
+}
+
+export interface ValidationResult {
+  valid: boolean;
+  variables: string[];
+  errors: ValidationError[];
+  has_fixable_errors: boolean;
+  has_unfixable_errors: boolean;
+}
+
+export function useValidateTemplate() {
+  return useMutation({
+    mutationFn: async (file: File): Promise<ValidationResult> => {
+      const formData = new FormData();
+      formData.append("file", file);
+      const { data } = await apiClient.post<ValidationResult>(
+        "/templates/validate",
+        formData,
+        { headers: { "Content-Type": "multipart/form-data" } }
+      );
+      return data;
+    },
+  });
+}
+
+export function useAutoFixTemplate() {
+  return useMutation({
+    mutationFn: async (file: File) => {
+      const formData = new FormData();
+      formData.append("file", file);
+      const response = await apiClient.post("/templates/auto-fix", formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+        responseType: "blob",
+      });
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement("a");
+      link.href = url;
+      const filename = file.name.replace(".docx", "_corregido.docx");
+      link.setAttribute("download", filename);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    },
+  });
+}
+
 export function useUploadTemplate() {
   const queryClient = useQueryClient();
 
