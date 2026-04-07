@@ -126,6 +126,11 @@ async def upload_template(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
+    except DomainError as e:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(e),
+        )
 
     # Build response from the ORM model returned by service
     return TemplateUploadResponse(

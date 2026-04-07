@@ -59,19 +59,26 @@ class TemplateService:
         )
 
         # 4. Create DB records atomically
-        template = await self._repository.create_template_with_version(
-            template_id=template_id,
-            version_id=version_id,
-            name=name,
-            description=description,
-            tenant_id=uuid.UUID(tenant_id) if isinstance(tenant_id, str) else tenant_id,
-            created_by=uuid.UUID(created_by) if isinstance(created_by, str) else created_by,
-            version=version,
-            minio_path=minio_path,
-            variables=variables,
-            variables_meta=variables_meta,
-            file_size=file_size,
-        )
+        from sqlalchemy.exc import IntegrityError
+
+        try:
+            template = await self._repository.create_template_with_version(
+                template_id=template_id,
+                version_id=version_id,
+                name=name,
+                description=description,
+                tenant_id=uuid.UUID(tenant_id) if isinstance(tenant_id, str) else tenant_id,
+                created_by=uuid.UUID(created_by) if isinstance(created_by, str) else created_by,
+                version=version,
+                minio_path=minio_path,
+                variables=variables,
+                variables_meta=variables_meta,
+                file_size=file_size,
+            )
+        except IntegrityError:
+            raise DomainError(
+                f"Ya existe una plantilla con el nombre '{name}'. Use un nombre diferente."
+            )
 
         return template
 
