@@ -115,6 +115,7 @@ export function DynamicForm({
                 id={variable}
                 {...form.register(variable)}
                 placeholder={`Ingrese ${variable}`}
+                className="bg-[#e6e8ea] border-transparent focus:border-[#2563eb] focus:ring-[#2563eb]/20 transition-all"
               />
               {form.formState.errors[variable] && (
                 <p className="text-sm text-destructive">
@@ -125,18 +126,18 @@ export function DynamicForm({
           );
         })}
 
-        <Button type="submit" disabled={generateMutation.isPending}>
+        <Button type="submit" disabled={generateMutation.isPending} className="bg-gradient-to-br from-[#004ac6] to-[#2563eb] text-white shadow-[0_4px_12px_rgba(0,74,198,0.3)] hover:shadow-[0_6px_20px_rgba(0,74,198,0.4)] transition-all">
           {generateMutation.isPending ? "Generando..." : "Generar Documento"}
         </Button>
       </form>
 
       {documentId && (
-        <div className="rounded-lg border p-4 bg-muted/50">
-          <h3 className="font-semibold mb-2">Documento Listo</h3>
-          <p className="text-sm text-muted-foreground mb-3">
+        <div className="rounded-lg border-0 p-5 bg-[#d1fae5] shadow-[0_4px_16px_rgba(5,150,105,0.1)]">
+          <h3 className="font-semibold mb-2 text-[#065f46]">Documento Listo</h3>
+          <p className="text-sm text-[#047857] mb-3">
             Su documento &quot;{fileName}&quot; ha sido generado.
           </p>
-          <Button onClick={handleDownload} disabled={downloading}>
+          <Button onClick={handleDownload} disabled={downloading} className="bg-[#059669] text-white hover:bg-[#047857] transition-all">
             {downloading ? "Descargando..." : "Descargar Documento"}
           </Button>
         </div>
@@ -187,15 +188,15 @@ function ContextPreview({
   }
 
   return (
-    <p className="text-xs text-muted-foreground bg-muted rounded px-2 py-1.5 font-mono leading-relaxed">
+    <p className="text-xs text-[#434655] bg-[#f2f4f6] rounded-lg px-3 py-2 font-mono leading-relaxed">
       {parts.map((part, i) =>
         part.isVariable ? (
           <span
             key={i}
             className={
               value
-                ? "bg-green-200 dark:bg-green-900 text-green-900 dark:text-green-100 px-1 rounded font-sans font-medium"
-                : "bg-blue-200 dark:bg-blue-900 text-blue-900 dark:text-blue-100 px-1 rounded"
+                ? "bg-[#d1fae5] text-[#065f46] px-1 rounded font-sans font-medium"
+                : "bg-[#dbe1ff] text-[#004ac6] px-1 rounded"
             }
           >
             {value || part.text}

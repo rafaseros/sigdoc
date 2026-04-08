@@ -106,8 +106,8 @@ export function BulkGenerateFlow({
         {[1, 2, 3, 4].map((s) => (
           <div
             key={s}
-            className={`h-2 flex-1 rounded ${
-              s <= step ? "bg-primary" : "bg-muted"
+            className={`h-2 flex-1 rounded-full transition-all ${
+              s < step ? "bg-gradient-to-r from-[#004ac6] to-[#2563eb]" : s === step ? "bg-[#2563eb]" : "bg-[#eceef0]"
             }`}
           />
         ))}
@@ -115,14 +115,14 @@ export function BulkGenerateFlow({
 
       {/* Step 1: Download Excel */}
       {step >= 1 && (
-        <Card>
+        <Card className="border-0 bg-white shadow-[0_12px_32px_rgba(25,28,30,0.06)]">
           <CardHeader>
             <CardTitle className="text-base">
               Paso 1: Descargar Plantilla Excel
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-sm text-muted-foreground mb-3">
+            <p className="text-sm text-[#434655] mb-3">
               Descargue el archivo Excel con {variableCount} columnas de variables.
               Complete cada fila con datos (máximo 10 filas).
             </p>
@@ -130,6 +130,7 @@ export function BulkGenerateFlow({
               onClick={handleDownloadExcel}
               disabled={downloadExcel.isPending}
               variant={step > 1 ? "outline" : "default"}
+              className={step > 1 ? "border-[rgba(195,198,215,0.3)] hover:bg-[#dbe1ff]/50 hover:text-[#004ac6]" : "bg-gradient-to-br from-[#004ac6] to-[#2563eb] text-white shadow-[0_4px_12px_rgba(0,74,198,0.3)]"}
             >
               {downloadExcel.isPending
                 ? "Descargando..."
@@ -141,7 +142,7 @@ export function BulkGenerateFlow({
 
       {/* Step 2: Upload filled Excel */}
       {step >= 2 && (
-        <Card>
+        <Card className="border-0 bg-white shadow-[0_12px_32px_rgba(25,28,30,0.06)]">
           <CardHeader>
             <CardTitle className="text-base">
               Paso 2: Subir Excel Completado
@@ -150,10 +151,10 @@ export function BulkGenerateFlow({
           <CardContent>
             <div
               {...getRootProps()}
-              className={`border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${
+              className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-all ${
                 isDragActive
-                  ? "border-primary bg-primary/5"
-                  : "border-muted-foreground/25"
+                  ? "border-[#004ac6] bg-[#dbe1ff]/30"
+                  : "border-[rgba(195,198,215,0.4)] hover:border-[#2563eb]/50 hover:bg-[#f7f9fb]"
               }`}
             >
               <input {...getInputProps()} />
@@ -165,7 +166,7 @@ export function BulkGenerateFlow({
               ) : isDragActive ? (
                 <p className="text-sm">Suelte el archivo Excel aquí...</p>
               ) : (
-                <p className="text-sm text-muted-foreground">
+                <p className="text-sm text-[#434655]">
                   Arrastre y suelte su archivo .xlsx completado, o haga clic para buscar
                 </p>
               )}
@@ -176,18 +177,18 @@ export function BulkGenerateFlow({
 
       {/* Step 3: Confirm & Generate */}
       {step >= 3 && !result && (
-        <Card>
+        <Card className="border-0 bg-white shadow-[0_12px_32px_rgba(25,28,30,0.06)]">
           <CardHeader>
             <CardTitle className="text-base">
               Paso 3: Generar Documentos
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-sm text-muted-foreground mb-3">
+            <p className="text-sm text-[#434655] mb-3">
               Listo para generar documentos desde "{file?.name}" usando la plantilla "
               {templateName}".
             </p>
-            <Button onClick={handleGenerate} disabled={bulkGenerate.isPending}>
+            <Button onClick={handleGenerate} disabled={bulkGenerate.isPending} className="bg-gradient-to-br from-[#004ac6] to-[#2563eb] text-white shadow-[0_4px_12px_rgba(0,74,198,0.3)]">
               {bulkGenerate.isPending ? "Generando..." : "Generar Documentos"}
             </Button>
           </CardContent>
@@ -196,17 +197,19 @@ export function BulkGenerateFlow({
 
       {/* Step 4: Results */}
       {result && (
-        <Card>
+        <Card className="border-0 bg-white shadow-[0_12px_32px_rgba(25,28,30,0.06)]">
           <CardHeader>
             <CardTitle className="text-base">Resultados</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            <p className="text-sm">
-              Se generaron{" "}
-              <strong>{result.document_count}</strong> documentos con éxito.
-            </p>
+            <div className="rounded-lg bg-[#d1fae5] p-3">
+              <p className="text-sm text-[#065f46]">
+                Se generaron{" "}
+                <strong>{result.document_count}</strong> documentos con éxito.
+              </p>
+            </div>
             {result.errors.length > 0 && (
-              <div className="text-sm text-destructive">
+              <div className="text-sm text-[#ba1a1a] rounded-lg bg-[#ffdad6] p-3">
                 <p className="font-medium">Errores:</p>
                 <ul className="list-disc pl-4">
                   {result.errors.map((e, i) => (
@@ -217,7 +220,7 @@ export function BulkGenerateFlow({
                 </ul>
               </div>
             )}
-            <Button onClick={handleDownloadZip} disabled={downloading}>
+            <Button onClick={handleDownloadZip} disabled={downloading} className="bg-[#059669] text-white hover:bg-[#047857] transition-all">
               {downloading ? "Descargando..." : "Descargar ZIP"}
             </Button>
           </CardContent>

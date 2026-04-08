@@ -131,7 +131,7 @@ export function UploadTemplateDialog() {
         <UploadIcon className="size-4 mr-2" />
         Subir Plantilla
       </DialogTrigger>
-      <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto bg-white/80 backdrop-blur-xl border-0 shadow-[0_12px_32px_rgba(25,28,30,0.1)]">
         <DialogHeader>
           <DialogTitle>Subir Plantilla</DialogTitle>
           <DialogDescription>
@@ -145,15 +145,15 @@ export function UploadTemplateDialog() {
           <div className="py-4">
             <div
               {...getRootProps()}
-              className={`flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed p-8 transition-colors ${
+              className={`flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed p-10 transition-all ${
                 isDragActive
-                  ? "border-ring bg-ring/5"
-                  : "border-input hover:border-ring/50"
+                  ? "border-[#004ac6] bg-[#dbe1ff]/30"
+                  : "border-[rgba(195,198,215,0.4)] hover:border-[#2563eb]/50 hover:bg-[#f7f9fb]"
               }`}
             >
               <input {...getInputProps()} />
-              <UploadIcon className="size-10 text-muted-foreground mb-3" />
-              <p className="text-sm text-muted-foreground text-center">
+              <UploadIcon className="size-10 text-[#434655] mb-3" />
+              <p className="text-sm text-[#434655] text-center">
                 {isDragActive
                   ? "Suelte el archivo aquí"
                   : "Arrastre y suelte un archivo .docx, o haga clic para seleccionar"}
@@ -176,9 +176,9 @@ export function UploadTemplateDialog() {
         {step === "valid" && validation && (
           <form onSubmit={handleSubmit}>
             <div className="grid gap-4 py-4">
-              <div className="flex items-center gap-2 rounded-md border border-green-500/50 bg-green-500/5 p-3">
-                <CircleCheckIcon className="size-4 text-green-600 dark:text-green-400 shrink-0" />
-                <p className="font-medium text-green-700 dark:text-green-400 text-sm">
+              <div className="flex items-center gap-2 rounded-lg border-0 bg-[#d1fae5] p-3">
+                <CircleCheckIcon className="size-4 text-[#059669] shrink-0" />
+                <p className="font-medium text-[#065f46] text-sm">
                   Plantilla válida — {validation.variable_summary.length} variable(s)
                   detectada(s)
                 </p>
@@ -192,9 +192,9 @@ export function UploadTemplateDialog() {
               {/* Warnings table (non-blocking) */}
               {validation.warnings.length > 0 && (
                 <div>
-                  <div className="flex items-center gap-2 mb-2">
-                    <CircleAlertIcon className="size-4 text-amber-600 dark:text-amber-400 shrink-0" />
-                    <p className="font-medium text-amber-700 dark:text-amber-400 text-sm">
+                  <div className="flex items-center gap-2 mb-2 rounded-lg bg-amber-50 p-3">
+                    <CircleAlertIcon className="size-4 text-amber-600 shrink-0" />
+                    <p className="font-medium text-amber-700 text-sm">
                       {validation.warnings.length} advertencia(s) (no bloquean la subida)
                     </p>
                   </div>
@@ -265,9 +265,9 @@ export function UploadTemplateDialog() {
           <div className="space-y-4 py-4">
             {/* Errors table */}
             <div>
-              <div className="flex items-center gap-2 mb-2">
-                <CircleAlertIcon className="size-4 text-destructive shrink-0" />
-                <p className="font-medium text-destructive text-sm">
+              <div className="flex items-center gap-2 mb-2 rounded-lg bg-[#ffdad6] p-3">
+                <CircleAlertIcon className="size-4 text-[#ba1a1a] shrink-0" />
+                <p className="font-medium text-[#93000a] text-sm">
                   {validation.errors.length} error(es) — deben corregirse antes de subir
                 </p>
               </div>
@@ -277,9 +277,9 @@ export function UploadTemplateDialog() {
             {/* Warnings table */}
             {validation.warnings.length > 0 && (
               <div>
-                <div className="flex items-center gap-2 mb-2">
-                  <CircleAlertIcon className="size-4 text-amber-600 dark:text-amber-400 shrink-0" />
-                  <p className="font-medium text-amber-700 dark:text-amber-400 text-sm">
+                <div className="flex items-center gap-2 mb-2 rounded-lg bg-amber-50 p-3">
+                  <CircleAlertIcon className="size-4 text-amber-600 shrink-0" />
+                  <p className="font-medium text-amber-700 text-sm">
                     {validation.warnings.length} advertencia(s)
                   </p>
                 </div>
@@ -336,18 +336,18 @@ export function UploadTemplateDialog() {
 
 function VariablesTable({ variables }: { variables: VariableSummary[] }) {
   return (
-    <div className="rounded-md border overflow-hidden max-h-48 overflow-y-auto">
+    <div className="rounded-lg overflow-hidden max-h-48 overflow-y-auto bg-white shadow-[0_2px_8px_rgba(25,28,30,0.04)]">
       <table className="w-full text-sm">
-        <thead className="bg-muted sticky top-0">
+        <thead className="bg-[#eceef0] sticky top-0">
           <tr>
-            <th className="px-3 py-1.5 text-left font-medium">Variable</th>
-            <th className="px-3 py-1.5 text-center font-medium w-16">Usos</th>
-            <th className="px-3 py-1.5 text-center font-medium w-20">Estado</th>
+            <th className="px-3 py-2 text-left font-semibold text-[#191c1e]">Variable</th>
+            <th className="px-3 py-2 text-center font-semibold text-[#191c1e] w-16">Usos</th>
+            <th className="px-3 py-2 text-center font-semibold text-[#191c1e] w-20">Estado</th>
           </tr>
         </thead>
         <tbody>
-          {variables.map((v) => (
-            <tr key={v.name} className="border-t">
+          {variables.map((v, i) => (
+            <tr key={v.name} className={`border-t border-[rgba(195,198,215,0.15)] ${i % 2 === 1 ? "bg-[#f7f9fb]" : ""}`}>
               <td className="px-3 py-1.5 font-mono text-xs">
                 {"{{ "}
                 {v.name}
@@ -356,8 +356,7 @@ function VariablesTable({ variables }: { variables: VariableSummary[] }) {
               <td className="px-3 py-1.5 text-center">{v.count}</td>
               <td className="px-3 py-1.5 text-center">
                 <Badge
-                  variant={v.has_errors ? "destructive" : "secondary"}
-                  className="text-xs"
+                  className={v.has_errors ? "bg-[#ffdad6] text-[#ba1a1a] border-0 rounded-full text-xs" : "bg-[#d1fae5] text-[#059669] border-0 rounded-full text-xs"}
                 >
                   {v.has_errors ? "Error" : "OK"}
                 </Badge>
@@ -372,22 +371,21 @@ function VariablesTable({ variables }: { variables: VariableSummary[] }) {
 
 function IssuesTable({ issues }: { issues: ValidationError[] }) {
   return (
-    <div className="rounded-md border overflow-hidden max-h-48 overflow-y-auto">
+    <div className="rounded-lg overflow-hidden max-h-48 overflow-y-auto bg-white shadow-[0_2px_8px_rgba(25,28,30,0.04)]">
       <table className="w-full text-sm">
-        <thead className="bg-muted sticky top-0">
+        <thead className="bg-[#eceef0] sticky top-0">
           <tr>
-            <th className="px-3 py-1.5 text-left font-medium w-20">Tipo</th>
-            <th className="px-3 py-1.5 text-left font-medium">Variable</th>
-            <th className="px-3 py-1.5 text-left font-medium">Detalle</th>
+            <th className="px-3 py-2 text-left font-semibold text-[#191c1e] w-20">Tipo</th>
+            <th className="px-3 py-2 text-left font-semibold text-[#191c1e]">Variable</th>
+            <th className="px-3 py-2 text-left font-semibold text-[#191c1e]">Detalle</th>
           </tr>
         </thead>
         <tbody>
           {issues.map((issue, i) => (
-            <tr key={i} className="border-t">
+            <tr key={i} className={`border-t border-[rgba(195,198,215,0.15)] ${i % 2 === 1 ? "bg-[#f7f9fb]" : ""}`}>
               <td className="px-3 py-1.5">
                 <Badge
-                  variant={issue.fixable ? "outline" : "destructive"}
-                  className="text-xs"
+                  className={issue.fixable ? "border-[#2563eb]/30 text-[#004ac6] bg-transparent rounded-full text-xs" : "bg-[#ffdad6] text-[#ba1a1a] border-0 rounded-full text-xs"}
                 >
                   {issue.fixable ? "Auto" : "Manual"}
                 </Badge>
@@ -395,7 +393,7 @@ function IssuesTable({ issues }: { issues: ValidationError[] }) {
               <td className="px-3 py-1.5 font-mono text-xs">
                 {issue.variable || "—"}
               </td>
-              <td className="px-3 py-1.5 text-muted-foreground">
+              <td className="px-3 py-1.5 text-[#434655]">
                 <span>{issue.message}</span>
                 {issue.suggestion && (
                   <span className="block text-xs mt-0.5 opacity-70">

@@ -160,6 +160,7 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
         {currentVersion && (
           <>
             <Button
+              className="bg-gradient-to-br from-[#004ac6] to-[#2563eb] text-white shadow-[0_4px_12px_rgba(0,74,198,0.3)] hover:shadow-[0_6px_20px_rgba(0,74,198,0.4)] transition-all"
               onClick={() =>
                 navigate({
                   to: "/documents/generate/$versionId",
@@ -173,6 +174,7 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
             </Button>
             <Button
               variant="outline"
+              className="border-[rgba(195,198,215,0.3)] hover:bg-[#dbe1ff]/50 hover:text-[#004ac6] transition-all"
               onClick={() =>
                 navigate({
                   to: "/documents/bulk/$versionId",
@@ -246,29 +248,29 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
 
         {/* Info Tab */}
         <TabsContent value="info">
-          <Card>
+          <Card className="border-0 bg-white shadow-[0_12px_32px_rgba(25,28,30,0.06)]">
             <CardHeader>
               <CardTitle>Información de la Plantilla</CardTitle>
             </CardHeader>
             <CardContent>
               <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-3">
-                <dt className="text-muted-foreground">Versión Actual</dt>
+                <dt className="text-[#434655]">Versión Actual</dt>
                 <dd className="font-medium">v{template.current_version}</dd>
 
-                <dt className="text-muted-foreground">Creado</dt>
+                <dt className="text-[#434655]">Creado</dt>
                 <dd>{formatDate(template.created_at)}</dd>
 
-                <dt className="text-muted-foreground">Actualizado</dt>
+                <dt className="text-[#434655]">Actualizado</dt>
                 <dd>{formatDate(template.updated_at)}</dd>
 
                 {currentVersion && (
                   <>
-                    <dt className="text-muted-foreground">Tamaño del Archivo</dt>
+                    <dt className="text-[#434655]">Tamaño del Archivo</dt>
                     <dd>{formatFileSize(currentVersion.file_size)}</dd>
                   </>
                 )}
 
-                <dt className="text-muted-foreground">Total de Versiones</dt>
+                <dt className="text-[#434655]">Total de Versiones</dt>
                 <dd>{template.versions.length}</dd>
               </dl>
             </CardContent>
@@ -277,7 +279,7 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
 
         {/* Variables Tab */}
         <TabsContent value="variables">
-          <Card>
+          <Card className="border-0 bg-white shadow-[0_12px_32px_rgba(25,28,30,0.06)]">
             <CardHeader>
               <CardTitle>Variables de la Plantilla</CardTitle>
             </CardHeader>
@@ -285,13 +287,13 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
               {template.variables.length > 0 ? (
                 <div className="flex flex-wrap gap-2">
                   {template.variables.map((variable) => (
-                    <Badge key={variable} variant="secondary">
+                    <Badge key={variable} className="bg-[#b4c5ff] text-[#004ac6] border-0 rounded-full font-semibold text-xs px-3 py-1 hover:bg-[#dbe1ff]">
                       {variable}
                     </Badge>
                   ))}
                 </div>
               ) : (
-                <p className="text-muted-foreground">
+                <p className="text-[#434655]">
                   No se encontraron variables en esta plantilla.
                 </p>
               )}
@@ -308,7 +310,7 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
             >
               <DialogTrigger
                 render={
-                  <Button>
+                  <Button className="bg-gradient-to-br from-[#004ac6] to-[#2563eb] text-white shadow-[0_4px_12px_rgba(0,74,198,0.3)] hover:shadow-[0_6px_20px_rgba(0,74,198,0.4)] transition-all">
                     <Upload className="size-4" />
                     Subir Nueva Versión
                   </Button>
@@ -324,14 +326,14 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
                 </DialogHeader>
                 <div
                   {...getRootProps()}
-                  className={`flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed p-8 transition-colors ${
+                  className={`flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed p-10 transition-all ${
                     isDragActive
-                      ? "border-primary bg-primary/5"
-                      : "border-muted-foreground/25 hover:border-muted-foreground/50"
+                      ? "border-[#004ac6] bg-[#dbe1ff]/30"
+                      : "border-[rgba(195,198,215,0.4)] hover:border-[#2563eb]/50 hover:bg-[#f7f9fb]"
                   }`}
                 >
                   <input {...getInputProps()} />
-                  <Upload className="mb-2 size-8 text-muted-foreground" />
+                  <Upload className="mb-2 size-8 text-[#434655]" />
                   {selectedFile ? (
                     <p className="text-sm font-medium">{selectedFile.name}</p>
                   ) : isDragActive ? (
@@ -369,11 +371,16 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
             {template.versions
               .sort((a, b) => b.version - a.version)
               .map((version) => (
-                <Card key={version.id} size="sm">
+                <Card key={version.id} size="sm" className="border-0 bg-white shadow-[0_4px_16px_rgba(25,28,30,0.04)] hover:shadow-[0_8px_24px_rgba(25,28,30,0.08)] transition-shadow">
                   <CardContent>
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
                         <Badge
+                          className={
+                            version.version === template.current_version
+                              ? "bg-gradient-to-br from-[#004ac6] to-[#2563eb] text-white border-0 rounded-full"
+                              : "border-[#2563eb]/30 text-[#004ac6] bg-transparent rounded-full"
+                          }
                           variant={
                             version.version === template.current_version
                               ? "default"
@@ -382,15 +389,15 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
                         >
                           v{version.version}
                         </Badge>
-                        <span className="text-muted-foreground">
+                        <span className="text-[#434655]">
                           {version.variables.length} variable
                           {version.variables.length !== 1 ? "s" : ""}
                         </span>
-                        <span className="text-muted-foreground">
+                        <span className="text-[#434655]">
                           {formatFileSize(version.file_size)}
                         </span>
                       </div>
-                      <span className="text-sm text-muted-foreground">
+                      <span className="text-sm text-[#434655]">
                         {formatDate(version.created_at)}
                       </span>
                     </div>
