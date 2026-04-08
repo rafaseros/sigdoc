@@ -66,3 +66,12 @@ class SQLAlchemyUserRepository(UserRepository):
         if user:
             user.is_active = False
             await self._session.flush()
+
+    async def count_active_by_tenant(self, tenant_id: UUID) -> int:
+        """Return the count of active users in the given tenant."""
+        stmt = select(func.count()).select_from(UserModel).where(
+            UserModel.tenant_id == tenant_id,
+            UserModel.is_active == True,  # noqa: E712
+        )
+        result = await self._session.execute(stmt)
+        return int(result.scalar_one())

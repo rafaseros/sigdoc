@@ -96,7 +96,16 @@ export function TemplateList() {
                     navigate({ to: "/templates/$templateId", params: { templateId: template.id } })
                   }
                 >
-                  <TableCell className="font-medium text-[#191c1e]">{template.name}</TableCell>
+                  <TableCell className="font-medium text-[#191c1e]">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span>{template.name}</span>
+                      {template.access_type === "shared" && (
+                        <Badge className="bg-[#e8f0fe] text-[#1a56db] border-0 rounded-full text-[10px] font-semibold leading-none px-2 py-0.5">
+                          Compartida
+                        </Badge>
+                      )}
+                    </div>
+                  </TableCell>
                   <TableCell className="text-[#434655]">
                     {truncate(template.description, 50)}
                   </TableCell>

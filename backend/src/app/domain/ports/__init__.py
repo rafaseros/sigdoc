@@ -3,6 +3,10 @@ from .document_repository import DocumentRepository
 from .storage_service import StorageService
 from .template_engine import TemplateEngine
 from .user_repository import UserRepository
+from .usage_repository import UsageRepository
+from .audit_repository import AuditRepository
+from .subscription_tier_repository import SubscriptionTierRepository
+from .tenant_repository import TenantRepository
 
 __all__ = [
     "TemplateRepository",
@@ -10,4 +14,8 @@ __all__ = [
     "StorageService",
     "TemplateEngine",
     "UserRepository",
+    "UsageRepository",
+    "AuditRepository",
+    "SubscriptionTierRepository",
+    "TenantRepository",
 ]

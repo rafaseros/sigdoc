@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import Response
 
 from app.application.services import get_document_service
@@ -8,9 +8,11 @@ from app.application.services.document_service import DocumentService
 from app.domain.exceptions import (
     BulkLimitExceededError,
     DocumentNotFoundError,
+    TemplateAccessDeniedError,
     TemplateVersionNotFoundError,
     VariablesMismatchError,
 )
+from app.presentation.middleware.rate_limit import limiter, tier_limit_bulk, tier_limit_generate
 from app.presentation.middleware.tenant import CurrentUser, get_current_user
 from app.presentation.schemas.document import (
     BulkGenerateResponse,
@@ -23,19 +25,24 @@ router = APIRouter()
 
 
 @router.post("/generate", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit(tier_limit_generate)
 async def generate_document(
-    request: GenerateRequest,
+    request: Request,
+    body: GenerateRequest,
     current_user: CurrentUser = Depends(get_current_user),
     service: DocumentService = Depends(get_document_service),
 ):
     """Generate a single document from a template version."""
     try:
         result = await service.generate_single(
-            template_version_id=request.template_version_id,
-            variables=request.variables,
+            template_version_id=body.template_version_id,
+            variables=body.variables,
             tenant_id=str(current_user.tenant_id),
             created_by=str(current_user.user_id),
+            role=current_user.role,
         )
+    except TemplateAccessDeniedError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
     except TemplateVersionNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template version not found")
 
@@ -60,7 +67,13 @@ async def get_excel_template(
 ):
     """Download a blank Excel template with variable columns for bulk generation."""
     try:
-        excel_bytes, filename = await service.generate_excel_template(template_version_id)
+        excel_bytes, filename = await service.generate_excel_template(
+            template_version_id,
+            user_id=str(current_user.user_id),
+            role=current_user.role,
+        )
+    except TemplateAccessDeniedError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
     except TemplateVersionNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template version not found")
 
@@ -72,7 +85,9 @@ async def get_excel_template(
 
 
 @router.post("/generate-bulk", status_code=status.HTTP_201_CREATED)
+@limiter.limit(tier_limit_bulk)
 async def generate_bulk(
+    request: Request,
     template_version_id: str = Form(...),
     file: UploadFile = File(...),
     current_user: CurrentUser = Depends(get_current_user),
@@ -89,7 +104,14 @@ async def generate_bulk(
 
     # Parse and validate Excel data
     try:
-        rows = await service.parse_excel_data(template_version_id, excel_bytes)
+        rows = await service.parse_excel_data(
+            template_version_id,
+            excel_bytes,
+            user_id=str(current_user.user_id),
+            role=current_user.role,
+        )
+    except TemplateAccessDeniedError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
     except TemplateVersionNotFoundError:
         raise HTTPException(status_code=404, detail="Template version not found")
     except BulkLimitExceededError as e:
@@ -98,12 +120,16 @@ async def generate_bulk(
         raise HTTPException(status_code=422, detail=str(e))
 
     # Generate documents
-    result = await service.generate_bulk(
-        template_version_id=template_version_id,
-        rows=rows,
-        tenant_id=str(current_user.tenant_id),
-        created_by=str(current_user.user_id),
-    )
+    try:
+        result = await service.generate_bulk(
+            template_version_id=template_version_id,
+            rows=rows,
+            tenant_id=str(current_user.tenant_id),
+            created_by=str(current_user.user_id),
+            role=current_user.role,
+        )
+    except TemplateAccessDeniedError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
 
     return BulkGenerateResponse(
         batch_id=str(result["batch_id"]),

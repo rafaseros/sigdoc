@@ -25,6 +25,8 @@ export interface Template {
   versions: TemplateVersion[];
   created_at: string;
   updated_at: string;
+  access_type: "owned" | "shared" | "admin";
+  is_owner: boolean;
 }
 
 interface TemplateListResponse {
@@ -32,6 +34,15 @@ interface TemplateListResponse {
   total: number;
   page: number;
   size: number;
+}
+
+export interface TemplateShare {
+  id: string;
+  template_id: string;
+  user_id: string;
+  tenant_id: string;
+  shared_by: string;
+  shared_at: string | null;
 }
 
 export function useTemplates(
@@ -60,5 +71,18 @@ export function useTemplate(id: string) {
       return data;
     },
     enabled: !!id,
+  });
+}
+
+export function useTemplateShares(templateId: string) {
+  return useQuery({
+    queryKey: templateKeys.shares(templateId),
+    queryFn: async () => {
+      const { data } = await apiClient.get<TemplateShare[]>(
+        `/templates/${templateId}/shares`
+      );
+      return data;
+    },
+    enabled: !!templateId,
   });
 }

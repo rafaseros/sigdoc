@@ -189,6 +189,7 @@ class DocxTemplateEngine(TemplateEngine):
                 variable_counts: Counter = Counter()
                 variable_order: list[str] = []  # first-appearance order
                 error_variables: set[str] = set()
+                contexts_by_var: dict[str, list[str]] = {}  # var -> paragraph contexts
 
                 # Collect all paragraphs: body + headers + footers
                 all_paragraphs = list(doc.paragraphs)
@@ -282,6 +283,15 @@ class DocxTemplateEngine(TemplateEngine):
                                 "suggestion": None,
                             })
 
+                    # Collect paragraph context for every variable found in this paragraph
+                    all_para_vars = re.findall(r"\{\{\s*(\w+)\s*\}\}", full_text)
+                    for var_name in all_para_vars:
+                        if var_name not in contexts_by_var:
+                            contexts_by_var[var_name] = []
+                        ctx = _truncate_context(full_text, var_name)
+                        if ctx not in contexts_by_var[var_name]:
+                            contexts_by_var[var_name].append(ctx)
+
                     # 3. Split formatting — WARNING only (style issue, not blocking)
                     runs_text = [run.text for run in para.runs]
                     combined = "".join(runs_text)
@@ -353,6 +363,7 @@ class DocxTemplateEngine(TemplateEngine):
                         "name": var_name,
                         "count": variable_counts[var_name],
                         "has_errors": var_name in error_variables,
+                        "contexts": contexts_by_var.get(var_name, []),
                     })
 
                 return {
@@ -378,7 +389,78 @@ class DocxTemplateEngine(TemplateEngine):
         Fixes: no-space variables, uppercase, camelCase -> snake_case.
         Does NOT fix: special chars, split formatting.
         Returns the corrected file bytes.
+
+        IMPORTANT: Works at the paragraph level (not run level) to handle variables
+        that Word splits across multiple runs due to mixed formatting. After applying
+        fixes to the full paragraph text, the runs are rebuilt: all run texts are
+        cleared and the entire fixed text is placed in the first run (preserving
+        that run's font properties).
         """
+
+        def _fix_text(text: str) -> str:
+            """Apply all fixable substitutions to a full paragraph text string."""
+            # Fix {{var}} -> {{ snake_case }}
+            # NOTE: pass the raw match to _camel_to_snake (it lowercases internally).
+            # Calling .lower() BEFORE _camel_to_snake destroys case info needed for
+            # splitting — e.g. 'UserName'.lower() = 'username' → never splits.
+            text = re.sub(
+                r"\{\{(\w+)\}\}",
+                lambda m: "{{ " + _camel_to_snake(m.group(1)) + " }}",
+                text,
+            )
+            # Fix {{ Var }} or {{ camelCase }} -> {{ snake_case }}
+            text = re.sub(
+                r"\{\{\s+(\w+)\s+\}\}",
+                lambda m: "{{ " + _camel_to_snake(m.group(1)) + " }}",
+                text,
+            )
+            return text
+
+        def _fix_paragraph(para) -> None:
+            """
+            Fix all variable names in a paragraph, working at the paragraph level
+            to correctly handle variables split across multiple runs by Word.
+
+            Strategy:
+            1. Concatenate all run texts to get the full paragraph text.
+            2. Apply regex fixes to the full text.
+            3. If the text changed, rebuild runs: clear all runs, put the fixed
+               full text in the first run (keeping its font properties intact).
+            """
+            if not para.runs:
+                return
+
+            full_text = para.text  # concatenates all runs
+            fixed_text = _fix_text(full_text)
+
+            if fixed_text == full_text:
+                return  # nothing to fix
+
+            # Save the first run's font properties before modifying anything
+            first_run = para.runs[0]
+            bold = first_run.bold
+            italic = first_run.italic
+            underline = first_run.underline
+            font_name = first_run.font.name
+            font_size = first_run.font.size
+            font_color = first_run.font.color.rgb if first_run.font.color and first_run.font.color.type else None
+
+            # Clear ALL runs so none of the old fragmented text remains
+            for run in para.runs:
+                run.text = ""
+
+            # Place the entire fixed text in the first run and restore its font
+            first_run.text = fixed_text
+            first_run.bold = bold
+            first_run.italic = italic
+            first_run.underline = underline
+            if font_name:
+                first_run.font.name = font_name
+            if font_size:
+                first_run.font.size = font_size
+            if font_color is not None:
+                from docx.shared import RGBColor
+                first_run.font.color.rgb = font_color
 
         def _auto_fix_sync(data: bytes) -> bytes:
             with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp:
@@ -388,6 +470,7 @@ class DocxTemplateEngine(TemplateEngine):
             try:
                 doc = Document(tmp_path)
 
+                # Collect all paragraphs: body, headers, footers, AND table cells
                 all_paragraphs = list(doc.paragraphs)
                 for section in doc.sections:
                     if section.header:
@@ -395,31 +478,27 @@ class DocxTemplateEngine(TemplateEngine):
                     if section.footer:
                         all_paragraphs.extend(section.footer.paragraphs)
 
+                # Tables: body tables
+                for table in doc.tables:
+                    for row in table.rows:
+                        for cell in row.cells:
+                            all_paragraphs.extend(cell.paragraphs)
+
+                # Tables inside headers and footers
+                for section in doc.sections:
+                    if section.header:
+                        for table in section.header.tables:
+                            for row in table.rows:
+                                for cell in row.cells:
+                                    all_paragraphs.extend(cell.paragraphs)
+                    if section.footer:
+                        for table in section.footer.tables:
+                            for row in table.rows:
+                                for cell in row.cells:
+                                    all_paragraphs.extend(cell.paragraphs)
+
                 for para in all_paragraphs:
-                    for run in para.runs:
-                        original = run.text
-                        fixed = original
-
-                        # Fix {{var}} -> {{ snake_case }}
-                        fixed = re.sub(
-                            r"\{\{(\w+)\}\}",
-                            lambda m: "{{ "
-                            + _camel_to_snake(m.group(1).lower())
-                            + " }}",
-                            fixed,
-                        )
-
-                        # Fix {{ Var }} or {{ camelCase }} -> {{ snake_case }}
-                        fixed = re.sub(
-                            r"\{\{\s+(\w+)\s+\}\}",
-                            lambda m: "{{ "
-                            + _camel_to_snake(m.group(1).lower())
-                            + " }}",
-                            fixed,
-                        )
-
-                        if fixed != original:
-                            run.text = fixed
+                    _fix_paragraph(para)
 
                 output = io.BytesIO()
                 doc.save(output)

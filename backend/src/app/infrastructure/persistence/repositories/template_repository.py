@@ -1,11 +1,15 @@
+import uuid
 from uuid import UUID
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, exists, func, select, union_all
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.domain.entities import TemplateShare
 from app.domain.ports.template_repository import TemplateRepository as TemplateRepositoryPort
 from app.infrastructure.persistence.models.template import TemplateModel
+from app.infrastructure.persistence.models.template_share import TemplateShareModel
 from app.infrastructure.persistence.models.template_version import TemplateVersionModel
 
 
@@ -69,9 +73,25 @@ class SQLAlchemyTemplateRepository(TemplateRepositoryPort):
         await self._session.flush()
 
     async def create_version(self, version):
-        self._session.add(version)
+        from app.domain.entities import TemplateVersion as DomainTemplateVersion
+
+        if isinstance(version, DomainTemplateVersion):
+            orm_version = TemplateVersionModel(
+                id=version.id,
+                tenant_id=version.tenant_id,
+                template_id=version.template_id,
+                version=version.version,
+                minio_path=version.minio_path,
+                variables=version.variables,
+                variables_meta=[],
+                file_size=version.file_size,
+            )
+        else:
+            orm_version = version
+
+        self._session.add(orm_version)
         await self._session.flush()
-        return version
+        return orm_version
 
     async def get_version(self, template_id: UUID, version: int):
         stmt = select(TemplateVersionModel).where(
@@ -131,3 +151,212 @@ class SQLAlchemyTemplateRepository(TemplateRepositoryPort):
         # Refresh to load the versions relationship
         await self._session.refresh(template, ["versions"])
         return template
+
+    async def list_accessible(
+        self,
+        user_id: UUID,
+        role: str,
+        page: int = 1,
+        size: int = 20,
+        search: str | None = None,
+    ) -> tuple[list, int]:
+        """Return templates where user is owner OR has a share record.
+        Admin role sees all templates in the tenant (tenant filter applied by TenantMixin event).
+        Each returned TemplateModel has a transient `access_type` attribute: "owned" or "shared".
+        """
+        if role == "admin":
+            # Admins see everything in the tenant
+            stmt = select(TemplateModel).options(selectinload(TemplateModel.versions))
+            count_stmt = select(func.count()).select_from(TemplateModel)
+
+            if search:
+                search_filter = TemplateModel.name.ilike(f"%{search}%")
+                stmt = stmt.where(search_filter)
+                count_stmt = count_stmt.where(search_filter)
+
+            total_result = await self._session.execute(count_stmt)
+            total = total_result.scalar_one()
+
+            offset = (page - 1) * size
+            stmt = stmt.order_by(TemplateModel.created_at.desc()).offset(offset).limit(size)
+            result = await self._session.execute(stmt)
+            templates = list(result.scalars().unique().all())
+
+            for t in templates:
+                t.access_type = "owned" if t.created_by == user_id else "shared"
+
+            return templates, total
+
+        # Non-admin: owned OR shared
+        # We build two sub-selects for the IDs (owned + shared), union them,
+        # then load full TemplateModel objects.
+        owned_ids = select(TemplateModel.id).where(TemplateModel.created_by == user_id)
+        shared_ids = select(TemplateShareModel.template_id).where(
+            TemplateShareModel.user_id == user_id
+        )
+        accessible_ids_subq = union_all(owned_ids, shared_ids).subquery()
+
+        stmt = (
+            select(TemplateModel)
+            .where(TemplateModel.id.in_(select(accessible_ids_subq)))
+            .options(selectinload(TemplateModel.versions))
+        )
+        count_stmt = select(func.count()).select_from(TemplateModel).where(
+            TemplateModel.id.in_(select(accessible_ids_subq))
+        )
+
+        if search:
+            search_filter = TemplateModel.name.ilike(f"%{search}%")
+            stmt = stmt.where(search_filter)
+            count_stmt = count_stmt.where(search_filter)
+
+        total_result = await self._session.execute(count_stmt)
+        total = total_result.scalar_one()
+
+        offset = (page - 1) * size
+        stmt = stmt.order_by(TemplateModel.created_at.desc()).offset(offset).limit(size)
+        result = await self._session.execute(stmt)
+        templates = list(result.scalars().unique().all())
+
+        # Collect share lookups in one query to avoid N+1
+        template_ids = [t.id for t in templates]
+        if template_ids:
+            shares_result = await self._session.execute(
+                select(TemplateShareModel.template_id).where(
+                    TemplateShareModel.template_id.in_(template_ids),
+                    TemplateShareModel.user_id == user_id,
+                )
+            )
+            shared_set = {row[0] for row in shares_result.all()}
+        else:
+            shared_set = set()
+
+        for t in templates:
+            t.access_type = "owned" if t.created_by == user_id else "shared"
+            # Validate consistency: if it's in shared_set but not owned, it's "shared"
+            if t.id in shared_set and t.created_by != user_id:
+                t.access_type = "shared"
+
+        return templates, total
+
+    async def add_share(
+        self,
+        template_id: UUID,
+        user_id: UUID,
+        tenant_id: UUID,
+        shared_by: UUID,
+    ) -> TemplateShare:
+        """Create a share record. Idempotent — ON CONFLICT DO NOTHING."""
+        share_id = uuid.uuid4()
+        stmt = (
+            pg_insert(TemplateShareModel)
+            .values(
+                id=share_id,
+                template_id=template_id,
+                user_id=user_id,
+                tenant_id=tenant_id,
+                shared_by=shared_by,
+            )
+            .on_conflict_do_nothing(constraint="uq_template_shares_template_user")
+            .returning(
+                TemplateShareModel.id,
+                TemplateShareModel.template_id,
+                TemplateShareModel.user_id,
+                TemplateShareModel.tenant_id,
+                TemplateShareModel.shared_by,
+                TemplateShareModel.shared_at,
+            )
+        )
+        result = await self._session.execute(stmt)
+        row = result.one_or_none()
+
+        if row is None:
+            # Conflict — row already existed; fetch it
+            existing = await self._session.execute(
+                select(TemplateShareModel).where(
+                    TemplateShareModel.template_id == template_id,
+                    TemplateShareModel.user_id == user_id,
+                )
+            )
+            model = existing.scalar_one()
+            return TemplateShare(
+                id=model.id,
+                template_id=model.template_id,
+                user_id=model.user_id,
+                tenant_id=model.tenant_id,
+                shared_by=model.shared_by,
+                shared_at=model.shared_at,
+            )
+
+        return TemplateShare(
+            id=row.id,
+            template_id=row.template_id,
+            user_id=row.user_id,
+            tenant_id=row.tenant_id,
+            shared_by=row.shared_by,
+            shared_at=row.shared_at,
+        )
+
+    async def remove_share(self, template_id: UUID, user_id: UUID) -> None:
+        """Delete the share record for (template_id, user_id)."""
+        stmt = delete(TemplateShareModel).where(
+            TemplateShareModel.template_id == template_id,
+            TemplateShareModel.user_id == user_id,
+        )
+        await self._session.execute(stmt)
+        await self._session.flush()
+
+    async def has_access(self, template_id: UUID, user_id: UUID, role: str) -> bool:
+        """Return True if user owns the template, has a share, or is admin."""
+        if role == "admin":
+            return True
+
+        stmt = select(
+            exists().where(
+                TemplateModel.id == template_id,
+            ).where(
+                (TemplateModel.created_by == user_id)
+                | exists().where(
+                    TemplateShareModel.template_id == template_id,
+                    TemplateShareModel.user_id == user_id,
+                )
+            )
+        )
+        result = await self._session.execute(stmt)
+        return bool(result.scalar_one())
+
+    async def list_shares(self, template_id: UUID) -> list[TemplateShare]:
+        """Return all share records for a given template."""
+        stmt = select(TemplateShareModel).where(
+            TemplateShareModel.template_id == template_id
+        )
+        result = await self._session.execute(stmt)
+        models = list(result.scalars().all())
+
+        return [
+            TemplateShare(
+                id=m.id,
+                template_id=m.template_id,
+                user_id=m.user_id,
+                tenant_id=m.tenant_id,
+                shared_by=m.shared_by,
+                shared_at=m.shared_at,
+            )
+            for m in models
+        ]
+
+    async def count_by_tenant(self, tenant_id: UUID) -> int:
+        """Return the total number of templates owned by the given tenant."""
+        stmt = select(func.count()).select_from(TemplateModel).where(
+            TemplateModel.tenant_id == tenant_id,
+        )
+        result = await self._session.execute(stmt)
+        return int(result.scalar_one())
+
+    async def count_shares(self, template_id: UUID) -> int:
+        """Return the number of active share records for the given template."""
+        stmt = select(func.count()).select_from(TemplateShareModel).where(
+            TemplateShareModel.template_id == template_id,
+        )
+        result = await self._session.execute(stmt)
+        return int(result.scalar_one())

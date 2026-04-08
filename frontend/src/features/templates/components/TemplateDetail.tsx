@@ -35,6 +35,7 @@ import {
 
 import { TemplateDetailSkeleton } from "./TemplateDetailSkeleton";
 import { DocumentsTab } from "./DocumentsTab";
+import { ShareTemplateDialog } from "./ShareTemplateDialog";
 
 function formatFileSize(bytes: number): string {
   if (bytes === 0) return "0 B";
@@ -136,6 +137,9 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
     setDeleteDialogOpen(false);
   }
 
+  const accessBadgeLabel =
+    template.access_type === "shared" ? "Compartido contigo" : null;
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -148,7 +152,14 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
           <ArrowLeft />
         </Button>
         <div className="flex-1">
-          <h1 className="text-2xl font-bold">{template.name}</h1>
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-2xl font-bold">{template.name}</h1>
+            {accessBadgeLabel && (
+              <Badge className="bg-[#e8f0fe] text-[#1a56db] border-0 rounded-full text-xs font-semibold">
+                {accessBadgeLabel}
+              </Badge>
+            )}
+          </div>
           {template.description && (
             <p className="mt-1 text-muted-foreground">{template.description}</p>
           )}
@@ -189,40 +200,49 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
           </>
         )}
 
-        <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-          <DialogTrigger
-            render={
-              <Button variant="destructive">
-                <Trash2 />
-                Eliminar Plantilla
-              </Button>
-            }
+        {template.is_owner && (
+          <ShareTemplateDialog
+            templateId={templateId}
+            templateName={template.name}
           />
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Eliminar Plantilla</DialogTitle>
-              <DialogDescription>
-                ¿Está seguro de que desea eliminar "{template.name}"? Esta acción
-                no se puede deshacer. Todas las versiones serán eliminadas permanentemente.
-              </DialogDescription>
-            </DialogHeader>
-            <DialogFooter>
-              <Button
-                variant="outline"
-                onClick={() => setDeleteDialogOpen(false)}
-              >
-                Cancelar
-              </Button>
-              <Button
-                variant="destructive"
-                onClick={handleDelete}
-                disabled={deleteTemplate.isPending}
-              >
-                {deleteTemplate.isPending ? "Eliminando..." : "Eliminar"}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+        )}
+
+        {template.is_owner && (
+          <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+            <DialogTrigger
+              render={
+                <Button variant="destructive">
+                  <Trash2 />
+                  Eliminar Plantilla
+                </Button>
+              }
+            />
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Eliminar Plantilla</DialogTitle>
+                <DialogDescription>
+                  ¿Está seguro de que desea eliminar "{template.name}"? Esta acción
+                  no se puede deshacer. Todas las versiones serán eliminadas permanentemente.
+                </DialogDescription>
+              </DialogHeader>
+              <DialogFooter>
+                <Button
+                  variant="outline"
+                  onClick={() => setDeleteDialogOpen(false)}
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  variant="destructive"
+                  onClick={handleDelete}
+                  disabled={deleteTemplate.isPending}
+                >
+                  {deleteTemplate.isPending ? "Eliminando..." : "Eliminar"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        )}
       </div>
 
       {/* Tabs */}
@@ -304,69 +324,71 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
         {/* Versions Tab */}
         <TabsContent value="versions">
           <div className="space-y-3">
-            <Dialog
-              open={uploadDialogOpen}
-              onOpenChange={setUploadDialogOpen}
-            >
-              <DialogTrigger
-                render={
-                  <Button className="bg-gradient-to-br from-[#004ac6] to-[#2563eb] text-white shadow-[0_4px_12px_rgba(0,74,198,0.3)] hover:shadow-[0_6px_20px_rgba(0,74,198,0.4)] transition-all">
-                    <Upload className="size-4" />
-                    Subir Nueva Versión
-                  </Button>
-                }
-              />
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Subir Nueva Versión</DialogTitle>
-                  <DialogDescription>
-                    Suba un nuevo archivo .docx para crear la versión v
-                    {template.current_version + 1} de "{template.name}".
-                  </DialogDescription>
-                </DialogHeader>
-                <div
-                  {...getRootProps()}
-                  className={`flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed p-10 transition-all ${
-                    isDragActive
-                      ? "border-[#004ac6] bg-[#dbe1ff]/30"
-                      : "border-[rgba(195,198,215,0.4)] hover:border-[#2563eb]/50 hover:bg-[#f7f9fb]"
-                  }`}
-                >
-                  <input {...getInputProps()} />
-                  <Upload className="mb-2 size-8 text-[#434655]" />
-                  {selectedFile ? (
-                    <p className="text-sm font-medium">{selectedFile.name}</p>
-                  ) : isDragActive ? (
-                    <p className="text-sm text-muted-foreground">
-                      Suelte el archivo aquí...
-                    </p>
-                  ) : (
-                    <p className="text-sm text-muted-foreground">
-                      Arrastre y suelte un archivo .docx, o haga clic para seleccionar
-                    </p>
-                  )}
-                </div>
-                <DialogFooter>
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      setUploadDialogOpen(false);
-                      setSelectedFile(null);
-                    }}
+            {template.is_owner && (
+              <Dialog
+                open={uploadDialogOpen}
+                onOpenChange={setUploadDialogOpen}
+              >
+                <DialogTrigger
+                  render={
+                    <Button className="bg-gradient-to-br from-[#004ac6] to-[#2563eb] text-white shadow-[0_4px_12px_rgba(0,74,198,0.3)] hover:shadow-[0_6px_20px_rgba(0,74,198,0.4)] transition-all">
+                      <Upload className="size-4" />
+                      Subir Nueva Versión
+                    </Button>
+                  }
+                />
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Subir Nueva Versión</DialogTitle>
+                    <DialogDescription>
+                      Suba un nuevo archivo .docx para crear la versión v
+                      {template.current_version + 1} de "{template.name}".
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div
+                    {...getRootProps()}
+                    className={`flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed p-10 transition-all ${
+                      isDragActive
+                        ? "border-[#004ac6] bg-[#dbe1ff]/30"
+                        : "border-[rgba(195,198,215,0.4)] hover:border-[#2563eb]/50 hover:bg-[#f7f9fb]"
+                    }`}
                   >
-                    Cancelar
-                  </Button>
-                  <Button
-                    onClick={handleUploadVersion}
-                    disabled={!selectedFile || uploadNewVersion.isPending}
-                  >
-                    {uploadNewVersion.isPending
-                      ? "Subiendo..."
-                      : "Subir Versión"}
-                  </Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
+                    <input {...getInputProps()} />
+                    <Upload className="mb-2 size-8 text-[#434655]" />
+                    {selectedFile ? (
+                      <p className="text-sm font-medium">{selectedFile.name}</p>
+                    ) : isDragActive ? (
+                      <p className="text-sm text-muted-foreground">
+                        Suelte el archivo aquí...
+                      </p>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">
+                        Arrastre y suelte un archivo .docx, o haga clic para seleccionar
+                      </p>
+                    )}
+                  </div>
+                  <DialogFooter>
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setUploadDialogOpen(false);
+                        setSelectedFile(null);
+                      }}
+                    >
+                      Cancelar
+                    </Button>
+                    <Button
+                      onClick={handleUploadVersion}
+                      disabled={!selectedFile || uploadNewVersion.isPending}
+                    >
+                      {uploadNewVersion.isPending
+                        ? "Subiendo..."
+                        : "Subir Versión"}
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+            )}
 
             {template.versions
               .sort((a, b) => b.version - a.version)

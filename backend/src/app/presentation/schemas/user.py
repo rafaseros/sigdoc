@@ -22,6 +22,7 @@ class UpdateUserRequest(BaseModel):
     email: str | None = None
     full_name: str | None = None
     is_active: bool | None = None
+    bulk_generation_limit: int | None = None
 
     @field_validator("email")
     @classmethod
@@ -46,6 +47,7 @@ class UserResponse(BaseModel):
     role: str
     is_active: bool
     created_at: datetime
+    bulk_generation_limit: int | None = None
 
     model_config = {"from_attributes": True}
 

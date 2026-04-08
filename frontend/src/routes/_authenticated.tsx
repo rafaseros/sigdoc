@@ -2,6 +2,7 @@ import { createFileRoute, Link, Outlet, redirect, useNavigate } from "@tanstack/
 import { useAuth } from "@/shared/lib/auth";
 import { Button } from "@/components/ui/button";
 import { ChangePasswordDialog } from "@/features/users";
+import { QuotaExceededDialog } from "@/features/subscription/components/QuotaExceededDialog";
 
 export const Route = createFileRoute("/_authenticated")({
   beforeLoad: () => {
@@ -45,6 +46,26 @@ function AuthenticatedLayout() {
                   Usuarios
                 </Link>
               )}
+              <Link
+                to="/usage"
+                className="text-sm font-medium text-[#434655] transition-all px-3 py-1.5 rounded-full hover:bg-[#dbe1ff]/50 hover:text-[#004ac6] [&.active]:bg-[#dbe1ff] [&.active]:text-[#004ac6]"
+              >
+                Uso
+              </Link>
+              <Link
+                to="/subscription"
+                className="text-sm font-medium text-[#434655] transition-all px-3 py-1.5 rounded-full hover:bg-[#dbe1ff]/50 hover:text-[#004ac6] [&.active]:bg-[#dbe1ff] [&.active]:text-[#004ac6]"
+              >
+                Suscripción
+              </Link>
+              {isAdmin && (
+                <Link
+                  to="/audit"
+                  className="text-sm font-medium text-[#434655] transition-all px-3 py-1.5 rounded-full hover:bg-[#dbe1ff]/50 hover:text-[#004ac6] [&.active]:bg-[#dbe1ff] [&.active]:text-[#004ac6]"
+                >
+                  Auditoría
+                </Link>
+              )}
             </nav>
           </div>
           <div className="flex items-center gap-3">
@@ -61,6 +82,7 @@ function AuthenticatedLayout() {
       <main className="container mx-auto px-4 py-6">
         <Outlet />
       </main>
+      <QuotaExceededDialog />
     </div>
   );
 }

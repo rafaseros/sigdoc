@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from uuid import UUID
 
-from app.domain.entities import Template, TemplateVersion
+from app.domain.entities import Template, TemplateShare, TemplateVersion
 
 
 class TemplateRepository(ABC):
@@ -56,4 +56,53 @@ class TemplateRepository(ABC):
         file_size: int,
     ) -> Template:
         """Create a template and its first version atomically."""
+        ...
+
+    @abstractmethod
+    async def list_accessible(
+        self,
+        user_id: UUID,
+        role: str,
+        page: int = 1,
+        size: int = 20,
+        search: str | None = None,
+    ) -> tuple[list[Template], int]:
+        """Return templates where user is owner OR has a share record.
+        Admin role sees all templates in the tenant."""
+        ...
+
+    @abstractmethod
+    async def add_share(
+        self,
+        template_id: UUID,
+        user_id: UUID,
+        tenant_id: UUID,
+        shared_by: UUID,
+    ) -> TemplateShare:
+        """Create a share record. Idempotent — ON CONFLICT DO NOTHING."""
+        ...
+
+    @abstractmethod
+    async def remove_share(self, template_id: UUID, user_id: UUID) -> None:
+        """Delete the share record for (template_id, user_id)."""
+        ...
+
+    @abstractmethod
+    async def has_access(self, template_id: UUID, user_id: UUID, role: str) -> bool:
+        """Return True if user owns the template, has a share, or is admin."""
+        ...
+
+    @abstractmethod
+    async def list_shares(self, template_id: UUID) -> list[TemplateShare]:
+        """Return all share records for a given template."""
+        ...
+
+    @abstractmethod
+    async def count_by_tenant(self, tenant_id: UUID) -> int:
+        """Return the total number of templates owned by the given tenant."""
+        ...
+
+    @abstractmethod
+    async def count_shares(self, template_id: UUID) -> int:
+        """Return the number of active share records for the given template."""
         ...

@@ -1,4 +1,5 @@
 from datetime import datetime
+from uuid import UUID
 
 from pydantic import BaseModel
 
@@ -28,6 +29,8 @@ class TemplateResponse(BaseModel):
     versions: list[TemplateVersionResponse] = []
     created_at: datetime
     updated_at: datetime
+    access_type: str = "owned"  # "owned" | "shared" | "admin"
+    is_owner: bool = True
 
     model_config = {"from_attributes": True}
 
@@ -46,3 +49,16 @@ class TemplateUploadResponse(BaseModel):
     version: int
     variables: list[str]
     created_at: datetime
+
+
+class ShareTemplateRequest(BaseModel):
+    user_id: UUID
+
+
+class TemplateShareResponse(BaseModel):
+    id: str
+    template_id: str
+    user_id: str
+    tenant_id: str
+    shared_by: str
+    shared_at: datetime | None = None

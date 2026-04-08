@@ -11,6 +11,7 @@ class TemplateVersion:
     version: int
     minio_path: str
     variables: list[str] = field(default_factory=list)
+    variables_meta: list[dict] | None = None
     file_size: int = 0
     created_at: datetime | None = None
 

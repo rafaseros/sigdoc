@@ -1,8 +1,14 @@
-import uuid
+from __future__ import annotations
 
+import uuid
+from typing import TYPE_CHECKING
+from uuid import UUID
+
+from app.domain.entities import Document
 from app.domain.exceptions import (
     BulkLimitExceededError,
     DocumentNotFoundError,
+    TemplateAccessDeniedError,
     TemplateVersionNotFoundError,
     VariablesMismatchError,
 )
@@ -10,6 +16,11 @@ from app.domain.ports.document_repository import DocumentRepository
 from app.domain.ports.storage_service import StorageService
 from app.domain.ports.template_engine import TemplateEngine
 from app.domain.ports.template_repository import TemplateRepository
+
+if TYPE_CHECKING:
+    from app.application.services.audit_service import AuditService
+    from app.application.services.quota_service import QuotaService
+    from app.application.services.usage_service import UsageService
 
 
 class DocumentService:
@@ -22,11 +33,25 @@ class DocumentService:
         template_repository: TemplateRepository,
         storage: StorageService,
         engine: TemplateEngine,
+        bulk_generation_limit: int = 10,
+        usage_service: UsageService | None = None,
+        audit_service: AuditService | None = None,
+        ip_address: str | None = None,
+        quota_service: QuotaService | None = None,
+        tier_id: UUID | None = None,
+        user_bulk_override: int | None = None,
     ):
         self._doc_repo = document_repository
         self._tpl_repo = template_repository
         self._storage = storage
         self._engine = engine
+        self._bulk_limit = bulk_generation_limit
+        self._usage_service = usage_service
+        self._audit_service = audit_service
+        self._ip_address = ip_address
+        self._quota_service = quota_service
+        self._tier_id = tier_id
+        self._user_bulk_override = user_bulk_override
 
     async def generate_single(
         self,
@@ -34,22 +59,38 @@ class DocumentService:
         variables: dict[str, str],
         tenant_id: str,
         created_by: str,
+        role: str = "user",
     ) -> dict:
         """
         Generate a single document from a template version:
         1. Fetch template version from DB
-        2. Download template .docx from MinIO
-        3. Render template with variables via docxtpl engine
-        4. Upload rendered document to MinIO
-        5. Create document record in DB
-        6. Return document with presigned download URL
+        2. Check user has access to the template
+        3. Download template .docx from MinIO
+        4. Render template with variables via docxtpl engine
+        5. Upload rendered document to MinIO
+        6. Create document record in DB
+        7. Return document with presigned download URL
         """
+        # 0. Quota check (optional — skipped when quota_service is None)
+        if self._quota_service is not None and self._tier_id is not None:
+            await self._quota_service.check_document_quota(
+                tenant_id=uuid.UUID(tenant_id),
+                tier_id=self._tier_id,
+                additional=1,
+            )
+
         # 1. Get template version
         version = await self._tpl_repo.get_version_by_id(uuid.UUID(template_version_id))
         if not version:
             raise TemplateVersionNotFoundError(
                 f"Template version {template_version_id} not found"
             )
+
+        # 2. Access check
+        user_uuid = uuid.UUID(created_by)
+        has_access = await self._tpl_repo.has_access(version.template_id, user_uuid, role)
+        if not has_access:
+            raise TemplateAccessDeniedError("No tenés acceso a esta plantilla")
 
         # 2. Download template from MinIO
         template_bytes = await self._storage.download_file(
@@ -79,10 +120,8 @@ class DocumentService:
             content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         )
 
-        # 5. Create DB record
-        from app.infrastructure.persistence.models.document import DocumentModel
-
-        document = DocumentModel(
+        # 5. Create DB record (domain entity — repo handles ORM mapping)
+        document = Document(
             id=doc_id,
             tenant_id=uuid.UUID(tenant_id),
             template_version_id=uuid.UUID(template_version_id),
@@ -95,7 +134,32 @@ class DocumentService:
         )
         document = await self._doc_repo.create(document)
 
-        # 6. Get presigned download URL
+        # 6. Record usage + audit (both optional for backward compat)
+        user_uuid = uuid.UUID(created_by)
+        tenant_uuid = uuid.UUID(tenant_id)
+        template_uuid = version.template_id
+
+        if self._usage_service is not None:
+            await self._usage_service.record(
+                user_id=user_uuid,
+                tenant_id=tenant_uuid,
+                template_id=template_uuid,
+                generation_type="single",
+                document_count=1,
+            )
+
+        if self._audit_service is not None:
+            from app.domain.entities import AuditAction
+            self._audit_service.log(
+                actor_id=user_uuid,
+                tenant_id=tenant_uuid,
+                action=AuditAction.DOCUMENT_GENERATE,
+                resource_type="document",
+                resource_id=document.id,
+                ip_address=self._ip_address,
+            )
+
+        # 7. Get presigned download URL
         download_url = await self._storage.get_presigned_url(
             bucket=self.DOCUMENTS_BUCKET,
             path=minio_path,
@@ -142,6 +206,18 @@ class DocumentService:
         # Delete from DB
         await self._doc_repo.delete(document_id)
 
+        # Audit the deletion (optional for backward compat)
+        if self._audit_service is not None:
+            from app.domain.entities import AuditAction
+            self._audit_service.log(
+                actor_id=document.created_by,
+                tenant_id=document.tenant_id,
+                action=AuditAction.DOCUMENT_DELETE,
+                resource_type="document",
+                resource_id=document_id,
+                ip_address=self._ip_address,
+            )
+
     async def list_documents(
         self,
         page: int = 1,
@@ -159,7 +235,10 @@ class DocumentService:
     # ── Bulk generation methods ──────────────────────────────────────────
 
     async def generate_excel_template(
-        self, template_version_id: str
+        self,
+        template_version_id: str,
+        user_id: str | None = None,
+        role: str = "user",
     ) -> tuple[bytes, str]:
         """
         Generate a blank Excel template for bulk data entry.
@@ -177,6 +256,14 @@ class DocumentService:
             raise TemplateVersionNotFoundError(
                 f"Template version {template_version_id} not found"
             )
+
+        if user_id is not None:
+            user_uuid = uuid.UUID(user_id)
+            has_access = await self._tpl_repo.has_access(
+                version.template_id, user_uuid, role
+            )
+            if not has_access:
+                raise TemplateAccessDeniedError("No tenés acceso a esta plantilla")
 
         wb = openpyxl.Workbook()
         ws = wb.active
@@ -211,13 +298,21 @@ class DocumentService:
         return output.read(), filename
 
     async def parse_excel_data(
-        self, template_version_id: str, excel_bytes: bytes
+        self,
+        template_version_id: str,
+        excel_bytes: bytes,
+        user_id: str | None = None,
+        role: str = "user",
+        tenant_id: str | None = None,
+        user_bulk_override: int | None = None,
     ) -> list[dict[str, str]]:
         """
         Parse a filled Excel file and validate against template variables.
         Returns list of dicts (one per row).
-        Raises BulkLimitExceededError if > 10 rows.
+        Raises BulkLimitExceededError if > bulk_limit rows (when quota_service is None).
+        Raises QuotaExceededError if > tier/user bulk limit (when quota_service is set).
         Raises VariablesMismatchError if headers don't match template variables.
+        Raises TemplateAccessDeniedError if user lacks access.
         """
         import openpyxl
         from io import BytesIO
@@ -229,6 +324,14 @@ class DocumentService:
             raise TemplateVersionNotFoundError(
                 f"Template version {template_version_id} not found"
             )
+
+        if user_id is not None:
+            user_uuid = uuid.UUID(user_id)
+            has_access = await self._tpl_repo.has_access(
+                version.template_id, user_uuid, role
+            )
+            if not has_access:
+                raise TemplateAccessDeniedError("No tenés acceso a esta plantilla")
 
         wb = openpyxl.load_workbook(BytesIO(excel_bytes))
         ws = wb.active
@@ -257,11 +360,22 @@ class DocumentService:
                 row_dict[header] = str(value) if value is not None else ""
             rows.append(row_dict)
 
-        if len(rows) > 10:
-            raise BulkLimitExceededError(limit=10)
-
         if len(rows) == 0:
             raise VariablesMismatchError("Excel file has no data rows")
+
+        # Bulk limit check — quota_service takes precedence over legacy _bulk_limit
+        if self._quota_service is not None and self._tier_id is not None:
+            effective_tenant_id = uuid.UUID(tenant_id) if tenant_id else None
+            if effective_tenant_id is not None:
+                await self._quota_service.check_bulk_limit(
+                    tenant_id=effective_tenant_id,
+                    tier_id=self._tier_id,
+                    requested_count=len(rows),
+                    user_bulk_override=user_bulk_override,
+                )
+        else:
+            if len(rows) > self._bulk_limit:
+                raise BulkLimitExceededError(limit=self._bulk_limit)
 
         return rows
 
@@ -271,6 +385,7 @@ class DocumentService:
         rows: list[dict[str, str]],
         tenant_id: str,
         created_by: str,
+        role: str = "user",
     ) -> dict:
         """
         Generate multiple documents from template + data rows.
@@ -279,6 +394,21 @@ class DocumentService:
         import zipfile
         from io import BytesIO
 
+        # 0. Quota checks (optional — skipped when quota_service is None)
+        if self._quota_service is not None and self._tier_id is not None:
+            tenant_uuid = uuid.UUID(tenant_id)
+            await self._quota_service.check_document_quota(
+                tenant_id=tenant_uuid,
+                tier_id=self._tier_id,
+                additional=len(rows),
+            )
+            await self._quota_service.check_bulk_limit(
+                tenant_id=tenant_uuid,
+                tier_id=self._tier_id,
+                requested_count=len(rows),
+                user_bulk_override=self._user_bulk_override,
+            )
+
         version = await self._tpl_repo.get_version_by_id(
             uuid.UUID(template_version_id)
         )
@@ -286,6 +416,12 @@ class DocumentService:
             raise TemplateVersionNotFoundError(
                 f"Template version {template_version_id} not found"
             )
+
+        # Access check
+        user_uuid = uuid.UUID(created_by)
+        has_access = await self._tpl_repo.has_access(version.template_id, user_uuid, role)
+        if not has_access:
+            raise TemplateAccessDeniedError("No tenés acceso a esta plantilla")
 
         # Download template ONCE — engine creates a fresh DocxTemplate per render
         template_bytes = await self._storage.download_file(
@@ -321,13 +457,9 @@ class DocumentService:
 
                     zf.writestr(file_name, rendered_bytes)
 
-                    # Create document record
-                    from app.infrastructure.persistence.models.document import (
-                        DocumentModel,
-                    )
-
+                    # Create document record (domain entity — repo handles ORM mapping)
                     doc_id = uuid.uuid4()
-                    doc = DocumentModel(
+                    doc = Document(
                         id=doc_id,
                         tenant_id=uuid.UUID(tenant_id),
                         template_version_id=uuid.UUID(template_version_id),
@@ -363,9 +495,39 @@ class DocumentService:
         if documents:
             await self._doc_repo.create_batch(documents)
 
+        # Record usage + audit (both optional for backward compat)
+        success_count = len(results["success"])
+        user_uuid = uuid.UUID(created_by)
+        tenant_uuid = uuid.UUID(tenant_id)
+        template_uuid = version.template_id
+
+        if self._usage_service is not None and success_count > 0:
+            await self._usage_service.record(
+                user_id=user_uuid,
+                tenant_id=tenant_uuid,
+                template_id=template_uuid,
+                generation_type="bulk",
+                document_count=success_count,
+            )
+
+        if self._audit_service is not None:
+            from app.domain.entities import AuditAction
+            self._audit_service.log(
+                actor_id=user_uuid,
+                tenant_id=tenant_uuid,
+                action=AuditAction.DOCUMENT_GENERATE_BULK,
+                resource_type="document_batch",
+                resource_id=batch_id,
+                details={
+                    "document_count": success_count,
+                    "error_count": len(results["errors"]),
+                },
+                ip_address=self._ip_address,
+            )
+
         return {
             "batch_id": batch_id,
             "zip_path": zip_path,
-            "document_count": len(results["success"]),
+            "document_count": success_count,
             "errors": results["errors"],
         }

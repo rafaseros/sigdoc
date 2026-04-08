@@ -9,16 +9,25 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as SignupRouteImport } from './routes/signup'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AuthenticatedRouteImport } from './routes/_authenticated'
 import { Route as AuthenticatedIndexRouteImport } from './routes/_authenticated/index'
 import { Route as AuthenticatedUsersIndexRouteImport } from './routes/_authenticated/users/index'
+import { Route as AuthenticatedUsageIndexRouteImport } from './routes/_authenticated/usage/index'
 import { Route as AuthenticatedTemplatesIndexRouteImport } from './routes/_authenticated/templates/index'
+import { Route as AuthenticatedSubscriptionIndexRouteImport } from './routes/_authenticated/subscription/index'
 import { Route as AuthenticatedDocumentsIndexRouteImport } from './routes/_authenticated/documents/index'
+import { Route as AuthenticatedAuditIndexRouteImport } from './routes/_authenticated/audit/index'
 import { Route as AuthenticatedTemplatesTemplateIdRouteImport } from './routes/_authenticated/templates/$templateId'
 import { Route as AuthenticatedDocumentsGenerateVersionIdRouteImport } from './routes/_authenticated/documents/generate/$versionId'
 import { Route as AuthenticatedDocumentsBulkVersionIdRouteImport } from './routes/_authenticated/documents/bulk/$versionId'
 
+const SignupRoute = SignupRouteImport.update({
+  id: '/signup',
+  path: '/signup',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
@@ -38,10 +47,21 @@ const AuthenticatedUsersIndexRoute = AuthenticatedUsersIndexRouteImport.update({
   path: '/users/',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
+const AuthenticatedUsageIndexRoute = AuthenticatedUsageIndexRouteImport.update({
+  id: '/usage/',
+  path: '/usage/',
+  getParentRoute: () => AuthenticatedRoute,
+} as any)
 const AuthenticatedTemplatesIndexRoute =
   AuthenticatedTemplatesIndexRouteImport.update({
     id: '/templates/',
     path: '/templates/',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
+const AuthenticatedSubscriptionIndexRoute =
+  AuthenticatedSubscriptionIndexRouteImport.update({
+    id: '/subscription/',
+    path: '/subscription/',
     getParentRoute: () => AuthenticatedRoute,
   } as any)
 const AuthenticatedDocumentsIndexRoute =
@@ -50,6 +70,11 @@ const AuthenticatedDocumentsIndexRoute =
     path: '/documents/',
     getParentRoute: () => AuthenticatedRoute,
   } as any)
+const AuthenticatedAuditIndexRoute = AuthenticatedAuditIndexRouteImport.update({
+  id: '/audit/',
+  path: '/audit/',
+  getParentRoute: () => AuthenticatedRoute,
+} as any)
 const AuthenticatedTemplatesTemplateIdRoute =
   AuthenticatedTemplatesTemplateIdRouteImport.update({
     id: '/templates/$templateId',
@@ -72,19 +97,27 @@ const AuthenticatedDocumentsBulkVersionIdRoute =
 export interface FileRoutesByFullPath {
   '/': typeof AuthenticatedIndexRoute
   '/login': typeof LoginRoute
+  '/signup': typeof SignupRoute
   '/templates/$templateId': typeof AuthenticatedTemplatesTemplateIdRoute
+  '/audit/': typeof AuthenticatedAuditIndexRoute
   '/documents/': typeof AuthenticatedDocumentsIndexRoute
+  '/subscription/': typeof AuthenticatedSubscriptionIndexRoute
   '/templates/': typeof AuthenticatedTemplatesIndexRoute
+  '/usage/': typeof AuthenticatedUsageIndexRoute
   '/users/': typeof AuthenticatedUsersIndexRoute
   '/documents/bulk/$versionId': typeof AuthenticatedDocumentsBulkVersionIdRoute
   '/documents/generate/$versionId': typeof AuthenticatedDocumentsGenerateVersionIdRoute
 }
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
+  '/signup': typeof SignupRoute
   '/': typeof AuthenticatedIndexRoute
   '/templates/$templateId': typeof AuthenticatedTemplatesTemplateIdRoute
+  '/audit': typeof AuthenticatedAuditIndexRoute
   '/documents': typeof AuthenticatedDocumentsIndexRoute
+  '/subscription': typeof AuthenticatedSubscriptionIndexRoute
   '/templates': typeof AuthenticatedTemplatesIndexRoute
+  '/usage': typeof AuthenticatedUsageIndexRoute
   '/users': typeof AuthenticatedUsersIndexRoute
   '/documents/bulk/$versionId': typeof AuthenticatedDocumentsBulkVersionIdRoute
   '/documents/generate/$versionId': typeof AuthenticatedDocumentsGenerateVersionIdRoute
@@ -93,10 +126,14 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_authenticated': typeof AuthenticatedRouteWithChildren
   '/login': typeof LoginRoute
+  '/signup': typeof SignupRoute
   '/_authenticated/': typeof AuthenticatedIndexRoute
   '/_authenticated/templates/$templateId': typeof AuthenticatedTemplatesTemplateIdRoute
+  '/_authenticated/audit/': typeof AuthenticatedAuditIndexRoute
   '/_authenticated/documents/': typeof AuthenticatedDocumentsIndexRoute
+  '/_authenticated/subscription/': typeof AuthenticatedSubscriptionIndexRoute
   '/_authenticated/templates/': typeof AuthenticatedTemplatesIndexRoute
+  '/_authenticated/usage/': typeof AuthenticatedUsageIndexRoute
   '/_authenticated/users/': typeof AuthenticatedUsersIndexRoute
   '/_authenticated/documents/bulk/$versionId': typeof AuthenticatedDocumentsBulkVersionIdRoute
   '/_authenticated/documents/generate/$versionId': typeof AuthenticatedDocumentsGenerateVersionIdRoute
@@ -106,19 +143,27 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/login'
+    | '/signup'
     | '/templates/$templateId'
+    | '/audit/'
     | '/documents/'
+    | '/subscription/'
     | '/templates/'
+    | '/usage/'
     | '/users/'
     | '/documents/bulk/$versionId'
     | '/documents/generate/$versionId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/login'
+    | '/signup'
     | '/'
     | '/templates/$templateId'
+    | '/audit'
     | '/documents'
+    | '/subscription'
     | '/templates'
+    | '/usage'
     | '/users'
     | '/documents/bulk/$versionId'
     | '/documents/generate/$versionId'
@@ -126,10 +171,14 @@ export interface FileRouteTypes {
     | '__root__'
     | '/_authenticated'
     | '/login'
+    | '/signup'
     | '/_authenticated/'
     | '/_authenticated/templates/$templateId'
+    | '/_authenticated/audit/'
     | '/_authenticated/documents/'
+    | '/_authenticated/subscription/'
     | '/_authenticated/templates/'
+    | '/_authenticated/usage/'
     | '/_authenticated/users/'
     | '/_authenticated/documents/bulk/$versionId'
     | '/_authenticated/documents/generate/$versionId'
@@ -138,10 +187,18 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   AuthenticatedRoute: typeof AuthenticatedRouteWithChildren
   LoginRoute: typeof LoginRoute
+  SignupRoute: typeof SignupRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/signup': {
+      id: '/signup'
+      path: '/signup'
+      fullPath: '/signup'
+      preLoaderRoute: typeof SignupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/login': {
       id: '/login'
       path: '/login'
@@ -170,6 +227,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedUsersIndexRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
+    '/_authenticated/usage/': {
+      id: '/_authenticated/usage/'
+      path: '/usage'
+      fullPath: '/usage/'
+      preLoaderRoute: typeof AuthenticatedUsageIndexRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
     '/_authenticated/templates/': {
       id: '/_authenticated/templates/'
       path: '/templates'
@@ -177,11 +241,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedTemplatesIndexRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
+    '/_authenticated/subscription/': {
+      id: '/_authenticated/subscription/'
+      path: '/subscription'
+      fullPath: '/subscription/'
+      preLoaderRoute: typeof AuthenticatedSubscriptionIndexRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
     '/_authenticated/documents/': {
       id: '/_authenticated/documents/'
       path: '/documents'
       fullPath: '/documents/'
       preLoaderRoute: typeof AuthenticatedDocumentsIndexRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/audit/': {
+      id: '/_authenticated/audit/'
+      path: '/audit'
+      fullPath: '/audit/'
+      preLoaderRoute: typeof AuthenticatedAuditIndexRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
     '/_authenticated/templates/$templateId': {
@@ -211,8 +289,11 @@ declare module '@tanstack/react-router' {
 interface AuthenticatedRouteChildren {
   AuthenticatedIndexRoute: typeof AuthenticatedIndexRoute
   AuthenticatedTemplatesTemplateIdRoute: typeof AuthenticatedTemplatesTemplateIdRoute
+  AuthenticatedAuditIndexRoute: typeof AuthenticatedAuditIndexRoute
   AuthenticatedDocumentsIndexRoute: typeof AuthenticatedDocumentsIndexRoute
+  AuthenticatedSubscriptionIndexRoute: typeof AuthenticatedSubscriptionIndexRoute
   AuthenticatedTemplatesIndexRoute: typeof AuthenticatedTemplatesIndexRoute
+  AuthenticatedUsageIndexRoute: typeof AuthenticatedUsageIndexRoute
   AuthenticatedUsersIndexRoute: typeof AuthenticatedUsersIndexRoute
   AuthenticatedDocumentsBulkVersionIdRoute: typeof AuthenticatedDocumentsBulkVersionIdRoute
   AuthenticatedDocumentsGenerateVersionIdRoute: typeof AuthenticatedDocumentsGenerateVersionIdRoute
@@ -221,8 +302,11 @@ interface AuthenticatedRouteChildren {
 const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedIndexRoute: AuthenticatedIndexRoute,
   AuthenticatedTemplatesTemplateIdRoute: AuthenticatedTemplatesTemplateIdRoute,
+  AuthenticatedAuditIndexRoute: AuthenticatedAuditIndexRoute,
   AuthenticatedDocumentsIndexRoute: AuthenticatedDocumentsIndexRoute,
+  AuthenticatedSubscriptionIndexRoute: AuthenticatedSubscriptionIndexRoute,
   AuthenticatedTemplatesIndexRoute: AuthenticatedTemplatesIndexRoute,
+  AuthenticatedUsageIndexRoute: AuthenticatedUsageIndexRoute,
   AuthenticatedUsersIndexRoute: AuthenticatedUsersIndexRoute,
   AuthenticatedDocumentsBulkVersionIdRoute:
     AuthenticatedDocumentsBulkVersionIdRoute,
@@ -237,6 +321,7 @@ const AuthenticatedRouteWithChildren = AuthenticatedRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   AuthenticatedRoute: AuthenticatedRouteWithChildren,
   LoginRoute: LoginRoute,
+  SignupRoute: SignupRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

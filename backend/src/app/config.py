@@ -9,6 +9,15 @@ class Settings(BaseSettings):
     app_name: str = "SigDoc"
     debug: bool = False
     api_v1_prefix: str = "/api/v1"
+    cors_origins: list[str] = ["*"]
+    bulk_generation_limit: int = 10
+
+    # Rate limits
+    rate_limit_login: str = "5/minute"
+    rate_limit_refresh: str = "10/minute"
+    rate_limit_generate: str = "20/minute"
+    rate_limit_generate_bulk: str = "5/minute"
+    rate_limit_signup: str = "3/hour"
 
     # Database
     database_url: str

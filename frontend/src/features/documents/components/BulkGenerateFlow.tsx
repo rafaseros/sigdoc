@@ -1,11 +1,30 @@
 import { useState } from "react";
 import { useDropzone } from "react-dropzone";
 import { toast } from "sonner";
+import { useQuery } from "@tanstack/react-query";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useDownloadExcelTemplate, useBulkGenerate } from "../api/mutations";
 import { apiClient } from "@/shared/lib/api-client";
+
+interface CurrentUserResponse {
+  id: string;
+  email: string;
+  role: string;
+  tenant_id: string;
+  effective_bulk_limit: number | null;
+}
+
+function useCurrentUser() {
+  return useQuery({
+    queryKey: ["auth", "me"],
+    queryFn: async () => {
+      const { data } = await apiClient.get<CurrentUserResponse>("/auth/me");
+      return data;
+    },
+  });
+}
 
 interface BulkGenerateFlowProps {
   templateVersionId: string;
@@ -30,6 +49,8 @@ export function BulkGenerateFlow({
   const downloadExcel = useDownloadExcelTemplate();
   const bulkGenerate = useBulkGenerate();
   const [downloading, setDownloading] = useState(false);
+  const { data: currentUser } = useCurrentUser();
+  const effectiveBulkLimit = currentUser?.effective_bulk_limit ?? null;
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     accept: {
@@ -124,7 +145,12 @@ export function BulkGenerateFlow({
           <CardContent>
             <p className="text-sm text-[#434655] mb-3">
               Descargue el archivo Excel con {variableCount} columnas de variables.
-              Complete cada fila con datos (máximo 10 filas).
+              Complete cada fila con los datos de cada documento.
+              {effectiveBulkLimit !== null ? (
+                <span className="ml-1">
+                  <strong>Máximo de documentos: {effectiveBulkLimit}</strong>.
+                </span>
+              ) : null}
             </p>
             <Button
               onClick={handleDownloadExcel}

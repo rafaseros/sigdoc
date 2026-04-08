@@ -14,6 +14,7 @@ export interface VariableSummary {
   name: string;
   count: number;
   has_errors: boolean;
+  contexts: string[];
 }
 
 export interface ValidationResult {
@@ -131,6 +132,52 @@ export function useDeleteTemplate() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: templateKeys.lists() });
+    },
+  });
+}
+
+export function useShareTemplate() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      templateId,
+      userId,
+    }: {
+      templateId: string;
+      userId: string;
+    }) => {
+      const { data } = await apiClient.post(
+        `/templates/${templateId}/shares`,
+        { user_id: userId }
+      );
+      return data;
+    },
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({
+        queryKey: templateKeys.shares(variables.templateId),
+      });
+    },
+  });
+}
+
+export function useUnshareTemplate() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      templateId,
+      userId,
+    }: {
+      templateId: string;
+      userId: string;
+    }) => {
+      await apiClient.delete(`/templates/${templateId}/shares/${userId}`);
+    },
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({
+        queryKey: templateKeys.shares(variables.templateId),
+      });
     },
   });
 }

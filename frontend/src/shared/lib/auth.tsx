@@ -12,6 +12,7 @@ interface AuthContextType {
   user: User | null;
   token: string | null;
   login: (email: string, password: string) => Promise<void>;
+  signup: (email: string, password: string, fullName: string, organizationName: string) => Promise<void>;
   logout: () => void;
   isAuthenticated: boolean;
 }
@@ -40,6 +41,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const signup = useCallback(async (email: string, password: string, fullName: string, organizationName: string) => {
+    const { data } = await apiClient.post("/auth/signup", {
+      email,
+      password,
+      full_name: fullName,
+      organization_name: organizationName,
+    });
+    localStorage.setItem("access_token", data.access_token);
+    if (data.refresh_token) {
+      localStorage.setItem("refresh_token", data.refresh_token);
+    }
+    setToken(data.access_token);
+
+    try {
+      const { data: userData } = await apiClient.get("/auth/me");
+      setUser(userData);
+    } catch {
+      // Token is valid but /auth/me failed — let user proceed without profile data
+    }
+  }, []);
+
   const logout = useCallback(() => {
     localStorage.removeItem("access_token");
     localStorage.removeItem("refresh_token");
@@ -48,7 +70,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, token, login, logout, isAuthenticated: !!token }}>
+    <AuthContext.Provider value={{ user, token, login, signup, logout, isAuthenticated: !!token }}>
       {children}
     </AuthContext.Provider>
   );

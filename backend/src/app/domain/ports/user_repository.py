@@ -31,3 +31,8 @@ class UserRepository(ABC):
     async def deactivate(self, user_id: UUID) -> None:
         """Soft delete: set is_active=False."""
         ...
+
+    @abstractmethod
+    async def count_active_by_tenant(self, tenant_id: UUID) -> int:
+        """Return the count of active users in the given tenant."""
+        ...

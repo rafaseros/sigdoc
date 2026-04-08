@@ -5,12 +5,20 @@ from fastapi.responses import Response
 
 from app.application.services import get_template_service
 from app.application.services.template_service import TemplateService
-from app.domain.exceptions import DomainError, InvalidTemplateError, TemplateNotFoundError
+from app.domain.exceptions import (
+    DomainError,
+    InvalidTemplateError,
+    TemplateAccessDeniedError,
+    TemplateNotFoundError,
+    TemplateSharingError,
+)
 from app.infrastructure.templating import get_template_engine
 from app.presentation.middleware.tenant import CurrentUser, get_current_user
 from app.presentation.schemas.template import (
+    ShareTemplateRequest,
     TemplateListResponse,
     TemplateResponse,
+    TemplateShareResponse,
     TemplateUploadResponse,
     TemplateVersionResponse,
 )
@@ -179,6 +187,13 @@ async def upload_new_version(
             file_bytes=file_bytes,
             file_size=len(file_bytes),
             tenant_id=str(current_user.tenant_id),
+            user_id=str(current_user.user_id),
+            role=current_user.role,
+        )
+    except TemplateAccessDeniedError as e:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(e),
         )
     except TemplateNotFoundError:
         raise HTTPException(
@@ -211,10 +226,12 @@ async def list_templates(
     service: TemplateService = Depends(get_template_service),
 ):
     """List templates with pagination and optional search."""
-    # Non-admin users only see their own templates
-    created_by = None if current_user.role == "admin" else str(current_user.user_id)
     templates, total = await service.list_templates(
-        page=page, size=size, search=search, created_by=created_by
+        page=page,
+        size=size,
+        search=search,
+        user_id=current_user.user_id,
+        role=current_user.role,
     )
 
     items = []
@@ -227,6 +244,9 @@ async def list_templates(
             )
             if current_version:
                 current_vars = current_version.variables
+
+        access_type = getattr(t, "access_type", "owned")
+        is_owner = str(getattr(t, "created_by", "")) == str(current_user.user_id)
 
         items.append(TemplateResponse(
             id=str(t.id),
@@ -247,6 +267,8 @@ async def list_templates(
             ],
             created_at=t.created_at,
             updated_at=t.updated_at,
+            access_type=access_type,
+            is_owner=is_owner,
         ))
 
     return TemplateListResponse(items=items, total=total, page=page, size=size)
@@ -260,7 +282,16 @@ async def get_template(
 ):
     """Get template detail with all versions."""
     try:
-        t = await service.get_template(template_id)
+        t = await service.get_template(
+            template_id,
+            user_id=current_user.user_id,
+            role=current_user.role,
+        )
+    except TemplateAccessDeniedError as e:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(e),
+        )
     except TemplateNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -274,6 +305,9 @@ async def get_template(
         )
         if current_version:
             current_vars = current_version.variables
+
+    is_owner = str(getattr(t, "created_by", "")) == str(current_user.user_id)
+    access_type = "owned" if is_owner else ("admin" if current_user.role == "admin" else "shared")
 
     return TemplateResponse(
         id=str(t.id),
@@ -294,6 +328,8 @@ async def get_template(
         ],
         created_at=t.created_at,
         updated_at=t.updated_at,
+        access_type=access_type,
+        is_owner=is_owner,
     )
 
 
@@ -305,7 +341,16 @@ async def delete_template(
 ):
     """Delete a template and all its versions."""
     try:
-        await service.delete_template(template_id)
+        await service.delete_template(
+            template_id,
+            user_id=current_user.user_id,
+            role=current_user.role,
+        )
+    except TemplateAccessDeniedError as e:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(e),
+        )
     except TemplateNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -316,3 +361,88 @@ async def delete_template(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(e),
         )
+
+
+@router.post("/{template_id}/shares", response_model=TemplateShareResponse, status_code=status.HTTP_201_CREATED)
+async def share_template(
+    template_id: UUID,
+    body: ShareTemplateRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    service: TemplateService = Depends(get_template_service),
+):
+    """Share a template with another user (owner/admin only)."""
+    try:
+        share = await service.share_template(
+            template_id=template_id,
+            user_id=body.user_id,
+            current_user_id=current_user.user_id,
+            role=current_user.role,
+            tenant_id=current_user.tenant_id,
+        )
+    except TemplateAccessDeniedError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except TemplateSharingError as e:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
+    except TemplateNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template not found")
+
+    return TemplateShareResponse(
+        id=str(share.id),
+        template_id=str(share.template_id),
+        user_id=str(share.user_id),
+        tenant_id=str(share.tenant_id),
+        shared_by=str(share.shared_by),
+        shared_at=share.shared_at,
+    )
+
+
+@router.delete("/{template_id}/shares/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def unshare_template(
+    template_id: UUID,
+    user_id: UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+    service: TemplateService = Depends(get_template_service),
+):
+    """Revoke a user's access to a template (owner/admin only)."""
+    try:
+        await service.unshare_template(
+            template_id=template_id,
+            user_id=user_id,
+            current_user_id=current_user.user_id,
+            role=current_user.role,
+        )
+    except TemplateAccessDeniedError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except TemplateNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template not found")
+
+
+@router.get("/{template_id}/shares", response_model=list[TemplateShareResponse])
+async def list_template_shares(
+    template_id: UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+    service: TemplateService = Depends(get_template_service),
+):
+    """List all shares for a template (accessible to owner, shared users, or admin)."""
+    try:
+        shares = await service.list_template_shares(
+            template_id=template_id,
+            current_user_id=current_user.user_id,
+            role=current_user.role,
+        )
+    except TemplateAccessDeniedError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except TemplateNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template not found")
+
+    return [
+        TemplateShareResponse(
+            id=str(s.id),
+            template_id=str(s.template_id),
+            user_id=str(s.user_id),
+            tenant_id=str(s.tenant_id),
+            shared_by=str(s.shared_by),
+            shared_at=s.shared_at,
+        )
+        for s in shares
+    ]

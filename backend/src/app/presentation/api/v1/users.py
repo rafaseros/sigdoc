@@ -1,9 +1,14 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.application.services import get_audit_service, get_quota_service
+from app.application.services.quota_service import QuotaService
+from app.domain.entities import AuditAction
 from app.infrastructure.auth.jwt_handler import hash_password
+from app.infrastructure.persistence.models.tenant import TenantModel
 from app.infrastructure.persistence.models.user import UserModel
 from app.infrastructure.persistence.repositories.user_repository import SQLAlchemyUserRepository
 from app.presentation.middleware.tenant import CurrentUser, get_current_user, get_tenant_session
@@ -31,9 +36,20 @@ async def create_user(
     request: CreateUserRequest,
     admin: CurrentUser = Depends(require_admin),
     session: AsyncSession = Depends(get_tenant_session),
+    quota_service: QuotaService = Depends(get_quota_service),
 ):
     """Create a new user in the admin's tenant."""
     repo = SQLAlchemyUserRepository(session)
+
+    # Quota check — enforce max_users limit for the tenant's tier
+    tenant_stmt = select(TenantModel).where(TenantModel.id == admin.tenant_id)
+    tenant_result = await session.execute(tenant_stmt)
+    tenant = tenant_result.scalar_one_or_none()
+    if tenant is not None and tenant.tier_id is not None:
+        await quota_service.check_user_limit(
+            tenant_id=admin.tenant_id,
+            tier_id=tenant.tier_id,
+        )
 
     # Check email uniqueness within tenant
     existing = await repo.get_by_email(request.email.lower())
@@ -52,6 +68,17 @@ async def create_user(
     )
     created = await repo.create(user)
 
+    # Fire-and-forget audit
+    audit_svc = get_audit_service()
+    audit_svc.log(
+        actor_id=admin.user_id,
+        tenant_id=admin.tenant_id,
+        action=AuditAction.USER_CREATE,
+        resource_type="user",
+        resource_id=created.id,
+        details={"email": created.email},
+    )
+
     return UserResponse(
         id=str(created.id),
         email=created.email,
@@ -59,6 +86,7 @@ async def create_user(
         role=created.role,
         is_active=created.is_active,
         created_at=created.created_at,
+        bulk_generation_limit=getattr(created, "bulk_generation_limit", None),
     )
 
 
@@ -81,6 +109,7 @@ async def list_users(
             role=u.role,
             is_active=u.is_active,
             created_at=u.created_at,
+            bulk_generation_limit=getattr(u, "bulk_generation_limit", None),
         )
         for u in users
     ]
@@ -122,6 +151,17 @@ async def update_user(
             detail="Usuario no encontrado",
         )
 
+    # Fire-and-forget audit
+    audit_svc = get_audit_service()
+    audit_svc.log(
+        actor_id=admin.user_id,
+        tenant_id=admin.tenant_id,
+        action=AuditAction.USER_UPDATE,
+        resource_type="user",
+        resource_id=user_id,
+        details={k: str(v) for k, v in update_data.items() if k != "hashed_password"},
+    )
+
     return UserResponse(
         id=str(user.id),
         email=user.email,
@@ -129,6 +169,7 @@ async def update_user(
         role=user.role,
         is_active=user.is_active,
         created_at=user.created_at,
+        bulk_generation_limit=getattr(user, "bulk_generation_limit", None),
     )
 
 
@@ -149,3 +190,13 @@ async def deactivate_user(
         )
 
     await repo.deactivate(user_id)
+
+    # Fire-and-forget audit
+    audit_svc = get_audit_service()
+    audit_svc.log(
+        actor_id=admin.user_id,
+        tenant_id=admin.tenant_id,
+        action=AuditAction.USER_DEACTIVATE,
+        resource_type="user",
+        resource_id=user_id,
+    )

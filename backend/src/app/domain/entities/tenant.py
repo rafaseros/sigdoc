@@ -9,5 +9,6 @@ class Tenant:
     name: str
     slug: str
     is_active: bool = True
+    tier_id: UUID | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None

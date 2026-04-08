@@ -14,15 +14,39 @@ class SQLAlchemyDocumentRepository(DocumentRepositoryPort):
     def __init__(self, session: AsyncSession):
         self._session = session
 
-    async def create(self, document):
-        self._session.add(document)
-        await self._session.flush()
+    @staticmethod
+    def _to_orm(document) -> DocumentModel:
+        """Convert a domain Document entity to a DocumentModel ORM instance."""
+        from app.domain.entities import Document as DomainDocument
+
+        if isinstance(document, DomainDocument):
+            return DocumentModel(
+                id=document.id,
+                tenant_id=document.tenant_id,
+                template_version_id=document.template_version_id,
+                minio_path=document.minio_path,
+                file_name=document.file_name,
+                generation_type=document.generation_type,
+                variables_snapshot=document.variables_snapshot,
+                created_by=document.created_by,
+                batch_id=document.batch_id,
+                status=document.status,
+                error_message=document.error_message,
+            )
+        # Already a DocumentModel (backwards compat)
         return document
 
-    async def create_batch(self, documents):
-        self._session.add_all(documents)
+    async def create(self, document):
+        orm_doc = self._to_orm(document)
+        self._session.add(orm_doc)
         await self._session.flush()
-        return documents
+        return orm_doc
+
+    async def create_batch(self, documents):
+        orm_docs = [self._to_orm(d) for d in documents]
+        self._session.add_all(orm_docs)
+        await self._session.flush()
+        return orm_docs
 
     async def get_by_id(self, document_id: UUID):
         stmt = (

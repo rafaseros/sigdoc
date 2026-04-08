@@ -5,4 +5,6 @@ export const templateKeys = {
     [...templateKeys.lists(), filters] as const,
   details: () => [...templateKeys.all, "detail"] as const,
   detail: (id: string) => [...templateKeys.details(), id] as const,
+  shares: (templateId: string) =>
+    [...templateKeys.all, "shares", templateId] as const,
 };

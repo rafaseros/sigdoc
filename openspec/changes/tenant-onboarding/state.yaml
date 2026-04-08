@@ -1,0 +1,14 @@
+change: tenant-onboarding
+status: tasks-ready
+created: 2026-04-07
+updated: 2026-04-07
+phases:
+  proposal: done
+  spec: done
+  design: done
+  tasks: done
+  apply: pending
+  verify: pending
+  archive: pending
+artifact_store: hybrid
+total_tasks: 18
