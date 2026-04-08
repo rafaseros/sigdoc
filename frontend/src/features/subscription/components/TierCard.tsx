@@ -2,7 +2,6 @@ import {
   FileTextIcon,
   LayoutTemplateIcon,
   UsersIcon,
-  ShareIcon,
 } from "lucide-react";
 import {
   Card,

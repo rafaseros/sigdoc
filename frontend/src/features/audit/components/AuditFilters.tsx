@@ -73,7 +73,7 @@ export function AuditFilters({ filters, onChange }: AuditFiltersProps) {
         <label className="text-xs font-medium text-[#434655]">Acción</label>
         <Select
           value={filters.action ?? "all"}
-          onValueChange={handleActionChange}
+          onValueChange={(v) => handleActionChange(v ?? "all")}
         >
           <SelectTrigger className="h-8 w-[200px] border-[rgba(195,198,215,0.3)] text-sm">
             <SelectValue placeholder="Todas las acciones" />

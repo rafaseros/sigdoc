@@ -120,7 +120,7 @@ export function EditUserDialog({
             {canEditRole && (
               <div className="grid gap-2">
                 <Label htmlFor="edit-role">Rol</Label>
-                <Select value={role} onValueChange={setRole}>
+                <Select value={role} onValueChange={(v) => setRole(v ?? "user")}>
                   <SelectTrigger id="edit-role">
                     <SelectValue placeholder="Seleccionar rol" />
                   </SelectTrigger>
