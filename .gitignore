@@ -18,6 +18,7 @@ build/
 # Node
 node_modules/
 frontend/dist/
+frontend/.tanstack/
 .pnpm-store/
 
 # IDE
