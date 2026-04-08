@@ -1,10 +1,12 @@
 """Integration tests — /api/v1/templates/{id}/shares endpoints (task 5.6).
 
 Tests cover:
-- POST /templates/{id}/shares — owner shares (201)
+- POST /templates/{id}/shares — owner shares by email (201)
+- POST /templates/{id}/shares — unknown email returns 404
+- POST /templates/{id}/shares — cross-tenant email returns 404
 - POST /templates/{id}/shares — non-owner gets 403
 - DELETE /templates/{id}/shares/{user_id} — owner unshares (204)
-- GET /templates/{id}/shares — owner sees share list (200)
+- GET /templates/{id}/shares — owner sees share list with emails (200)
 - Non-owner trying to manage shares → 403
 """
 
@@ -15,9 +17,9 @@ from datetime import datetime, timezone
 
 import pytest
 
-from app.domain.entities import Template, TemplateVersion
+from app.domain.entities import Template, TemplateVersion, User
 from app.presentation.middleware.tenant import CurrentUser, get_current_user
-from tests.fakes import FakeTemplateRepository
+from tests.fakes import FakeTemplateRepository, FakeUserRepository
 
 # Stable IDs from integration conftest
 CONFTEST_USER_ID = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
@@ -25,6 +27,9 @@ CONFTEST_TENANT_ID = uuid.UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
 
 # A regular user (non-owner) used for 403 tests
 USER_B_ID = uuid.UUID("22222222-2222-2222-2222-222222222222")
+
+# A different tenant — used for cross-tenant tests
+OTHER_TENANT_ID = uuid.UUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -65,39 +70,94 @@ def seed_template(
     return template_id
 
 
+async def seed_user(
+    fake_user_repo: FakeUserRepository,
+    email: str,
+    tenant_id: uuid.UUID = CONFTEST_TENANT_ID,
+) -> User:
+    """Seed a User in the fake user repo. Returns the user."""
+    user = User(
+        id=uuid.uuid4(),
+        tenant_id=tenant_id,
+        email=email,
+        hashed_password="hashed",
+        full_name="Test User",
+        role="user",
+        is_active=True,
+    )
+    await fake_user_repo.create(user)
+    return user
+
+
 # ── POST /templates/{id}/shares ───────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_owner_can_share_template(
-    async_client, auth_headers, fake_template_repo
+async def test_owner_can_share_template_by_email(
+    async_client, auth_headers, fake_template_repo, fake_user_repo
 ):
-    """Owner shares their template — response is 201 with share details."""
+    """Owner shares their template by email — response is 201 with share details."""
     tpl_id = seed_template(CONFTEST_USER_ID, fake_template_repo, "Shareable")
-    target_user_id = uuid.uuid4()
+    target_user = await seed_user(fake_user_repo, "target@example.com")
 
     response = await async_client.post(
         f"/api/v1/templates/{tpl_id}/shares",
         headers=auth_headers,
-        json={"user_id": str(target_user_id)},
+        json={"email": "target@example.com"},
     )
 
     assert response.status_code == 201
     data = response.json()
     assert data["template_id"] == str(tpl_id)
-    assert data["user_id"] == str(target_user_id)
+    assert data["user_id"] == str(target_user.id)
+    assert data["user_email"] == "target@example.com"
     assert "id" in data
     assert "shared_by" in data
 
 
 @pytest.mark.asyncio
+async def test_share_unknown_email_returns_404(
+    async_client, auth_headers, fake_template_repo
+):
+    """Sharing with an email that doesn't exist returns 404."""
+    tpl_id = seed_template(CONFTEST_USER_ID, fake_template_repo, "UnknownEmail")
+
+    response = await async_client.post(
+        f"/api/v1/templates/{tpl_id}/shares",
+        headers=auth_headers,
+        json={"email": "nobody@example.com"},
+    )
+
+    assert response.status_code == 404
+    assert "correo" in response.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_share_cross_tenant_email_returns_404(
+    async_client, auth_headers, fake_template_repo, fake_user_repo
+):
+    """Sharing with a user from a different tenant returns 404."""
+    tpl_id = seed_template(CONFTEST_USER_ID, fake_template_repo, "CrossTenant")
+    await seed_user(fake_user_repo, "other_tenant@example.com", tenant_id=OTHER_TENANT_ID)
+
+    response = await async_client.post(
+        f"/api/v1/templates/{tpl_id}/shares",
+        headers=auth_headers,
+        json={"email": "other_tenant@example.com"},
+    )
+
+    assert response.status_code == 404
+    assert "correo" in response.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
 async def test_non_owner_cannot_share_template(
-    async_client, app, auth_headers, fake_template_repo
+    async_client, app, auth_headers, fake_template_repo, fake_user_repo
 ):
     """Non-owner (user B) gets 403 when trying to share user A's template."""
     # Template is owned by CONFTEST_USER_ID (admin), user B has no relation
     tpl_id = seed_template(CONFTEST_USER_ID, fake_template_repo, "NonOwnerShare")
-    target_user_id = uuid.uuid4()
+    await seed_user(fake_user_repo, "shareee@example.com")
 
     user_b = CurrentUser(
         user_id=USER_B_ID,
@@ -114,7 +174,7 @@ async def test_non_owner_cannot_share_template(
         response = await async_client.post(
             f"/api/v1/templates/{tpl_id}/shares",
             headers=auth_headers,
-            json={"user_id": str(target_user_id)},
+            json={"email": "shareee@example.com"},
         )
         assert response.status_code == 403
     finally:
@@ -126,28 +186,29 @@ async def test_non_owner_cannot_share_template(
 
 @pytest.mark.asyncio
 async def test_duplicate_share_is_idempotent(
-    async_client, auth_headers, fake_template_repo
+    async_client, auth_headers, fake_template_repo, fake_user_repo
 ):
     """Sharing the same user twice does not error — returns existing share."""
     tpl_id = seed_template(CONFTEST_USER_ID, fake_template_repo, "IdempotentShare")
-    target_user_id = uuid.uuid4()
+    await seed_user(fake_user_repo, "idempotent@example.com")
 
     r1 = await async_client.post(
         f"/api/v1/templates/{tpl_id}/shares",
         headers=auth_headers,
-        json={"user_id": str(target_user_id)},
+        json={"email": "idempotent@example.com"},
     )
     assert r1.status_code == 201
 
     r2 = await async_client.post(
         f"/api/v1/templates/{tpl_id}/shares",
         headers=auth_headers,
-        json={"user_id": str(target_user_id)},
+        json={"email": "idempotent@example.com"},
     )
     # Idempotent — should not 409
     assert r2.status_code in (200, 201)
 
     # Only one share record should exist
+    target_user_id = uuid.UUID(r1.json()["user_id"])
     shares = await fake_template_repo.list_shares(tpl_id)
     user_shares = [s for s in shares if s.user_id == target_user_id]
     assert len(user_shares) == 1
@@ -228,22 +289,22 @@ async def test_non_owner_cannot_unshare_template(
 
 @pytest.mark.asyncio
 async def test_owner_can_list_shares(
-    async_client, auth_headers, fake_template_repo
+    async_client, auth_headers, fake_template_repo, fake_user_repo
 ):
-    """Owner can list all shares for their template — response is 200 with share list."""
+    """Owner can list all shares for their template — response is 200 with share list and emails."""
     tpl_id = seed_template(CONFTEST_USER_ID, fake_template_repo, "ListShares")
-    shared_user_1 = uuid.uuid4()
-    shared_user_2 = uuid.uuid4()
+    user1 = await seed_user(fake_user_repo, "listshare1@example.com")
+    user2 = await seed_user(fake_user_repo, "listshare2@example.com")
 
     await fake_template_repo.add_share(
         template_id=tpl_id,
-        user_id=shared_user_1,
+        user_id=user1.id,
         tenant_id=CONFTEST_TENANT_ID,
         shared_by=CONFTEST_USER_ID,
     )
     await fake_template_repo.add_share(
         template_id=tpl_id,
-        user_id=shared_user_2,
+        user_id=user2.id,
         tenant_id=CONFTEST_TENANT_ID,
         shared_by=CONFTEST_USER_ID,
     )
@@ -258,8 +319,12 @@ async def test_owner_can_list_shares(
     assert isinstance(shares, list)
     assert len(shares) == 2
     user_ids_in_response = {s["user_id"] for s in shares}
-    assert str(shared_user_1) in user_ids_in_response
-    assert str(shared_user_2) in user_ids_in_response
+    assert str(user1.id) in user_ids_in_response
+    assert str(user2.id) in user_ids_in_response
+    # Emails should be populated
+    emails_in_response = {s["user_email"] for s in shares}
+    assert "listshare1@example.com" in emails_in_response
+    assert "listshare2@example.com" in emails_in_response
 
 
 @pytest.mark.asyncio

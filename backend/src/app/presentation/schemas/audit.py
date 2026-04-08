@@ -32,6 +32,7 @@ class AuditLogResponse(BaseModel):
 
     id: str
     actor_id: str | None = None
+    actor_email: str | None = None
     action: str
     resource_type: str | None = None
     resource_id: str | None = None

@@ -32,6 +32,7 @@ export function useUpdateUser() {
       email?: string;
       full_name?: string;
       is_active?: boolean;
+      role?: string;
     }) => {
       const { data } = await apiClient.put(`/users/${id}`, payload);
       return data;

@@ -70,3 +70,25 @@ class FakeUserRepository(UserRepository):
             for u in self._users.values()
             if u.tenant_id == tenant_id and u.is_active
         )
+
+    async def count_admins_by_tenant(self, tenant_id: UUID) -> int:
+        """Return count of active admin users in the given tenant."""
+        return sum(
+            1
+            for u in self._users.values()
+            if u.tenant_id == tenant_id and u.is_active and u.role == "admin"
+        )
+
+    async def get_by_verification_token(self, token: str) -> "User | None":
+        """Find a user by their email verification token."""
+        for u in self._users.values():
+            if getattr(u, "email_verification_token", None) == token:
+                return u
+        return None
+
+    async def get_by_reset_token(self, token: str) -> "User | None":
+        """Find a user by their password reset token."""
+        for u in self._users.values():
+            if getattr(u, "password_reset_token", None) == token:
+                return u
+        return None

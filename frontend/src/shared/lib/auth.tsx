@@ -6,6 +6,7 @@ interface User {
   email: string;
   role: string;
   tenant_id: string;
+  email_verified: boolean;
 }
 
 interface AuthContextType {

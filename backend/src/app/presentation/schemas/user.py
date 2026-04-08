@@ -23,6 +23,16 @@ class UpdateUserRequest(BaseModel):
     full_name: str | None = None
     is_active: bool | None = None
     bulk_generation_limit: int | None = None
+    role: str | None = None
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        if v not in ("admin", "user"):
+            raise ValueError("El rol debe ser 'admin' o 'user'")
+        return v
 
     @field_validator("email")
     @classmethod

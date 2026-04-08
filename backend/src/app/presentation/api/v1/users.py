@@ -144,6 +144,17 @@ async def update_user(
                 detail="Ya existe un usuario con ese correo electrónico en este tenant",
             )
 
+    # Last-admin guard: if demoting from admin, ensure at least one admin remains
+    if "role" in update_data and update_data["role"] != "admin":
+        target_user = await repo.get_by_id(user_id)
+        if target_user and target_user.role == "admin":
+            admin_count = await repo.count_admins_by_tenant(admin.tenant_id)
+            if admin_count <= 1:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="No se puede degradar al último administrador del tenant",
+                )
+
     user = await repo.update(user_id, **update_data)
     if not user:
         raise HTTPException(
@@ -188,6 +199,15 @@ async def deactivate_user(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Usuario no encontrado",
         )
+
+    # Last-admin guard: cannot deactivate the last admin in a tenant
+    if user.role == "admin":
+        admin_count = await repo.count_admins_by_tenant(admin.tenant_id)
+        if admin_count <= 1:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="No se puede desactivar al último administrador del tenant",
+            )
 
     await repo.deactivate(user_id)
 

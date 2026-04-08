@@ -56,6 +56,9 @@ def _make_users_repo_class(fake_repo: FakeUserRepository):
         async def deactivate(self, user_id):
             return await self._fake.deactivate(user_id)
 
+        async def count_admins_by_tenant(self, tenant_id):
+            return await self._fake.count_admins_by_tenant(tenant_id)
+
     return _Repo
 
 
@@ -166,3 +169,129 @@ async def test_admin_clears_user_bulk_limit_and_me_shows_global_default(
     assert me_response.status_code == 200, me_response.text
     data = me_response.json()
     assert data["effective_bulk_limit"] == 10
+
+
+# ── T-ADMIN-08/09: Role changes and last-admin guard ──────────────────────────
+
+
+def _make_admin_user(user_id, tenant_id, role="admin") -> User:
+    return User(
+        id=user_id,
+        tenant_id=tenant_id,
+        email=f"{role}_{user_id}@test.com",
+        hashed_password=hash_password("secret"),
+        full_name=f"Test {role.capitalize()} User",
+        role=role,
+        is_active=True,
+        created_at=datetime.now(timezone.utc),
+    )
+
+
+@pytest.mark.asyncio
+async def test_promote_user_to_admin(async_client, auth_headers, monkeypatch):
+    """SCEN-ADMIN-01: Admin promotes a user to admin role."""
+    fake_repo = FakeUserRepository()
+    target = _make_admin_user(TARGET_USER_ID, ADMIN_TENANT_ID, role="user")
+    admin = _make_admin_user(ADMIN_USER_ID, ADMIN_TENANT_ID, role="admin")
+    _seed_user(fake_repo, target)
+    _seed_user(fake_repo, admin)
+
+    repo_class = _make_users_repo_class(fake_repo)
+    monkeypatch.setattr("app.presentation.api.v1.users.SQLAlchemyUserRepository", repo_class)
+
+    response = await async_client.put(
+        f"/api/v1/users/{TARGET_USER_ID}",
+        headers=auth_headers,
+        json={"role": "admin"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["role"] == "admin"
+
+
+@pytest.mark.asyncio
+async def test_demote_admin_to_user_when_multiple_admins(async_client, auth_headers, monkeypatch):
+    """SCEN-ADMIN-02: Can demote admin to user when at least 2 admins exist."""
+    second_admin_id = uuid.UUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee")
+    fake_repo = FakeUserRepository()
+    admin1 = _make_admin_user(ADMIN_USER_ID, ADMIN_TENANT_ID, role="admin")
+    admin2 = _make_admin_user(second_admin_id, ADMIN_TENANT_ID, role="admin")
+    _seed_user(fake_repo, admin1)
+    _seed_user(fake_repo, admin2)
+
+    repo_class = _make_users_repo_class(fake_repo)
+    monkeypatch.setattr("app.presentation.api.v1.users.SQLAlchemyUserRepository", repo_class)
+
+    response = await async_client.put(
+        f"/api/v1/users/{second_admin_id}",
+        headers=auth_headers,
+        json={"role": "user"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["role"] == "user"
+
+
+@pytest.mark.asyncio
+async def test_demote_last_admin_returns_409(async_client, auth_headers, monkeypatch):
+    """SCEN-ADMIN-03: Cannot demote the last admin — returns 409."""
+    fake_repo = FakeUserRepository()
+    admin = _make_admin_user(TARGET_USER_ID, ADMIN_TENANT_ID, role="admin")
+    _seed_user(fake_repo, admin)
+    # Requesting user is also admin (set by conftest), but they are a different user
+    # Both have same tenant — only 1 admin total
+    requesting_admin = _make_admin_user(ADMIN_USER_ID, ADMIN_TENANT_ID, role="admin")
+    _seed_user(fake_repo, requesting_admin)
+
+    repo_class = _make_users_repo_class(fake_repo)
+    monkeypatch.setattr("app.presentation.api.v1.users.SQLAlchemyUserRepository", repo_class)
+
+    # 2 admins exist — demote one should work
+    # But if only 1 admin exists — should 409
+    single_admin_repo = FakeUserRepository()
+    only_admin = _make_admin_user(TARGET_USER_ID, ADMIN_TENANT_ID, role="admin")
+    _seed_user(single_admin_repo, only_admin)
+    single_repo_class = _make_users_repo_class(single_admin_repo)
+    monkeypatch.setattr("app.presentation.api.v1.users.SQLAlchemyUserRepository", single_repo_class)
+
+    response = await async_client.put(
+        f"/api/v1/users/{TARGET_USER_ID}",
+        headers=auth_headers,
+        json={"role": "user"},
+    )
+    assert response.status_code == 409, response.text
+    assert "último administrador" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_invalid_role_returns_422(async_client, auth_headers, monkeypatch):
+    """SCEN-ADMIN-05: Invalid role value returns 422."""
+    fake_repo = FakeUserRepository()
+    target = _make_admin_user(TARGET_USER_ID, ADMIN_TENANT_ID, role="user")
+    _seed_user(fake_repo, target)
+
+    repo_class = _make_users_repo_class(fake_repo)
+    monkeypatch.setattr("app.presentation.api.v1.users.SQLAlchemyUserRepository", repo_class)
+
+    response = await async_client.put(
+        f"/api/v1/users/{TARGET_USER_ID}",
+        headers=auth_headers,
+        json={"role": "superuser"},
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_deactivate_last_admin_returns_409(async_client, auth_headers, monkeypatch):
+    """SCEN-ADMIN-04: Cannot deactivate the last admin — returns 409."""
+    fake_repo = FakeUserRepository()
+    only_admin = _make_admin_user(TARGET_USER_ID, ADMIN_TENANT_ID, role="admin")
+    _seed_user(fake_repo, only_admin)
+
+    repo_class = _make_users_repo_class(fake_repo)
+    monkeypatch.setattr("app.presentation.api.v1.users.SQLAlchemyUserRepository", repo_class)
+
+    response = await async_client.delete(
+        f"/api/v1/users/{TARGET_USER_ID}",
+        headers=auth_headers,
+    )
+    assert response.status_code == 409, response.text
+    assert "último administrador" in response.json()["detail"]

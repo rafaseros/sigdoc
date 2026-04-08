@@ -5,6 +5,7 @@ import { auditKeys, type AuditFilters } from "./keys";
 export interface AuditLogEntry {
   id: string;
   actor_id: string | null;
+  actor_email: string | null;
   action: string;
   resource_type: string | null;
   resource_id: string | null;

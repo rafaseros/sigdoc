@@ -40,9 +40,9 @@ class _StubSignupService:
 
 
 def _make_stub_class(stub: _StubSignupService):
-    """Return a class whose constructor matches SignupService(tenant_repo, user_repo, tier_repo, audit_service)."""
+    """Return a class whose constructor matches SignupService(tenant_repo, user_repo, tier_repo, ...)."""
     class _Cls:
-        def __init__(self, tenant_repo, user_repo, tier_repo, audit_service=None):
+        def __init__(self, tenant_repo, user_repo, tier_repo, audit_service=None, email_service=None, frontend_url=None, **kwargs):
             self._stub = stub
 
         async def signup(self, **kwargs):

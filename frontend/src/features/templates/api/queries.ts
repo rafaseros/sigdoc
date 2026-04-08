@@ -40,6 +40,7 @@ export interface TemplateShare {
   id: string;
   template_id: string;
   user_id: string;
+  user_email: string | null;
   tenant_id: string;
   shared_by: string;
   shared_at: string | null;

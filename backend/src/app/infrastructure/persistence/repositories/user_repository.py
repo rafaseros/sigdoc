@@ -75,3 +75,25 @@ class SQLAlchemyUserRepository(UserRepository):
         )
         result = await self._session.execute(stmt)
         return int(result.scalar_one())
+
+    async def count_admins_by_tenant(self, tenant_id: UUID) -> int:
+        """Return the count of active admin users in the given tenant."""
+        stmt = select(func.count()).select_from(UserModel).where(
+            UserModel.tenant_id == tenant_id,
+            UserModel.is_active == True,  # noqa: E712
+            UserModel.role == "admin",
+        )
+        result = await self._session.execute(stmt)
+        return int(result.scalar_one())
+
+    async def get_by_verification_token(self, token: str) -> UserModel | None:
+        """Find a user by their email verification token."""
+        stmt = select(UserModel).where(UserModel.email_verification_token == token)
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def get_by_reset_token(self, token: str) -> UserModel | None:
+        """Find a user by their password reset token."""
+        stmt = select(UserModel).where(UserModel.password_reset_token == token)
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()

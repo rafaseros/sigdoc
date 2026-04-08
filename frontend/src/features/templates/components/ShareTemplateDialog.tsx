@@ -18,7 +18,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 import { useTemplateShares } from "../api/queries";
 import { useShareTemplate, useUnshareTemplate } from "../api/mutations";
-import { useUsers } from "@/features/users/api/queries";
 
 interface ShareTemplateDialogProps {
   templateId: string;
@@ -30,52 +29,52 @@ export function ShareTemplateDialog({
   templateName,
 }: ShareTemplateDialogProps) {
   const [open, setOpen] = useState(false);
-  const [selectedUserId, setSelectedUserId] = useState("");
-  const [manualUserId, setManualUserId] = useState("");
+  const [email, setEmail] = useState("");
 
   const { data: shares, isLoading: sharesLoading } =
     useTemplateShares(templateId);
 
-  // GET /users is admin-only — may return 403 for regular users
-  // We handle the error silently and fall back to manual UUID input
-  const { data: usersData } = useUsers({ size: 100 });
-  const availableUsers = usersData?.items ?? [];
-
   const shareTemplate = useShareTemplate();
   const unshareTemplate = useUnshareTemplate();
 
-  // Build a lookup map for user names
-  const userMap = new Map(
-    availableUsers.map((u) => [u.id, { email: u.email, full_name: u.full_name }])
-  );
-
-  // Filter out users who already have a share
-  const sharedUserIds = new Set((shares ?? []).map((s) => s.user_id));
-  const eligibleUsers = availableUsers.filter((u) => !sharedUserIds.has(u.id));
-
   function handleShare() {
-    const userId = availableUsers.length > 0 ? selectedUserId : manualUserId.trim();
-    if (!userId) {
-      toast.error("Seleccione o ingrese un usuario para compartir");
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) {
+      toast.error("Ingrese el correo del usuario para compartir");
       return;
     }
 
     shareTemplate.mutate(
-      { templateId, userId },
+      { templateId, email: trimmedEmail },
       {
         onSuccess: () => {
           toast.success("Plantilla compartida con éxito");
-          setSelectedUserId("");
-          setManualUserId("");
+          setEmail("");
         },
         onError: (err: unknown) => {
+          const status =
+            err &&
+            typeof err === "object" &&
+            "response" in err
+              ? (err as { response?: { status?: number; data?: { detail?: string } } }).response
+                  ?.status
+              : undefined;
+
           const detail =
             err &&
             typeof err === "object" &&
-            "response" in err &&
-            (err as { response?: { data?: { detail?: string } } }).response
-              ?.data?.detail;
-          toast.error((detail as string) || "Error al compartir la plantilla");
+            "response" in err
+              ? (err as { response?: { data?: { detail?: string } } }).response
+                  ?.data?.detail
+              : undefined;
+
+          if (status === 404) {
+            toast.error("No se encontró un usuario con ese correo");
+          } else if (status === 422 || status === 409) {
+            toast.error("Esta plantilla ya fue compartida con ese usuario");
+          } else {
+            toast.error((detail as string) || "Error al compartir la plantilla");
+          }
         },
       }
     );
@@ -101,12 +100,6 @@ export function ShareTemplateDialog({
     );
   }
 
-  function getUserLabel(userId: string): string {
-    const user = userMap.get(userId);
-    if (user) return `${user.full_name} (${user.email})`;
-    return userId;
-  }
-
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger
@@ -129,55 +122,29 @@ export function ShareTemplateDialog({
           </DialogDescription>
         </DialogHeader>
 
-        {/* Add new share */}
+        {/* Add new share by email */}
         <div className="space-y-2">
-          <Label>Agregar usuario</Label>
-          {availableUsers.length > 0 ? (
-            <div className="flex gap-2">
-              <select
-                value={selectedUserId}
-                onChange={(e) => setSelectedUserId(e.target.value)}
-                className="flex-1 rounded-md border border-input bg-[#e6e8ea] px-3 py-2 text-sm focus:border-[#2563eb] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/20"
-              >
-                <option value="">Seleccione un usuario...</option>
-                {eligibleUsers.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.full_name} ({u.email})
-                  </option>
-                ))}
-              </select>
-              <Button
-                onClick={handleShare}
-                disabled={!selectedUserId || shareTemplate.isPending}
-                className="bg-gradient-to-br from-[#004ac6] to-[#2563eb] text-white shadow-[0_4px_12px_rgba(0,74,198,0.3)] shrink-0"
-              >
-                <UserPlusIcon className="size-4" />
-                {shareTemplate.isPending ? "Compartiendo..." : "Compartir"}
-              </Button>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              <p className="text-xs text-[#434655]">
-                Ingrese el ID del usuario (UUID) con quien desea compartir.
-              </p>
-              <div className="flex gap-2">
-                <Input
-                  value={manualUserId}
-                  onChange={(e) => setManualUserId(e.target.value)}
-                  placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-                  className="flex-1 bg-[#e6e8ea] border-transparent focus:border-[#2563eb] focus:ring-[#2563eb]/20"
-                />
-                <Button
-                  onClick={handleShare}
-                  disabled={!manualUserId.trim() || shareTemplate.isPending}
-                  className="bg-gradient-to-br from-[#004ac6] to-[#2563eb] text-white shadow-[0_4px_12px_rgba(0,74,198,0.3)] shrink-0"
-                >
-                  <UserPlusIcon className="size-4" />
-                  {shareTemplate.isPending ? "Compartiendo..." : "Compartir"}
-                </Button>
-              </div>
-            </div>
-          )}
+          <Label>Agregar usuario por correo</Label>
+          <div className="flex gap-2">
+            <Input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleShare();
+              }}
+              placeholder="correo@ejemplo.com"
+              className="flex-1 bg-[#e6e8ea] border-transparent focus:border-[#2563eb] focus:ring-[#2563eb]/20"
+            />
+            <Button
+              onClick={handleShare}
+              disabled={!email.trim() || shareTemplate.isPending}
+              className="bg-gradient-to-br from-[#004ac6] to-[#2563eb] text-white shadow-[0_4px_12px_rgba(0,74,198,0.3)] shrink-0"
+            >
+              <UserPlusIcon className="size-4" />
+              {shareTemplate.isPending ? "Compartiendo..." : "Compartir"}
+            </Button>
+          </div>
         </div>
 
         {/* Current shares list */}
@@ -204,7 +171,7 @@ export function ShareTemplateDialog({
                 >
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium text-[#191c1e]">
-                      {getUserLabel(share.user_id)}
+                      {share.user_email ?? share.user_id}
                     </p>
                     {share.shared_at && (
                       <p className="text-xs text-[#434655]">

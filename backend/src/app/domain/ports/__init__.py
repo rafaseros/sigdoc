@@ -7,6 +7,7 @@ from .usage_repository import UsageRepository
 from .audit_repository import AuditRepository
 from .subscription_tier_repository import SubscriptionTierRepository
 from .tenant_repository import TenantRepository
+from .email_service import EmailService
 
 __all__ = [
     "TemplateRepository",
@@ -18,4 +19,5 @@ __all__ = [
     "AuditRepository",
     "SubscriptionTierRepository",
     "TenantRepository",
+    "EmailService",
 ]

@@ -2,13 +2,31 @@ from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.services import get_audit_service
 from app.application.services.audit_service import AuditService
-from app.presentation.middleware.tenant import CurrentUser, get_current_user
+from app.infrastructure.persistence.models.user import UserModel
+from app.presentation.middleware.tenant import CurrentUser, get_current_user, get_tenant_session
 from app.presentation.schemas.audit import AuditActionEnum, AuditLogListResponse, AuditLogResponse
 
 router = APIRouter()
+
+
+async def _load_actor_emails(
+    session: AsyncSession,
+    actor_ids: list[UUID],
+) -> dict[UUID, str]:
+    """Devuelve un mapeo de actor_id → email para los IDs indicados.
+
+    Realiza una sola consulta en lote para todos los IDs únicos.
+    """
+    if not actor_ids:
+        return {}
+    stmt = select(UserModel.id, UserModel.email).where(UserModel.id.in_(actor_ids))
+    result = await session.execute(stmt)
+    return {row.id: row.email for row in result}
 
 
 @router.get("", response_model=AuditLogListResponse)
@@ -21,17 +39,18 @@ async def list_audit_log(
     date_to: datetime | None = Query(None),
     current_user: CurrentUser = Depends(get_current_user),
     audit_service: AuditService = Depends(get_audit_service),
+    session: AsyncSession = Depends(get_tenant_session),
 ):
-    """Return a paginated, filterable audit log for the current tenant.
+    """Retorna el registro de auditoría paginado y filtrable del tenant actual.
 
-    Admin-only — returns 403 for non-admin callers.
-    Ordered by ``created_at DESC``.
+    Solo administradores — retorna 403 para otros roles.
+    Ordenado por ``created_at DESC``.
 
-    Query params:
-    - page / size: pagination (size capped at 100)
-    - action: filter by AuditAction constant (e.g. ``document.generate``)
-    - actor_id: filter by the user who performed the action
-    - date_from / date_to: ISO-8601 datetime boundaries (inclusive)
+    Parámetros de query:
+    - page / size: paginación (size máximo 100)
+    - action: filtra por tipo de acción (ej. ``document.generate``)
+    - actor_id: filtra por el usuario que realizó la acción
+    - date_from / date_to: límites de fecha en ISO-8601 (inclusive)
     """
     if current_user.role != "admin":
         raise HTTPException(
@@ -48,10 +67,15 @@ async def list_audit_log(
         date_to=date_to,
     )
 
+    # Carga en lote los emails de todos los actores únicos de la página
+    unique_actor_ids = list({e.actor_id for e in entries if e.actor_id is not None})
+    email_by_id = await _load_actor_emails(session, unique_actor_ids)
+
     items = [
         AuditLogResponse(
             id=str(entry.id),
             actor_id=str(entry.actor_id) if entry.actor_id is not None else None,
+            actor_email=email_by_id.get(entry.actor_id) if entry.actor_id is not None else None,
             action=entry.action,
             resource_type=entry.resource_type,
             resource_id=str(entry.resource_id) if entry.resource_id is not None else None,

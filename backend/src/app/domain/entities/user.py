@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from uuid import UUID
 
@@ -15,3 +15,10 @@ class User:
     bulk_generation_limit: int | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    # Email verification (added in migration 009)
+    email_verified: bool = False
+    email_verification_token: str | None = None
+    email_verification_sent_at: datetime | None = None
+    # Password reset (added in migration 009)
+    password_reset_token: str | None = None
+    password_reset_sent_at: datetime | None = None

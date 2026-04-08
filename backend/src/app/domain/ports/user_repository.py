@@ -36,3 +36,18 @@ class UserRepository(ABC):
     async def count_active_by_tenant(self, tenant_id: UUID) -> int:
         """Return the count of active users in the given tenant."""
         ...
+
+    @abstractmethod
+    async def count_admins_by_tenant(self, tenant_id: UUID) -> int:
+        """Return the count of active admin users in the given tenant."""
+        ...
+
+    @abstractmethod
+    async def get_by_verification_token(self, token: str) -> "User | None":
+        """Find a user by their email verification token."""
+        ...
+
+    @abstractmethod
+    async def get_by_reset_token(self, token: str) -> "User | None":
+        """Find a user by their password reset token."""
+        ...

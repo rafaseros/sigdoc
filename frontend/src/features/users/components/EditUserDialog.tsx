@@ -11,7 +11,15 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useUpdateUser, type UserResponse } from "../api";
+import { useAuth } from "@/shared/lib/auth";
 
 interface EditUserDialogProps {
   user: UserResponse;
@@ -24,16 +32,23 @@ export function EditUserDialog({
   open,
   onOpenChange,
 }: EditUserDialogProps) {
+  const { user: currentUser } = useAuth();
   const [email, setEmail] = useState(user.email);
   const [fullName, setFullName] = useState(user.full_name);
   const [isActive, setIsActive] = useState(user.is_active);
+  const [role, setRole] = useState(user.role);
 
   const updateMutation = useUpdateUser();
+
+  const isAdmin = currentUser?.role === "admin";
+  const isEditingSelf = currentUser?.id === user.id;
+  const canEditRole = isAdmin && !isEditingSelf;
 
   useEffect(() => {
     setEmail(user.email);
     setFullName(user.full_name);
     setIsActive(user.is_active);
+    setRole(user.role);
   }, [user]);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -56,6 +71,7 @@ export function EditUserDialog({
         email: email.trim(),
         full_name: fullName.trim(),
         is_active: isActive,
+        ...(canEditRole ? { role } : {}),
       });
       toast.success("Usuario actualizado con éxito");
       onOpenChange(false);
@@ -100,6 +116,21 @@ export function EditUserDialog({
                 required
               />
             </div>
+
+            {canEditRole && (
+              <div className="grid gap-2">
+                <Label htmlFor="edit-role">Rol</Label>
+                <Select value={role} onValueChange={setRole}>
+                  <SelectTrigger id="edit-role">
+                    <SelectValue placeholder="Seleccionar rol" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="admin">Administrador</SelectItem>
+                    <SelectItem value="user">Usuario</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
 
             <div className="flex items-center gap-2">
               <input

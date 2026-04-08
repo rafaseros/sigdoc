@@ -52,13 +52,14 @@ class TemplateUploadResponse(BaseModel):
 
 
 class ShareTemplateRequest(BaseModel):
-    user_id: UUID
+    email: str
 
 
 class TemplateShareResponse(BaseModel):
     id: str
     template_id: str
     user_id: str
+    user_email: str | None = None
     tenant_id: str
     shared_by: str
     shared_at: datetime | None = None

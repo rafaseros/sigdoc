@@ -60,7 +60,15 @@ function LoginPage() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="password" className="text-[#434655] font-medium">Contraseña</Label>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="password" className="text-[#434655] font-medium">Contraseña</Label>
+                <Link
+                  to="/forgot-password"
+                  className="text-xs text-[#2563eb] hover:underline"
+                >
+                  ¿Olvidaste tu contraseña?
+                </Link>
+              </div>
               <Input
                 id="password"
                 type="password"

@@ -94,13 +94,15 @@ function AuditRow({ entry }: { entry: AuditLogEntry }) {
       <TableCell className="text-[#434655] text-xs whitespace-nowrap">
         {formatDate(entry.created_at)}
       </TableCell>
-      <TableCell className="text-[#191c1e] font-mono text-xs">
-        {entry.actor_id ? (
-          <span title={entry.actor_id}>
-            {entry.actor_id.slice(0, 8)}...
+      <TableCell className="text-[#191c1e] text-xs">
+        {entry.actor_email ? (
+          <span title={entry.actor_id ?? undefined}>{entry.actor_email}</span>
+        ) : entry.actor_id ? (
+          <span className="font-mono" title={entry.actor_id}>
+            Sistema
           </span>
         ) : (
-          <span className="text-[#9ca3af]">—</span>
+          <span className="text-[#9ca3af]">Sistema</span>
         )}
       </TableCell>
       <TableCell>

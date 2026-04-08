@@ -8,6 +8,7 @@ from .fake_audit_repository import FakeAuditRepository
 from .fake_subscription_tier_repository import FakeSubscriptionTierRepository
 from .fake_quota_service import FakeQuotaService
 from .fake_tenant_repository import FakeTenantRepository
+from .fake_email_service import FakeEmailService
 
 __all__ = [
     "FakeStorageService",
@@ -20,4 +21,5 @@ __all__ = [
     "FakeSubscriptionTierRepository",
     "FakeQuotaService",
     "FakeTenantRepository",
+    "FakeEmailService",
 ]

@@ -142,14 +142,14 @@ export function useShareTemplate() {
   return useMutation({
     mutationFn: async ({
       templateId,
-      userId,
+      email,
     }: {
       templateId: string;
-      userId: string;
+      email: string;
     }) => {
       const { data } = await apiClient.post(
         `/templates/${templateId}/shares`,
-        { user_id: userId }
+        { email }
       );
       return data;
     },

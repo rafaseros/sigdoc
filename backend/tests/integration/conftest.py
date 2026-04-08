@@ -37,6 +37,7 @@ from app.application.services import (
     get_quota_service,
     get_template_service,
     get_usage_service,
+    get_user_repository,
 )
 from app.application.services.audit_service import AuditService
 from app.application.services.document_service import DocumentService
@@ -54,6 +55,7 @@ from tests.fakes import (
     FakeTemplateEngine,
     FakeTemplateRepository,
     FakeUsageRepository,
+    FakeUserRepository,
 )
 
 
@@ -84,6 +86,12 @@ def fake_template_repo() -> FakeTemplateRepository:
 @pytest.fixture(scope="session")
 def fake_document_repo() -> FakeDocumentRepository:
     return FakeDocumentRepository()
+
+
+@pytest.fixture(scope="session")
+def fake_user_repo() -> FakeUserRepository:
+    """Shared FakeUserRepository for the entire integration test session."""
+    return FakeUserRepository()
 
 
 @pytest.fixture(scope="session")
@@ -119,6 +127,7 @@ def app(
     fake_document_repo: FakeDocumentRepository,
     fake_usage_repo: FakeUsageRepository,
     fake_audit_repo: FakeAuditRepository,
+    fake_user_repo: FakeUserRepository,
     test_user: CurrentUser,
 ):
     """Return the FastAPI app with dependency overrides for all integration tests."""
@@ -191,12 +200,17 @@ def app(
     async def override_get_tenant_session() -> AsyncGenerator:
         yield _make_null_result_session()
 
+    # Override get_user_repository → FakeUserRepository (used by share endpoints)
+    async def override_get_user_repository() -> FakeUserRepository:
+        return fake_user_repo
+
     _app.dependency_overrides[get_current_user] = override_get_current_user
     _app.dependency_overrides[get_usage_service] = override_get_usage_service
     _app.dependency_overrides[get_audit_service] = override_get_audit_service
     _app.dependency_overrides[get_template_service] = override_get_template_service
     _app.dependency_overrides[get_document_service] = override_get_document_service
     _app.dependency_overrides[get_quota_service] = override_get_quota_service
+    _app.dependency_overrides[get_user_repository] = override_get_user_repository
     _app.dependency_overrides[get_session] = override_get_session
     _app.dependency_overrides[get_tenant_session] = override_get_tenant_session
 

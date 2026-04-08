@@ -3,7 +3,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response
 
-from app.application.services import get_template_service
+from app.application.services import get_template_service, get_user_repository
 from app.application.services.template_service import TemplateService
 from app.domain.exceptions import (
     DomainError,
@@ -12,6 +12,7 @@ from app.domain.exceptions import (
     TemplateNotFoundError,
     TemplateSharingError,
 )
+from app.domain.ports.user_repository import UserRepository
 from app.infrastructure.templating import get_template_engine
 from app.presentation.middleware.tenant import CurrentUser, get_current_user
 from app.presentation.schemas.template import (
@@ -369,12 +370,22 @@ async def share_template(
     body: ShareTemplateRequest,
     current_user: CurrentUser = Depends(get_current_user),
     service: TemplateService = Depends(get_template_service),
+    user_repo: UserRepository = Depends(get_user_repository),
 ):
-    """Share a template with another user (owner/admin only)."""
+    """Share a template with another user by email (owner/admin only)."""
+    # Resolve email → user_id within the same tenant
+    target_user = await user_repo.get_by_email(body.email.strip().lower())
+
+    if target_user is None or str(target_user.tenant_id) != str(current_user.tenant_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No se encontró un usuario con ese correo",
+        )
+
     try:
         share = await service.share_template(
             template_id=template_id,
-            user_id=body.user_id,
+            user_id=target_user.id,
             current_user_id=current_user.user_id,
             role=current_user.role,
             tenant_id=current_user.tenant_id,
@@ -390,6 +401,7 @@ async def share_template(
         id=str(share.id),
         template_id=str(share.template_id),
         user_id=str(share.user_id),
+        user_email=target_user.email,
         tenant_id=str(share.tenant_id),
         shared_by=str(share.shared_by),
         shared_at=share.shared_at,
@@ -422,6 +434,7 @@ async def list_template_shares(
     template_id: UUID,
     current_user: CurrentUser = Depends(get_current_user),
     service: TemplateService = Depends(get_template_service),
+    user_repo: UserRepository = Depends(get_user_repository),
 ):
     """List all shares for a template (accessible to owner, shared users, or admin)."""
     try:
@@ -435,14 +448,19 @@ async def list_template_shares(
     except TemplateNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template not found")
 
-    return [
-        TemplateShareResponse(
-            id=str(s.id),
-            template_id=str(s.template_id),
-            user_id=str(s.user_id),
-            tenant_id=str(s.tenant_id),
-            shared_by=str(s.shared_by),
-            shared_at=s.shared_at,
+    # Enrich shares with user emails for display
+    result = []
+    for s in shares:
+        user = await user_repo.get_by_id(s.user_id)
+        result.append(
+            TemplateShareResponse(
+                id=str(s.id),
+                template_id=str(s.template_id),
+                user_id=str(s.user_id),
+                user_email=user.email if user is not None else None,
+                tenant_id=str(s.tenant_id),
+                shared_by=str(s.shared_by),
+                shared_at=s.shared_at,
+            )
         )
-        for s in shares
-    ]
+    return result

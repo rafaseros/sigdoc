@@ -12,9 +12,13 @@ from datetime import datetime, timezone
 
 import pytest
 
-from app.domain.entities import Template, TemplateVersion
+from unittest.mock import AsyncMock, MagicMock
+
+from app.domain.entities import Template, TemplateVersion, User
+from app.infrastructure.auth.jwt_handler import hash_password
+from app.infrastructure.persistence.database import get_session
 from app.presentation.middleware.tenant import CurrentUser, get_current_user
-from tests.fakes import FakeStorageService, FakeTemplateRepository
+from tests.fakes import FakeStorageService, FakeTemplateRepository, FakeUserRepository
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -248,3 +252,95 @@ async def test_shared_user_can_generate_from_shared_template(
             app.dependency_overrides[get_current_user] = original
         else:
             app.dependency_overrides.pop(get_current_user, None)
+
+
+# ── T-VERIFY-15: Email verification gate on generate ─────────────────────────
+
+
+def _make_unverified_session(user: User):
+    """Return a fake get_session override that returns a user with email_verified=False."""
+    fake_repo = FakeUserRepository()
+    fake_repo._users[user.id] = user
+    fake_repo._by_email[user.email] = user.id
+
+    class _Repo:
+        def __init__(self, session):
+            self._fake = fake_repo
+
+        async def get_by_id(self, user_id):
+            return await self._fake.get_by_id(user_id)
+
+    import app.infrastructure.persistence.repositories.user_repository as repo_module
+
+    return _Repo, fake_repo
+
+
+@pytest.mark.asyncio
+async def test_generate_document_blocked_for_unverified_user(
+    async_client, app, auth_headers, fake_template_repo, fake_storage, monkeypatch
+):
+    """SCEN-VERIFY-04: Unverified user gets 403 when trying to generate a document."""
+    version_id = seed_template_version(fake_template_repo, fake_storage, ["name", "date"])
+
+    unverified_user = User(
+        id=CONFTEST_USER_ID,
+        tenant_id=CONFTEST_TENANT_ID,
+        email="unverified@test.com",
+        hashed_password=hash_password("secret"),
+        full_name="Unverified User",
+        role="user",
+        is_active=True,
+        email_verified=False,
+    )
+
+    repo_class, _ = _make_unverified_session(unverified_user)
+    monkeypatch.setattr(
+        "app.presentation.api.v1.documents.SQLAlchemyUserRepository",
+        repo_class,
+    )
+
+    response = await async_client.post(
+        "/api/v1/documents/generate",
+        headers=auth_headers,
+        json={
+            "template_version_id": version_id,
+            "variables": {"name": "Alice", "date": "2025-01-01"},
+        },
+    )
+    assert response.status_code == 403, response.text
+    assert "verificar" in response.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_generate_document_allowed_for_verified_user(
+    async_client, app, auth_headers, fake_template_repo, fake_storage, monkeypatch
+):
+    """SCEN-VERIFY-05: Verified user can generate documents normally."""
+    version_id = seed_template_version(fake_template_repo, fake_storage, ["name", "date"])
+
+    verified_user = User(
+        id=CONFTEST_USER_ID,
+        tenant_id=CONFTEST_TENANT_ID,
+        email="verified@test.com",
+        hashed_password=hash_password("secret"),
+        full_name="Verified User",
+        role="user",
+        is_active=True,
+        email_verified=True,
+    )
+
+    repo_class, _ = _make_unverified_session(verified_user)
+    monkeypatch.setattr(
+        "app.presentation.api.v1.documents.SQLAlchemyUserRepository",
+        repo_class,
+    )
+
+    response = await async_client.post(
+        "/api/v1/documents/generate",
+        headers=auth_headers,
+        json={
+            "template_version_id": version_id,
+            "variables": {"name": "Alice", "date": "2025-01-01"},
+        },
+    )
+    assert response.status_code == 201, response.text

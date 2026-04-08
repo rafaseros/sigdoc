@@ -79,5 +79,22 @@ class UserResponse(BaseModel):
     role: str
     tenant_id: str
     effective_bulk_limit: int | None = None
+    email_verified: bool = True  # Default True to not break existing clients
 
     model_config = {"from_attributes": True}
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
+    @field_validator("new_password")
+    @classmethod
+    def password_min_length(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("La contraseña debe tener al menos 8 caracteres")
+        return v

@@ -7,6 +7,7 @@ from app.application.services.quota_service import QuotaService
 from app.application.services.template_service import TemplateService
 from app.application.services.usage_service import UsageService
 from app.config import get_settings
+from app.domain.ports.user_repository import UserRepository
 from app.infrastructure.persistence.database import async_session_factory
 from app.infrastructure.persistence.repositories.template_repository import (
     SQLAlchemyTemplateRepository,
@@ -135,3 +136,14 @@ async def get_document_service(
         tier_id=tier_id,
         user_bulk_override=user_bulk_override,
     )
+
+
+async def get_user_repository(
+    session: AsyncSession = Depends(get_tenant_session),
+) -> UserRepository:
+    """Return a UserRepository backed by the current tenant session."""
+    from app.infrastructure.persistence.repositories.user_repository import (
+        SQLAlchemyUserRepository,
+    )
+
+    return SQLAlchemyUserRepository(session)

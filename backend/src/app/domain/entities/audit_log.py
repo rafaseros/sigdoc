@@ -24,6 +24,7 @@ class AuditAction:
     AUTH_LOGIN_FAILED = "auth.login_failed"
     AUTH_CHANGE_PASSWORD = "auth.change_password"
     AUTH_SIGNUP = "auth.signup"
+    AUTH_RESET_PASSWORD = "auth.reset_password"
 
 
 @dataclass

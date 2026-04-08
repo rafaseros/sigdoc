@@ -61,11 +61,15 @@ class SignupService:
         user_repo: UserRepository,
         tier_repo: SubscriptionTierRepository,
         audit_service=None,  # AuditService | None — optional for testability
+        email_service=None,  # EmailService | None — optional, fire-and-forget
+        frontend_url: str = "http://localhost:5173",
     ) -> None:
         self._tenant_repo = tenant_repo
         self._user_repo = user_repo
         self._tier_repo = tier_repo
         self._audit_service = audit_service
+        self._email_service = email_service
+        self._frontend_url = frontend_url
 
     async def signup(
         self,
@@ -136,6 +140,19 @@ class SignupService:
                 resource_type="tenant",
                 resource_id=tenant_id,
                 ip_address=ip_address,
+            )
+
+        # Step 7b: Fire-and-forget verification email (ADR-ASEW-03)
+        if self._email_service is not None:
+            from app.application.services.email_verification_service import EmailVerificationService
+            import asyncio
+            asyncio.create_task(
+                EmailVerificationService.send_verification(
+                    user=user,
+                    email_service=self._email_service,
+                    user_repo=self._user_repo,
+                    frontend_url=self._frontend_url,
+                )
             )
 
         # Step 8: Return JWT tokens

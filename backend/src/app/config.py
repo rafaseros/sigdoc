@@ -24,10 +24,18 @@ class Settings(BaseSettings):
 
     # Auth
     secret_key: str
-    admin_email: str = "admin@sigdoc.local"
-    admin_password: str = "admin123"
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 7
+
+    # Email
+    email_backend: str = "console"
+    smtp_host: str = "localhost"
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from_address: str = "noreply@sigdoc.local"
+    smtp_tls: bool = True
+    frontend_url: str = "http://localhost:5173"
 
     # MinIO
     minio_endpoint: str = "minio:9000"

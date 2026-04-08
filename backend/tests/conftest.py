@@ -17,9 +17,10 @@ os.environ.setdefault("MINIO_EXTERNAL_ENDPOINT", "fake-minio:9000")
 os.environ.setdefault("MINIO_ACCESS_KEY", "fakeaccesskey")
 os.environ.setdefault("MINIO_SECRET_KEY", "fakesecretkey")
 os.environ.setdefault("MINIO_SECURE", "false")
-os.environ.setdefault("ADMIN_EMAIL", "admin@test.local")
-os.environ.setdefault("ADMIN_PASSWORD", "test-admin-password")
 os.environ.setdefault("BULK_GENERATION_LIMIT", "10")
+os.environ.setdefault("ADMIN_PASSWORD", "test-admin-password")
+os.environ.setdefault("EMAIL_BACKEND", "console")
+os.environ.setdefault("FRONTEND_URL", "http://localhost:5173")
 
 import pytest  # noqa: E402 — after os.environ setup
 
