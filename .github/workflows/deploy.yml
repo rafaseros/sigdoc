@@ -1,0 +1,36 @@
+name: Deploy to VPS
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Deploy to VPS
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd /opt/docker/apps/sigdoc
+
+            # Pull latest code
+            git pull origin main
+
+            # Rebuild and restart containers
+            docker compose -f docker-compose.prod.yml up --build -d
+
+            # Run migrations (idempotent — safe to run every deploy)
+            docker compose -f docker-compose.prod.yml exec -T api alembic upgrade head
+
+            # Clean up old images
+            docker image prune -f
+
+            echo "✅ SigDoc deployed successfully"
