@@ -34,3 +34,4 @@ jobs:
             docker image prune -f
 
             echo "✅ SigDoc deployed successfully"
+
