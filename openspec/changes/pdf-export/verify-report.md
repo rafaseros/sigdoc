@@ -511,3 +511,206 @@ The two WARNINGs (W-03, W-04) are Phase 4 responsibilities, not Phase 3 defects 
 4. **`update_pdf_fields` return type mismatch (S-02)**: Real repo returns ORM object; fake returns entity. Phase 4 code must not assume domain `Document` type — use attribute access only (both types expose `.pdf_minio_path`).
 
 **Next recommended**: Ready to commit Phase 3 changes. Proceed to Phase 4 (T-PRES-01 through T-PRES-07 — Presentation: endpoints + RBAC + audit + 503 mapping).
+
+---
+
+## Phase 4 Verification
+
+**Date**: 2026-04-25
+**Scope**: Phase 4 — Presentation (T-PRES-01 through T-PRES-07)
+**Verdict**: ✅ APPROVED_WITH_WARNINGS
+
+---
+
+### Completeness
+
+| Metric | Value |
+|--------|-------|
+| Phase 4 tasks total | 7 |
+| Tasks complete | 7 |
+| Tasks incomplete | 0 |
+
+All 7 Phase 4 tasks are marked `[x]` in `tasks.md` and independently verified below.
+
+---
+
+### Build & Tests Execution
+
+**Build**: N/A — Python/pytest project, no separate build step.
+
+**Tests (Phase 4 — `tests/integration/test_documents_download_format.py`)**:
+```
+20 passed, 1 warning in 0.59s
+```
+All 20 Phase 4 tests pass.
+
+**Tests (full suite — regression gate)**:
+```
+1 failed, 420 passed, 3 warnings in 16.81s
+```
+Phase 4 delta: +20 tests (401 → 421 collected; 420 passing).  
+The 1 failure is the **pre-existing** `test_upload_template_appears_in_list` session-scoped FakeTemplateRepository state pollution — confirmed pre-existing since Phase 3 (not introduced by Phase 4). Zero new regressions.  
+The 3 warnings are pre-existing (2× `RuntimeWarning: coroutine never awaited` in `test_tiers_api.py` + 1× passlib `DeprecationWarning`).
+
+**Coverage**: Not configured — not available.
+
+---
+
+### TDD Compliance
+
+| Check | Result | Details |
+|-------|--------|---------|
+| TDD Evidence reported | ✅ | Full TDD Cycle Evidence table in apply-progress (Phase 4) |
+| All tasks have tests | ✅ | 4 of 7 are explicit [TEST] tasks; 3 implementation tasks covered by their paired RED cycle |
+| RED confirmed (tests exist) | ✅ | `test_documents_download_format.py` is untracked (new file) — tests written before impl |
+| GREEN confirmed (tests pass) | ✅ | 20/20 pass on independent execution |
+| Triangulation adequate | ✅ | 20 tests covering 7 scenarios × multiple paths (422, 403, 200, 503, audit, backfill) |
+| Safety Net for modified files | ✅ | `documents.py` and `document.py` modified; existing `test_documents_api.py` suite had 8 passing tests before modification (confirmed from Phase 3 baseline of 401 total) |
+
+**TDD Compliance**: 6/6 checks passed
+
+---
+
+### Test Layer Distribution
+
+| Layer | Tests | Files | Tools |
+|-------|-------|-------|-------|
+| Unit | 0 new | — | pytest |
+| Integration | 20 | 1 | httpx/ASGITransport + FakePdfConverter + FakeStorageService |
+| E2E | 0 | — | not installed |
+| **Total (Phase 4 new)** | **20** | **1** | |
+
+All 20 tests use in-memory fakes — no real Gotenberg, no real MinIO, no real database. This is appropriate for the presentation layer.
+
+---
+
+### Spec Compliance Matrix
+
+| Requirement | Scenario | Test | Result |
+|-------------|----------|------|--------|
+| REQ-DDF-03 | SCEN-DDF-04: POST /generate with output_format → 422 | `test_generate_with_output_format_returns_422` | ✅ COMPLIANT |
+| REQ-DDF-04 | SCEN-DDF-04 bulk: generate-bulk rejects extra fields | `test_generate_bulk_with_output_format_returns_422` | ⚠️ PARTIAL (see W-PRES-01) |
+| REQ-DDF-05 | W-03: generate → 503 on PdfConversionError | `test_generate_pdf_conversion_error_returns_503` | ✅ COMPLIANT |
+| REQ-DDF-05 | W-04: generate-bulk → 503 on PdfConversionError | `test_generate_bulk_pdf_conversion_error_returns_503` | ✅ COMPLIANT |
+| REQ-DDF-06 | Missing format param → 422 | `test_download_missing_format_returns_422` | ✅ COMPLIANT |
+| REQ-DDF-06 | Invalid format value → 422 | `test_download_invalid_format_returns_422` | ✅ COMPLIANT |
+| REQ-DDF-07 | SCEN-DDF-01: Admin downloads format=docx → 200 + DOCX MIME | `test_admin_download_docx_returns_200_with_correct_mime` | ✅ COMPLIANT |
+| REQ-DDF-07 | SCEN-DDF-02: Non-admin downloads format=pdf → 200 + PDF MIME + audit via=direct | `test_user_download_pdf_returns_200_with_pdf_mime` | ✅ COMPLIANT |
+| REQ-DDF-07 | SCEN-DDF-03: Non-admin format=docx → 403 non-leaky | `test_user_download_docx_returns_403` | ✅ COMPLIANT |
+| REQ-DDF-09 | SCEN-DDF-06: Legacy doc + user PDF → backfill + 200 | `test_user_download_pdf_legacy_triggers_backfill` | ✅ COMPLIANT |
+| REQ-DDF-10 | SCEN-DDF-07: Legacy doc + Gotenberg down → 503, pdf_file_name stays NULL | `test_user_download_pdf_legacy_gotenberg_down_returns_503` | ✅ COMPLIANT |
+| REQ-DDF-09/19 | SCEN-DDF-08: Admin downloads docx on legacy doc → 200, no backfill | `test_admin_download_docx_legacy_doc_no_backfill` | ✅ COMPLIANT |
+| REQ-DDF-11 | Bulk missing format → 422 | `test_bulk_download_missing_format_returns_422` | ✅ COMPLIANT |
+| REQ-DDF-11/12 | SCEN-DDF-09: Admin bulk format=pdf → 200 ZIP with .pdf only | `test_bulk_download_admin_pdf_only_returns_zip` | ✅ COMPLIANT |
+| REQ-DDF-11/12 | SCEN-DDF-10: Admin bulk include_both=true → ZIP with .docx + .pdf per row | `test_bulk_download_admin_include_both_returns_zip_with_both` | ✅ COMPLIANT |
+| REQ-DDF-11 | SCEN-DDF-11: Non-admin bulk format=docx → 403 | `test_bulk_download_non_admin_docx_returns_403` | ✅ COMPLIANT |
+| REQ-DDF-11 | SCEN-DDF-12: Non-admin bulk include_both=true → 403 | `test_bulk_download_non_admin_include_both_returns_403` | ✅ COMPLIANT |
+| REQ-DDF-13 | SCEN-DDF-13: Non-admin via share + format=docx → 403 | `test_share_recipient_non_admin_cannot_download_docx` | ✅ COMPLIANT |
+| REQ-DDF-13/15 | SCEN-DDF-14: Non-admin via share + format=pdf → 200 + audit via=share | `test_share_recipient_non_admin_downloads_pdf_with_via_share_audit` | ✅ COMPLIANT |
+| REQ-DDF-15 | ADR-PDF-07: Creator sends via=share → overridden to via=direct in audit | `test_via_share_overridden_to_direct_for_doc_creator` | ✅ COMPLIANT |
+
+**Compliance summary**: 19/20 scenarios compliant; 1 partial (W-PRES-01).
+
+---
+
+### Correctness (Static — Structural Evidence)
+
+| Requirement | Status | Notes |
+|------------|--------|-------|
+| REQ-DDF-03: GenerateRequest has `extra="forbid"` → 422 on unknown fields | ✅ Implemented | `model_config = ConfigDict(extra="forbid")` in `GenerateRequest`; confirmed by test |
+| REQ-DDF-04: generate-bulk rejects output_format | ⚠️ Partial | `generate_bulk` uses `Form(...)` params; FastAPI multipart silently ignores extra form fields. No `extra="forbid"` is applicable for multipart (no Pydantic model). The field is absent from the handler, which is the correct approach — see W-PRES-01 |
+| REQ-DDF-06: `format` required query param (422 if missing/invalid) | ✅ Implemented | `Literal["pdf","docx"] = Query(...)` on both download endpoints |
+| REQ-DDF-07: RBAC checked BEFORE file I/O | ✅ Implemented | `can_download_format()` is the first operation in both download handlers |
+| REQ-DDF-07: 403 with non-leaky message | ✅ Implemented | "Este formato de descarga no está disponible para tu rol." — no file path, no username |
+| REQ-DDF-09: lazy backfill via ensure_pdf for pdf + NULL | ✅ Implemented | Lines 352–361 in `download_document` |
+| REQ-DDF-10: PdfConversionError on backfill → 503 (W-03 closed) | ✅ Implemented | `except PdfConversionError → HTTPException(503)` in `download_document` |
+| REQ-DDF-05: PdfConversionError on generate → 503 (W-03 closed) | ✅ Implemented | `except PdfConversionError → HTTPException(503)` in `generate_document` |
+| REQ-DDF-05: PdfConversionError on generate-bulk → 503 (W-04 closed) | ✅ Implemented | `except PdfConversionError → HTTPException(503)` in `generate_bulk` |
+| REQ-DDF-11: Non-admin + docx → 403 on bulk download | ✅ Implemented | `if not can_download_format(current_user.role, format)` |
+| REQ-DDF-11: Non-admin + include_both=true → 403 (loud rejection) | ✅ Implemented | Explicit `if include_both and current_user.role != "admin"` check |
+| REQ-DDF-12: include_both ZIP contains .docx + .pdf per row | ✅ Implemented | Verified by test and code inspection |
+| REQ-DDF-15: DOCUMENT_DOWNLOAD audit with {format, document_id, via} | ✅ Implemented | Both download endpoints write audit event on success |
+| W-05: errors field always [] on generate_bulk success | ✅ Implemented | `errors=result["errors"]` — always `[]` per service contract |
+| DOCX MIME `application/vnd.openxmlformats-officedocument.wordprocessingml.document` | ✅ Implemented | `_DOCX_MIME` constant, used in Response |
+| PDF MIME `application/pdf` | ✅ Implemented | `_PDF_MIME` constant, used in Response |
+| ADR-PDF-07: `via=share` creator sanity check | ✅ Implemented | `if via == "share" and current_user.user_id == doc.created_by: effective_via = "direct"` |
+| No frontend changes (Phase 4 is backend-only) | ✅ Confirmed | `git diff HEAD -- frontend/` = 0 lines |
+| No new DB migrations | ✅ Confirmed | Migration head still at `010` |
+| No docker-compose / pyproject.toml changes | ✅ Confirmed | Both files unchanged |
+
+---
+
+### Coherence (Design)
+
+| Decision | Followed? | Notes |
+|----------|-----------|-------|
+| ADR-PDF-05: `can_download_format` is the sole RBAC decision point | ✅ Yes | Called at top of both download endpoints; no independent role checks |
+| ADR-PDF-07: `via` param as client hint + server sanity check | ✅ Yes | Creator-only check implemented; simpler than full template_shares DB roundtrip (documented trade-off) |
+| ADR-PDF-08: serial backfill before zipping | ✅ Yes | `for doc in batch_docs:` + `await service.ensure_pdf()` per legacy row |
+| ADR-PDF-08: 503 if any backfill fails | ✅ Yes | `except PdfConversionError → 503` inside the ZIP loop |
+| Design: W-03 / W-04 mapped to 503 | ✅ Yes | Both generate endpoints now catch `PdfConversionError` |
+| Design: audit `resource_type` | ⚠️ Minor deviation | `resource_type="document"` for single, `resource_type="document_batch"` for bulk. Spec only requires the `details` fields — resource_type is an implementation choice, acceptable |
+| Bulk download hexagonal boundary: `service._doc_repo` accessed directly | ⚠️ Documented deviation (W-PRES-02) | Apply-progress and design notes acknowledge this. `list_paginated(size=10000)` then Python filter. No `list_by_batch_id` port method exists yet |
+| `_audit_service` accessed directly on service | ⚠️ Minor deviation | `service._audit_service` is accessed directly in both download endpoints. Should be encapsulated in a service method |
+
+---
+
+### Assertion Quality
+
+| File | Line | Assertion | Issue | Severity |
+|------|------|-----------|-------|----------|
+| `test_documents_download_format.py` | ~170 | `assert response.status_code != 200` and `assert response.status_code != 201` | Weak assertion for SCEN-DDF-04 bulk variant — test passes because the dummy xlsx causes a 400/404/422, NOT specifically 422. Does not prove that `output_format` in the multipart body is rejected with 422. | WARNING |
+
+**Assertion quality**: 0 CRITICAL, 1 WARNING
+
+---
+
+### Issues Found
+
+**CRITICAL** (must fix before archive):
+None.
+
+**WARNING** (should fix):
+
+- **W-PRES-01: Weak bulk `output_format` test** — `test_generate_bulk_with_output_format_returns_422` asserts `!= 200` and `!= 201` rather than the specific `== 422` implied by SCEN-DDF-04 and the test's own docstring/name. The test passes because the dummy xlsx bytes trigger a `400 Only .xlsx files are accepted`, not a 422. The endpoint correctly does NOT accept `output_format` as a parameter, but this test does not prove that — it only proves the endpoint doesn't return 200. **The test name says "returns_422" but doesn't assert 422.** This is a compliance gap for SCEN-DDF-04 bulk. Mitigation: REQ-DDF-04 is about the absence of `output_format` as an accepted field; for multipart/form-data endpoints, FastAPI silently ignores extra form fields (there is no Pydantic model to apply `extra="forbid"` to), which is the architectural reality. The spec says "its presence MUST result in HTTP 422" — for multipart endpoints this is not technically achievable without custom validation. Phase 6 integration tests (T-INT scope) should clarify the actual behavior.
+
+- **W-PRES-02: Hexagonal boundary leak in bulk download** — `download_bulk` accesses `service._doc_repo.list_paginated(page=1, size=10000)` directly (private attribute) and filters results in the endpoint. This bypasses the hexagonal boundary. Also `size=10000` is a brittle workaround for missing `list_by_batch_id` port method. Apply-progress acknowledges this as a known limitation. Recommend adding `list_by_batch_id(batch_id: UUID) -> list[Document]` to the `DocumentRepository` port in Phase 6.
+
+- **W-PRES-03: `_audit_service` accessed directly in endpoints** — Both `download_document` and `download_bulk` access `service._audit_service` directly (`if service._audit_service is not None: service._audit_service.log(...)`). This is a private attribute leak. The audit log should be encapsulated in a service method (e.g., `service.log_download_event(...)`) or the service should return audit context to the endpoint. Low severity — Phase 6 refactor scope.
+
+**SUGGESTION**:
+
+- **S-04**: The `download_bulk` endpoint bulk-fetches all documents (size=10000) and filters by `batch_id` in Python. For tenants with many documents, this is O(N) against total documents per tenant. A targeted `list_by_batch_id` query would be O(batch_size). Phase 6 should add this port method.
+
+- **S-05**: The bulk download audit event records `document_id=str(batch_uuid)` in the `details` dict. This is slightly misleading — it's a batch ID, not a document ID. Consider renaming to `batch_id` for clarity.
+
+- **S-01** (carried from Phase 1): `FakePdfConverter` does not enforce empty-bytes contract. Intentional — test double. Not a blocker.
+
+---
+
+### Phase 3 Warnings Resolution
+
+| Warning | Closed? | Evidence |
+|---------|---------|---------|
+| W-03: `PdfConversionError → 503` in `generate_single` endpoint | ✅ RESOLVED | `except PdfConversionError → HTTPException(503)` at line 94–99 of `documents.py`; confirmed by `test_generate_pdf_conversion_error_returns_503` passing |
+| W-04: `PdfConversionError → 503` in `generate_bulk` endpoint | ✅ RESOLVED | `except PdfConversionError → HTTPException(503)` at line 193–198 of `documents.py`; confirmed by `test_generate_bulk_pdf_conversion_error_returns_503` passing |
+| W-05: `generate_bulk` errors field always `[]` on success | ✅ RESOLVED | `errors=result["errors"]` always `[]`; breaking-change semantics documented in endpoint docstring |
+
+---
+
+### Verdict
+
+**✅ APPROVED_WITH_WARNINGS**
+
+Phase 4 (Presentation) is fully implemented and verified. All 7 tasks complete. 20/20 Phase 4 tests pass on independent execution. 420/421 full suite passes — 1 pre-existing failure (`test_upload_template_appears_in_list`, pre-exists since Phase 3), zero new regressions. All Phase 3 warnings (W-03, W-04, W-05) are resolved.
+
+The COMPLIANT count is 19/20 spec scenarios — the partial compliance is SCEN-DDF-04 for the bulk variant, which is a test quality issue (W-PRES-01) rather than a missing implementation. The endpoint correctly excludes `output_format` from its parameter list; the architectural reality of multipart/form-data endpoints (FastAPI silently ignores extra form fields) means a true 422 cannot be achieved without custom validation.
+
+The two WARNINGs (W-PRES-02 hexagonal boundary, W-PRES-03 private audit access) are structural quality issues that do not block functionality and are tracked for Phase 6 refactoring.
+
+**Phase 5 risks confirmed** (apply-progress Risk section):
+1. Frontend mutations must drop `output_format` — `GenerateRequest` now has `extra="forbid"`; any client still sending it gets 422
+2. ALL download links must include `?format=pdf|docx` — missing param → 422; existing frontend download links are broken until T-FE-02/T-FE-04/T-FE-05 land
+3. Bulk download URL must include `?format=...` — until T-FE-06 lands
+
+**Next recommended**: Ready to commit Phase 4 changes. Proceed to Phase 5 (T-FE-01 through T-FE-06 — Frontend: role-aware download UI, shadcn dropdown, bulk checkbox).

@@ -1,3 +1,9 @@
+from __future__ import annotations
+
+import io
+import uuid
+import zipfile
+from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
@@ -9,10 +15,12 @@ from app.application.services.document_service import DocumentService
 from app.domain.exceptions import (
     BulkLimitExceededError,
     DocumentNotFoundError,
+    PdfConversionError,
     TemplateAccessDeniedError,
     TemplateVersionNotFoundError,
     VariablesMismatchError,
 )
+from app.domain.services.document_permissions import can_download_format
 from app.infrastructure.persistence.database import get_session
 from app.infrastructure.persistence.repositories.user_repository import SQLAlchemyUserRepository
 from app.presentation.middleware.rate_limit import limiter, tier_limit_bulk, tier_limit_generate
@@ -25,6 +33,11 @@ from app.presentation.schemas.document import (
 )
 
 router = APIRouter()
+
+# MIME type constants
+_DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+_PDF_MIME = "application/pdf"
+_ZIP_MIME = "application/zip"
 
 
 async def _require_verified_email(
@@ -60,7 +73,11 @@ async def generate_document(
     service: DocumentService = Depends(get_document_service),
     session: AsyncSession = Depends(get_session),
 ):
-    """Generate a single document from a template version."""
+    """Generate a single document from a template version.
+
+    REQ-DDF-03: output_format is NOT accepted (GenerateRequest has extra="forbid").
+    REQ-DDF-05: PdfConversionError → HTTP 503 (atomic rollback already done in service).
+    """
     await _require_verified_email(current_user, session)
     try:
         result = await service.generate_single(
@@ -74,6 +91,12 @@ async def generate_document(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
     except TemplateVersionNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template version not found")
+    except PdfConversionError:
+        # REQ-DDF-05 / W-03: map to 503 — do NOT leak internal details
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="El servicio de conversión a PDF no está disponible temporalmente. Por favor, intentá más tarde.",
+        )
 
     doc = result["document"]
     return DocumentResponse(
@@ -124,7 +147,12 @@ async def generate_bulk(
     service: DocumentService = Depends(get_document_service),
     session: AsyncSession = Depends(get_session),
 ):
-    """Generate multiple documents from a filled Excel file."""
+    """Generate multiple documents from a filled Excel file.
+
+    REQ-DDF-04: output_format is NOT accepted in the body.
+    REQ-DDF-05 / W-04: PdfConversionError → HTTP 503.
+    W-05: errors field is always [] on success (breaking change from partial-failure model).
+    """
     await _require_verified_email(current_user, session)
     # Validate file type
     if not (file.filename and file.filename.endswith(".xlsx")):
@@ -162,31 +190,129 @@ async def generate_bulk(
         )
     except TemplateAccessDeniedError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except PdfConversionError:
+        # REQ-DDF-05 / W-04: atomic rollback already done in service — map to 503
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="El servicio de conversión a PDF no está disponible temporalmente. Por favor, intentá más tarde.",
+        )
 
     return BulkGenerateResponse(
         batch_id=str(result["batch_id"]),
         document_count=result["document_count"],
         download_url=f"/documents/bulk/{result['batch_id']}/download",
-        errors=result["errors"],
+        errors=result["errors"],  # always [] on success (W-05 resolution)
     )
 
 
 @router.get("/bulk/{batch_id}/download")
 async def download_bulk(
     batch_id: str,
+    format: Literal["pdf", "docx"] = Query(..., description="File format to download (pdf or docx)"),
+    include_both: bool = Query(False, description="Include both .docx and .pdf files in the ZIP (admin only)"),
     current_user: CurrentUser = Depends(get_current_user),
     service: DocumentService = Depends(get_document_service),
 ):
-    """Download the ZIP file for a bulk generation batch."""
-    zip_path = f"{current_user.tenant_id}/{batch_id}/bulk.zip"
+    """Download a ZIP of bulk-generated documents with format selection and RBAC.
+
+    REQ-DDF-11: format=docx → 403 for non-admin; include_both=true → 403 for non-admin.
+    REQ-DDF-12: include_both=true includes both .docx + .pdf per document.
+    ADR-PDF-08: serial backfill for legacy rows when format includes PDF.
+    REQ-DDF-15: DOCUMENT_DOWNLOAD audit event written.
+    """
+    # RBAC check — REQ-DDF-11
+    if not can_download_format(current_user.role, format):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Este formato de descarga no está disponible para tu rol.",
+        )
+    if include_both and current_user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="La opción de incluir ambos formatos solo está disponible para administradores.",
+        )
+
+    # Resolve batch_id as UUID
     try:
-        zip_bytes = await service.download_document(zip_path)
-    except Exception:
-        raise HTTPException(status_code=404, detail="Bulk download not found")
+        batch_uuid = uuid.UUID(batch_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid batch_id format")
+
+    # Fetch all documents for this batch from the repository
+    # We use list_paginated with a very large page size to get all batch docs.
+    # The batch_id is stored on Document rows; we need to filter by it.
+    # list_paginated doesn't support batch_id filter — we list all and filter.
+    all_docs, _total = await service._doc_repo.list_paginated(page=1, size=10000)
+    batch_docs = [d for d in all_docs if d.batch_id == batch_uuid]
+
+    if not batch_docs:
+        raise HTTPException(status_code=404, detail="Bulk download batch not found")
+
+    # Build ZIP in memory — ADR-PDF-08 serial backfill
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        for doc in batch_docs:
+            stem = doc.docx_file_name[:-5] if doc.docx_file_name.endswith(".docx") else doc.docx_file_name
+
+            if include_both:
+                # Include both DOCX and PDF for each document
+                # Backfill PDF if needed (legacy row)
+                if doc.pdf_file_name is None:
+                    try:
+                        doc = await service.ensure_pdf(doc.id)
+                    except PdfConversionError:
+                        raise HTTPException(
+                            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                            detail="El servicio de conversión a PDF no está disponible temporalmente.",
+                        )
+
+                docx_bytes = await service.download_document(doc.docx_minio_path)
+                pdf_bytes = await service.download_document(doc.pdf_minio_path)
+                zf.writestr(f"{stem}.docx", docx_bytes)
+                zf.writestr(f"{stem}.pdf", pdf_bytes)
+
+            elif format == "pdf":
+                # PDF only — backfill if legacy
+                if doc.pdf_file_name is None:
+                    try:
+                        doc = await service.ensure_pdf(doc.id)
+                    except PdfConversionError:
+                        raise HTTPException(
+                            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                            detail="El servicio de conversión a PDF no está disponible temporalmente.",
+                        )
+                pdf_bytes = await service.download_document(doc.pdf_minio_path)
+                zf.writestr(f"{stem}.pdf", pdf_bytes)
+
+            else:
+                # DOCX only
+                docx_bytes = await service.download_document(doc.docx_minio_path)
+                zf.writestr(f"{stem}.docx", docx_bytes)
+
+    zip_buffer.seek(0)
+    zip_bytes = zip_buffer.read()
+
+    # Audit log — REQ-DDF-15
+    if service._audit_service is not None:
+        from app.domain.entities import AuditAction
+        service._audit_service.log(
+            actor_id=current_user.user_id,
+            tenant_id=current_user.tenant_id,
+            action=AuditAction.DOCUMENT_DOWNLOAD,
+            resource_type="document_batch",
+            resource_id=batch_uuid,
+            details={
+                "format": format,
+                "document_id": str(batch_uuid),
+                "via": "direct",
+                "include_both": include_both,
+            },
+            ip_address=None,
+        )
 
     return Response(
         content=zip_bytes,
-        media_type="application/zip",
+        media_type=_ZIP_MIME,
         headers={"Content-Disposition": f'attachment; filename="bulk_{batch_id}.zip"'},
     )
 
@@ -194,24 +320,83 @@ async def download_bulk(
 @router.get("/{document_id}/download")
 async def download_document(
     document_id: UUID,
+    format: Literal["pdf", "docx"] = Query(..., description="File format to download (pdf or docx)"),
+    via: Literal["direct", "share"] = Query("direct", description="Download context for audit trail"),
     current_user: CurrentUser = Depends(get_current_user),
     service: DocumentService = Depends(get_document_service),
 ):
-    """Download a generated document file."""
+    """Download a generated document in the requested format.
+
+    REQ-DDF-06: format param is required (Literal["pdf","docx"]).
+    REQ-DDF-07: RBAC via can_download_format before serving any bytes.
+    REQ-DDF-09: PDF backfill (ensure_pdf) for legacy rows when format=pdf.
+    REQ-DDF-15: DOCUMENT_DOWNLOAD audit event with format + via.
+    ADR-PDF-07: via=share sanity check — creator's own download → override to "direct".
+    """
+    # RBAC check — REQ-DDF-07 / REQ-DDF-08
+    if not can_download_format(current_user.role, format):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Este formato de descarga no está disponible para tu rol.",
+        )
+
+    # Fetch document
     try:
         result = await service.get_document(document_id)
     except DocumentNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
     doc = result["document"]
-    file_bytes = await service.download_document(doc.docx_minio_path)
+
+    if format == "pdf":
+        # Lazy backfill for legacy docs (REQ-DDF-09)
+        if doc.pdf_file_name is None:
+            try:
+                doc = await service.ensure_pdf(document_id)
+            except PdfConversionError:
+                # REQ-DDF-10 / W-03: 503, doc row unchanged
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="El servicio de conversión a PDF no está disponible temporalmente. Por favor, intentá más tarde.",
+                )
+
+        file_bytes = await service.download_document(doc.pdf_minio_path)
+        media_type = _PDF_MIME
+        filename = doc.pdf_file_name or (doc.docx_file_name[:-5] + ".pdf")
+
+    else:
+        # DOCX download — no backfill needed
+        file_bytes = await service.download_document(doc.docx_minio_path)
+        media_type = _DOCX_MIME
+        filename = doc.docx_file_name
+
+    # ADR-PDF-07: via=share sanity check — if current_user IS the document creator,
+    # override via to "direct" to prevent audit spoofing.
+    effective_via = via
+    if via == "share" and current_user.user_id == doc.created_by:
+        effective_via = "direct"
+
+    # Audit log — REQ-DDF-15
+    if service._audit_service is not None:
+        from app.domain.entities import AuditAction
+        service._audit_service.log(
+            actor_id=current_user.user_id,
+            tenant_id=current_user.tenant_id,
+            action=AuditAction.DOCUMENT_DOWNLOAD,
+            resource_type="document",
+            resource_id=document_id,
+            details={
+                "format": format,
+                "document_id": str(document_id),
+                "via": effective_via,
+            },
+            ip_address=None,
+        )
 
     return Response(
         content=file_bytes,
-        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={
-            "Content-Disposition": f'attachment; filename="{doc.docx_file_name}"',
-        },
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 

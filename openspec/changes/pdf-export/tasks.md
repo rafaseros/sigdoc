@@ -160,43 +160,43 @@
 
 ## Phase 4 — Presentation (endpoints + RBAC + audit)
 
-### T-PRES-01: Remove `output_format` from generate request schema
+### T-PRES-01: [x] Remove `output_format` from generate request schema
 - **Files**: `backend/src/app/presentation/schemas/document.py`
 - **REQs**: REQ-DDF-03, REQ-DDF-04, SCEN-DDF-04
 - **Depends on**: T-APP-02
 - **Description**: Drop `output_format` field from `GenerateDocumentRequest` (and bulk equivalent if separate). Pydantic will reject unknown fields → 422 automatically if `model_config = ConfigDict(extra="forbid")`. Verify and enable `extra="forbid"` if not already set.
 
-### T-PRES-02: [TEST] Endpoint tests for single-doc download RBAC
+### T-PRES-02: [x] [TEST] Endpoint tests for single-doc download RBAC
 - **Files**: `backend/tests/integration/test_documents_api.py`
 - **REQs**: REQ-DDF-06, REQ-DDF-07, REQ-DDF-15, SCEN-DDF-01..03
 - **Depends on**: T-APP-06, T-DOMAIN-02
 - **Description**: Test: format=docx admin → 200 + correct MIME (SCEN-DDF-01); format=pdf non-admin → 200 + PDF bytes + audit event with `via="direct"` (SCEN-DDF-02); format=docx non-admin → 403 non-leaky message (SCEN-DDF-03); missing format → 422.
 
-### T-PRES-03: Modify single-doc download endpoint
+### T-PRES-03: [x] Modify single-doc download endpoint
 - **Files**: `backend/src/app/presentation/api/v1/documents.py`
 - **REQs**: REQ-DDF-06, REQ-DDF-07, REQ-DDF-09, REQ-DDF-13, REQ-DDF-15
 - **Depends on**: T-PRES-02, T-APP-06, T-DOMAIN-02, T-DOMAIN-07
 - **Description**: Add `format: Literal["pdf","docx"] = Query(...)` and `via: Literal["direct","share"] = Query("direct")` params to `GET /documents/{id}/download`. Call `can_download_format(current_user.role, format)` → 403 on False. For PDF: call `ensure_pdf(id)` (handles legacy backfill transparently). Write `DOCUMENT_DOWNLOAD` audit event with `{format, document_id, via}` on success.
 
-### T-PRES-04: [TEST] Endpoint tests for bulk download RBAC
+### T-PRES-04: [x] [TEST] Endpoint tests for bulk download RBAC
 - **Files**: `backend/tests/integration/test_documents_api.py`
 - **REQs**: REQ-DDF-11, REQ-DDF-12, SCEN-DDF-09..12
 - **Depends on**: T-PRES-02
 - **Description**: Test: admin format=pdf → 200 ZIP with .pdf files (SCEN-DDF-09); admin include_both=true → 200 ZIP with .docx + .pdf per row (SCEN-DDF-10); non-admin format=docx → 403 (SCEN-DDF-11); non-admin include_both=true → 403 (SCEN-DDF-12); missing format → 422.
 
-### T-PRES-05: Modify bulk download endpoint
+### T-PRES-05: [x] Modify bulk download endpoint
 - **Files**: `backend/src/app/presentation/api/v1/documents.py`
 - **REQs**: REQ-DDF-11, REQ-DDF-12, REQ-DDF-15
 - **Depends on**: T-PRES-04, T-APP-06, T-DOMAIN-02
 - **Description**: Add `format: Literal["pdf","docx"] = Query(...)` and `include_both: bool = Query(False)` to bulk download. RBAC: non-admin + format=docx → 403; non-admin + include_both=true → 403. Serial `ensure_pdf()` for legacy rows in batch when format includes PDF. Build ZIP per ADR-PDF-08. Write `DOCUMENT_DOWNLOAD` audit event per file or per batch (single event with list is acceptable).
 
-### T-PRES-06: [TEST] Endpoint tests for `output_format` rejection and sharing RBAC
+### T-PRES-06: [x] [TEST] Endpoint tests for `output_format` rejection and sharing RBAC
 - **Files**: `backend/tests/integration/test_documents_api.py`
 - **REQs**: REQ-DDF-03, REQ-DDF-13, SCEN-DDF-04, SCEN-DDF-13, SCEN-DDF-14
 - **Depends on**: T-PRES-03
 - **Description**: Test: POST /generate with `output_format` in body → 422 (SCEN-DDF-04); non-admin via share-link calls download?format=docx → 403 (SCEN-DDF-13); non-admin via share-link calls download?format=pdf&via=share → 200 + audit `via="share"` (SCEN-DDF-14).
 
-### T-PRES-07: Add `via=share` sanity check in download endpoint
+### T-PRES-07: [x] Add `via=share` sanity check in download endpoint
 - **Files**: `backend/src/app/presentation/api/v1/documents.py`
 - **REQs**: REQ-DDF-15
 - **Depends on**: T-PRES-06, T-PRES-03

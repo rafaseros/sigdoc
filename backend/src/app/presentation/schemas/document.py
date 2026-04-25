@@ -1,9 +1,17 @@
 from datetime import datetime
 
-from pydantic import BaseModel, computed_field, model_validator
+from pydantic import BaseModel, ConfigDict, computed_field, model_validator
 
 
 class GenerateRequest(BaseModel):
+    """Request schema for POST /documents/generate.
+
+    REQ-DDF-03: output_format MUST NOT be accepted. extra="forbid" causes
+    Pydantic to return HTTP 422 for any unknown field, including output_format.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
     template_version_id: str
     variables: dict[str, str]
 

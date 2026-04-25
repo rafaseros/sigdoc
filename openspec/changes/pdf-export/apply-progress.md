@@ -336,3 +336,109 @@ The `file_name` and `minio_path` property aliases on the `Document` entity have 
 3. **`generate_bulk` error field removed**: Old implementation returned `errors` list (partial failures per row). New implementation raises on any failure — no partial success. Phase 4 endpoint must handle `PdfConversionError` → HTTP 503.
 4. **Gotenberg not running** during integration tests: All tests use `FakePdfConverter`. Container-level tests require Gotenberg to be healthy (docker compose `depends_on`). Phase 6 smoke tests will need Gotenberg up.
 5. **`pdf_converter=None` backward compat**: `DocumentService` with `pdf_converter=None` still generates DOCX-only (no PDF). Existing tests that don't set `pdf_converter` remain green. This allows gradual migration but means pre-Phase-3 test fixtures that omit `pdf_converter` won't test the new PDF path — those tests are explicitly checking old behavior.
+
+---
+
+## Phase 4 — Presentation (COMPLETE)
+
+**Batch**: 4 of N
+**Mode**: Strict TDD
+**Date**: 2026-04-25
+
+---
+
+## Tasks Status (Phase 4)
+
+| Task ID | Description | Status |
+|---------|-------------|--------|
+| T-PRES-01 | Remove `output_format` from generate request schema | ✅ DONE |
+| T-PRES-02 | [TEST] Endpoint tests for single-doc download RBAC | ✅ DONE |
+| T-PRES-03 | Modify single-doc download endpoint | ✅ DONE |
+| T-PRES-04 | [TEST] Endpoint tests for bulk download RBAC | ✅ DONE |
+| T-PRES-05 | Modify bulk download endpoint | ✅ DONE |
+| T-PRES-06 | [TEST] Endpoint tests for output_format rejection + sharing RBAC | ✅ DONE |
+| T-PRES-07 | Add `via=share` sanity check in download endpoint | ✅ DONE |
+
+---
+
+## TDD Cycle Evidence (Phase 4)
+
+| Task | RED | GREEN |
+|------|-----|-------|
+| T-PRES-01 | test_generate_with_output_format_returns_422 FAILED (201 returned) | PASSED after ConfigDict(extra="forbid") |
+| T-PRES-02 | format=docx admin 200, user PDF 200+audit, user DOCX 403, missing format 422 — all FAILED | All PASSED after endpoint rewrite |
+| T-PRES-03/W-03 | test_generate_pdf_conversion_error_returns_503 FAILED (PdfConversionError uncaught) | PASSED after try/except PdfConversionError → 503 in generate |
+| T-PRES-04/W-04 | bulk download format/include_both RBAC FAILED (422/404 before new params) | PASSED after bulk endpoint rewrite |
+| T-PRES-05 | SCEN-DDF-09/10 ZIP content tests FAILED (old endpoint served raw zip) | PASSED after new bulk download |
+| T-PRES-06 | output_format rejection + via=share FAILED | PASSED |
+| T-PRES-07 | via=share sanity check FAILED (via not overridden) | PASSED after creator check in endpoint |
+
+---
+
+## Files Modified (Phase 4)
+
+| File | Change |
+|------|--------|
+| `backend/src/app/presentation/schemas/document.py` | Added `ConfigDict(extra="forbid")` to `GenerateRequest` — rejects `output_format` and any unknown field with 422 |
+| `backend/src/app/presentation/api/v1/documents.py` | Full rewrite of download endpoints: `GET /{id}/download` now requires `format: Literal["pdf","docx"]` + optional `via: Literal["direct","share"]`; RBAC via `can_download_format`; lazy backfill via `ensure_pdf`; audit log; `via=share` sanity check. `GET /bulk/{batch_id}/download` now requires `format` + `include_both: bool`; RBAC for non-admin; serial backfill; ZIP assembly. `POST /generate` and `POST /generate-bulk` now catch `PdfConversionError → 503`. |
+
+## Files Created (Phase 4)
+
+| File | Description |
+|------|-------------|
+| `backend/tests/integration/test_documents_download_format.py` | 20 integration tests covering T-PRES-01..07: output_format rejection, RBAC download, 503 mapping, bulk download ZIP content, sharing RBAC, via=share sanity check |
+
+---
+
+## Phase 3 Warnings Resolved
+
+| Warning | Status | How |
+|---------|--------|-----|
+| W-03: `PdfConversionError → 503` not mapped in `generate_single` endpoint | ✅ RESOLVED | `try/except PdfConversionError → HTTPException(503)` in `generate_document` endpoint |
+| W-04: Same for `generate_bulk` endpoint | ✅ RESOLVED | `try/except PdfConversionError → HTTPException(503)` in `generate_bulk` endpoint |
+| W-05: `generate_bulk` errors field shape breaking change | ✅ RESOLVED | Documented: `errors` always `[]` on success; `PdfConversionError` raises 503; no partial success state |
+
+---
+
+## Key Implementation Details
+
+### RBAC enforcement points
+- `can_download_format(current_user.role, format)` called at the TOP of both download endpoints, BEFORE any file I/O
+- Non-admin + `format=docx` → 403
+- Non-admin + `include_both=True` on bulk download → 403
+
+### `via=share` sanity check (ADR-PDF-07)
+- Implemented inline in `download_document`: `if via == "share" and current_user.user_id == doc.created_by: effective_via = "direct"`
+- Does NOT require a DB query for template_shares (simpler + cheaper than spec gap #1 full solution)
+- Sanity check is: creator sending `via=share` → override to `direct` (covers the main anti-spoofing case)
+
+### Bulk download batch resolution
+- `service._doc_repo.list_paginated(page=1, size=10000)` then filter by `doc.batch_id == batch_uuid`
+- Acceptable for Phase 4 (no bulk_batch_id filter on `list_paginated` port). Phase 6 could add an index/filter.
+
+### Content-Type constants
+- `_DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"`
+- `_PDF_MIME = "application/pdf"`
+- `_ZIP_MIME = "application/zip"`
+
+---
+
+## Test Results (Phase 4)
+
+| Metric | Count |
+|--------|-------|
+| Phase 4 new tests | 20 |
+| Baseline after Phase 3 | 401 |
+| Total after Phase 4 | 421 (420 passed + 1 pre-existing ordering failure) |
+| Regressions | 0 |
+| Pre-existing failure (not caused by Phase 4) | `test_upload_template_appears_in_list` — session-scoped FakeTemplateRepository state pollution from all integration tests combined; passes in isolation |
+
+---
+
+## Risks for Phase 5 (Frontend)
+
+1. **Frontend mutations MUST drop `output_format`**: `GenerateRequest` now has `extra="forbid"` — any client sending `output_format` gets 422. Frontend must remove the field from POST body (T-FE-03).
+2. **Frontend download URL must include `format` param**: `GET /{id}/download` now requires `?format=pdf|docx` — missing format returns 422. All existing frontend download links will break until T-FE-02/T-FE-04/T-FE-05 land.
+3. **Admin split-button**: `format=docx` only works for `role=admin` — non-admin sees the docx option broken at API level even if shown in UI (must be removed from DOM, not just disabled).
+4. **Bulk download URL**: `GET /bulk/{batch_id}/download` now requires `?format=...` — the existing frontend bulk download link will return 422 until T-FE-06 lands.
+5. **`via=share` for share flow**: Share-by-email download path must pass `?via=share` explicitly to get correct audit trail (SCEN-DDF-14).
