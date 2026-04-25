@@ -286,19 +286,19 @@
 
 ## Phase 7 — Operational / pre-flight (not code — required before merging)
 
-### T-OPS-01: Verify nginx upstream timeout for bulk download path
+### T-OPS-01: [x] Verify nginx upstream timeout for bulk download path
 - **Files**: (config/infra — not a Python file)
 - **REQs**: ADR-PDF-08 (design risk)
 - **Depends on**: T-PRES-05
 - **Description**: Confirm nginx `proxy_read_timeout` (or equivalent) is ≥ 300s on the `/documents/bulk/*/download` path. Worst-case latency is ~150s for 50 legacy rows; 300s gives 2× headroom. Document the finding and update nginx config if needed.
 
-### T-OPS-02: Update `.env.example` with Gotenberg vars
+### T-OPS-02: [x] Update `.env.example` with Gotenberg vars
 - **Files**: `.env.example` (project root or `backend/`)
 - **REQs**: REQ-PDF-03
 - **Depends on**: T-INFRA-01
 - **Description**: Add `GOTENBERG_URL=http://gotenberg:3000` and `GOTENBERG_TIMEOUT=60` with comments. Also verify `README` or dev-setup docs mention the new `gotenberg` service in `docker compose up`.
 
-### T-OPS-03: Pin Gotenberg image to exact minor version
+### T-OPS-03: [x] Pin Gotenberg image to exact minor version
 - **Files**: `docker/docker-compose.yml`
 - **REQs**: REQ-PDF-05
 - **Depends on**: T-INFRA-08
