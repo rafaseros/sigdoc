@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useGenerateDocument } from "../api/mutations";
-import { apiClient } from "@/shared/lib/api-client";
+import { DownloadButton } from "./DownloadButton";
 
 interface VariableMeta {
   name: string;
@@ -50,7 +50,6 @@ export function DynamicForm({
   const generateMutation = useGenerateDocument();
   const [documentId, setDocumentId] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string>("");
-  const [downloading, setDownloading] = useState(false);
 
   const onSubmit = async (data: FormData) => {
     try {
@@ -63,28 +62,6 @@ export function DynamicForm({
       toast.success("¡Documento generado con éxito!");
     } catch {
       toast.error("Error al generar el documento");
-    }
-  };
-
-  const handleDownload = async () => {
-    if (!documentId) return;
-    setDownloading(true);
-    try {
-      const response = await apiClient.get(`/documents/${documentId}/download`, {
-        responseType: "blob",
-      });
-      const url = window.URL.createObjectURL(new Blob([response.data]));
-      const link = document.createElement("a");
-      link.href = url;
-      link.setAttribute("download", fileName);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
-    } catch {
-      toast.error("Error al descargar el documento");
-    } finally {
-      setDownloading(false);
     }
   };
 
@@ -137,9 +114,7 @@ export function DynamicForm({
           <p className="text-sm text-[#047857] mb-3">
             Su documento &quot;{fileName}&quot; ha sido generado.
           </p>
-          <Button onClick={handleDownload} disabled={downloading} className="bg-[#059669] text-white hover:bg-[#047857] transition-all">
-            {downloading ? "Descargando..." : "Descargar Documento"}
-          </Button>
+          <DownloadButton documentId={documentId} baseFileName={fileName} via="direct" />
         </div>
       )}
     </div>

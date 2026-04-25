@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useDownloadExcelTemplate, useBulkGenerate } from "../api/mutations";
 import { apiClient } from "@/shared/lib/api-client";
+import { buildBulkDownloadUrl } from "../api/queries";
 
 interface CurrentUserResponse {
   id: string;
@@ -49,8 +50,10 @@ export function BulkGenerateFlow({
   const downloadExcel = useDownloadExcelTemplate();
   const bulkGenerate = useBulkGenerate();
   const [downloading, setDownloading] = useState(false);
+  const [includeBoth, setIncludeBoth] = useState(false);
   const { data: currentUser } = useCurrentUser();
   const effectiveBulkLimit = currentUser?.effective_bulk_limit ?? null;
+  const isAdmin = currentUser?.role === "admin";
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     accept: {
@@ -102,7 +105,13 @@ export function BulkGenerateFlow({
     if (!result) return;
     setDownloading(true);
     try {
-      const response = await apiClient.get(result.download_url, {
+      // Always download PDF format; admins may opt-in to also include DOCX files
+      const downloadUrl = buildBulkDownloadUrl(
+        result.batch_id,
+        "pdf",
+        isAdmin ? includeBoth : false,
+      );
+      const response = await apiClient.get(downloadUrl, {
         responseType: "blob",
       });
       const url = window.URL.createObjectURL(new Blob([response.data]));
@@ -245,6 +254,19 @@ export function BulkGenerateFlow({
                   ))}
                 </ul>
               </div>
+            )}
+            {/* Admin-only: include Word documents in the ZIP */}
+            {isAdmin && (
+              <label className="flex items-center gap-2 text-sm text-[#434655] cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={includeBoth}
+                  onChange={(e) => setIncludeBoth(e.target.checked)}
+                  disabled={downloading}
+                  className="size-4 rounded accent-[#2563eb]"
+                />
+                Incluir documentos Word (.docx)
+              </label>
             )}
             <Button onClick={handleDownloadZip} disabled={downloading} className="bg-[#059669] text-white hover:bg-[#047857] transition-all">
               {downloading ? "Descargando..." : "Descargar ZIP"}

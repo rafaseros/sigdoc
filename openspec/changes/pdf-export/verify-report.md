@@ -714,3 +714,285 @@ The two WARNINGs (W-PRES-02 hexagonal boundary, W-PRES-03 private audit access) 
 3. Bulk download URL must include `?format=...` — until T-FE-06 lands
 
 **Next recommended**: Ready to commit Phase 4 changes. Proceed to Phase 5 (T-FE-01 through T-FE-06 — Frontend: role-aware download UI, shadcn dropdown, bulk checkbox).
+
+---
+
+## Phase 5 Verification
+
+**Date**: 2026-04-25
+**Scope**: Phase 5 — Frontend (T-FE-01 through T-FE-06)
+**Verdict**: ✅ APPROVED_WITH_WARNINGS
+
+---
+
+### Completeness
+
+| Metric | Value |
+|--------|-------|
+| Phase 5 tasks total | 6 |
+| Tasks complete | 6 |
+| Tasks incomplete | 0 |
+
+All 6 Phase 5 tasks are marked `[x]` in `tasks.md` and independently verified below. Changes are in the working tree (not yet committed — standard apply-then-verify workflow).
+
+---
+
+### Build & Tests Execution
+
+**TypeScript (`npx tsc --noEmit -p tsconfig.app.json`)**:
+```
+EXIT_CODE: 0
+```
+Zero type errors. TypeScript clean.
+
+**ESLint (`npm run lint`)**:
+```
+/frontend/src/components/ui/badge.tsx        52:17  warning  react-refresh/only-export-components
+/frontend/src/components/ui/button.tsx       58:18  warning  react-refresh/only-export-components
+/frontend/src/components/ui/tabs.tsx         80:52  warning  react-refresh/only-export-components
+/frontend/src/features/documents/components/DynamicForm.tsx  37:17  error    @typescript-eslint/no-unused-vars ('_')
+/frontend/src/routes/__root.tsx              12:20  error    react-hooks/rules-of-hooks
+/frontend/src/shared/lib/auth.tsx            80:17  warning  react-refresh/only-export-components
+✖ 6 problems (2 errors, 4 warnings)   EXIT_CODE: 1
+```
+
+**Baseline verification**: All 6 problems are confirmed pre-existing at `HEAD` (commit `faec5c7` — Phase 4). The `DynamicForm.tsx` `'_'` unused-vars error is in `templateName: _` which was present before Phase 5 (verified via `git show HEAD:...DynamicForm.tsx`). The `__root.tsx` hooks error and all 4 warnings are also pre-Phase-5. Phase 5 introduced **zero new ESLint errors or warnings**.
+
+**Coverage**: Frontend has no test runner configured — not applicable.
+
+---
+
+### Per-Task Verification
+
+| Task ID | Description | Verdict | Notes |
+|---------|-------------|---------|-------|
+| T-FE-01 | Install `dropdown-menu` shadcn primitive | ✅ PASS | See T-FE-01 detail below |
+| T-FE-02 | Update API client download URL builder | ✅ PASS | `buildDownloadUrl`, `buildBulkDownloadUrl`, `triggerBlobDownload` all present and correct |
+| T-FE-03 | Remove `output_format` from generate mutations | ✅ PASS | `rg "output_format" frontend/src/` returns zero matches |
+| T-FE-04 | Create `DownloadButton` role-aware component | ✅ PASS | See T-FE-04 detail below |
+| T-FE-05 | Replace download triggers in `DynamicForm.tsx` and `DocumentList.tsx` | ✅ PASS | Both files use `<DownloadButton ... via="direct"/>` |
+| T-FE-06 | Update `BulkGenerateFlow.tsx` with bulk download controls | ✅ PASS | See T-FE-06 detail below |
+
+---
+
+### T-FE-01 Detail: `dropdown-menu.tsx`
+
+**File exists**: `frontend/src/components/ui/dropdown-menu.tsx` ✅
+
+**Import source**: `import { Menu as MenuPrimitive } from "@base-ui/react/menu"` — uses `@base-ui/react`, NOT `@radix-ui/react-dropdown-menu`.
+
+**Design claim**: ADR-PDF-09 states the task is `npx shadcn-ui@latest add dropdown-menu`, which normally installs a Radix-based primitive. However the project's `components.json` has `"style": "base-nova"` — a shadcn style that targets `@base-ui/react` instead of Radix. The `@base-ui/react` package is already a top-level dependency in `package.json` (`"@base-ui/react": "^1.3.0"`), which explains why no new packages were added.
+
+**No new top-level deps**: `git diff main frontend/package.json` shows zero changes. ✅
+
+**Exports verified**: The file exports all components consumed by `DownloadButton.tsx`:
+- `DropdownMenu` ✅ (`MenuPrimitive.Root`)
+- `DropdownMenuTrigger` ✅ (`MenuPrimitive.Trigger`)
+- `DropdownMenuContent` ✅ (`MenuPrimitive.Popup` wrapped with `Positioner`)
+- `DropdownMenuItem` ✅ (`MenuPrimitive.Item`)
+- Additional exports: `DropdownMenuPortal`, `DropdownMenuGroup`, `DropdownMenuLabel`, `DropdownMenuCheckboxItem`, `DropdownMenuRadioGroup`, `DropdownMenuRadioItem`, `DropdownMenuSeparator`, `DropdownMenuShortcut`, `DropdownMenuSub`, `DropdownMenuSubTrigger`, `DropdownMenuSubContent` — all present and exported.
+
+**Keyboard accessibility**: `@base-ui/react/menu` uses WAI-ARIA keyboard patterns (same as Radix) — the design risk note about keyboard accessibility (ADR-PDF-09: "shadcn dropdown-menu uses Radix — keyboard accessible by default") is satisfied by the `@base-ui` implementation, which provides equivalent keyboard navigation.
+
+**WARNING W-FE-01 (design deviation)**: The design doc (ADR-PDF-09) explicitly states "shadcn add dropdown-menu … using Radix UI primitives." The implementation uses `@base-ui/react/menu`. This is a documented, intentional deviation driven by the project's `components.json` `style: "base-nova"` configuration. Functionally equivalent — both are accessible, keyboard-navigable, and ARIA-compliant. No behavioral difference. Classified as WARNING (design deviation), not CRITICAL.
+
+---
+
+### T-FE-02 Detail: Download URL Builders
+
+All three helpers exist in `frontend/src/features/documents/api/queries.ts`:
+
+**`buildDownloadUrl(documentId, format, via)`**:
+- `format: DownloadFormat = "pdf" | "docx"` ✅
+- `via: DownloadVia = "direct" | "share"` ✅ (defaults to `"direct"`)
+- Returns `/documents/${documentId}/download?format=...&via=...` ✅
+- `via=share` plumbing exists but no frontend route currently passes `via="share"` — all current callers pass `via="direct"`. This is Phase 5 Risk #1 (noted in apply-progress). The `via` prop is wired through `DownloadButton` for future use.
+
+**`buildBulkDownloadUrl(batchId, format, includeBoth)`**:
+- `format: DownloadFormat` ✅
+- `includeBoth: boolean = false` ✅
+- Adds `include_both=true` only when `includeBoth` is truthy ✅
+- When `includeBoth=false` (default), `include_both` param is omitted (not sent as `false`) ✅
+
+**`triggerBlobDownload(url, filename)`**:
+- Async, reusable blob download helper ✅
+- Handles `createObjectURL` + link-click + `revokeObjectURL` lifecycle ✅
+
+**Types exported**: `DownloadFormat = "pdf" | "docx"` ✅, `DownloadVia = "direct" | "share"` ✅
+
+---
+
+### T-FE-03 Detail: `output_format` Removal
+
+`rg "output_format" frontend/src/` — **zero matches** ✅
+
+Apply notes claimed the field was never in `mutations.ts` to begin with. Verified: the `GenerateRequest` interface in `mutations.ts` has only `template_version_id: string` and `variables: Record<string, string>`. No `output_format` field was ever present in the frontend mutations.
+
+---
+
+### T-FE-04 Detail: `DownloadButton` Component
+
+**File**: `frontend/src/features/documents/components/DownloadButton.tsx` ✅
+
+**Props**: `documentId: string`, `baseFileName?: string`, `via?: DownloadVia`, `disabled?: boolean` ✅
+
+**Auth source**: `import { useAuth } from "@/shared/lib/auth"` → `const { user } = useAuth()` ✅. The `User` type in `auth.tsx` has `role: string`.
+
+**Role check**: `const isAdmin = user?.role === "admin"` — exact strict equality (`===`), not loose or includes-based ✅
+
+**Non-admin branch** (lines 69–81):
+- Returns a single `<Button>` labeled "Descargar PDF"
+- No caret, no DropdownMenu, no Word option
+- The `DropdownMenu` JSX is in the `if (!isAdmin)` early-return path, meaning it is **not in the DOM** for non-admin users ✅
+- RBAC bypass: impossible from frontend — the Word option has no DOM presence for non-admins ✅
+
+**Admin branch** (lines 83–114):
+- Renders `<DropdownMenu>` with two `<DropdownMenuItem>` entries: "Descargar como PDF" and "Descargar como Word (.docx)" ✅
+- Both items call `handleDownload("pdf")` and `handleDownload("docx")` respectively ✅
+- Each download calls `buildDownloadUrl(documentId, format, via)` — `format` param is always included ✅
+
+**Loading state**: `downloadingFormat` state prevents double-clicks; both button variants show "Descargando..." ✅
+
+---
+
+### T-FE-05 Detail: Replaced Download Triggers
+
+**`DynamicForm.tsx`**:
+- Old: inline `handleDownload()` → `apiClient.get(url)` → `URL.createObjectURL` blob trigger
+- New: `<DownloadButton documentId={documentId} baseFileName={fileName} via="direct" />` ✅
+- `documentId` guard: rendered inside `{documentId && (...)}` — TypeScript narrows `string | null` to `string` within the block; TSC passes ✅
+
+**`DocumentList.tsx`**:
+- Old: icon-only `<Button>` with `handleDownload(doc.id, doc.file_name)` inline blob download (no format param — would have broken with Phase 4's required `?format=` param)
+- New: `<DownloadButton documentId={doc.id} baseFileName={doc.file_name} via="direct" />` ✅
+- Old `apiClient`, `DownloadIcon`, `downloadingId` state all removed ✅
+
+**Scattered blob download check** (`rg "URL.createObjectURL|application/vnd.openxmlformats" frontend/src/features/documents/`):
+- `BulkGenerateFlow.tsx:117` — `URL.createObjectURL` for ZIP download. This is the bulk ZIP download, **not** a single-document blob download. ✅ Acceptable: bulk ZIP is not handled by `triggerBlobDownload` (which is for single documents), and the bulk flow uses its own download path via `buildBulkDownloadUrl`.
+- `mutations.ts:42` — `URL.createObjectURL` inside `useDownloadExcelTemplate`. This is the Excel **template** download (not a document download) — predates Phase 5 and is unrelated to the REQ-DDF-17 scope.
+- `queries.ts:40` — `URL.createObjectURL` inside `triggerBlobDownload` — this IS the canonical blob download helper. ✅
+- `BulkGenerateFlow.tsx:60` — `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` — this is the `react-dropzone` MIME type filter for accepting `.xlsx` uploads, not a document download. ✅
+
+**Conclusion**: No rogue single-document blob downloads bypass `DownloadButton`. The only `URL.createObjectURL` calls outside `triggerBlobDownload` are: Excel template download (out of scope) and bulk ZIP download (intentional, uses `buildBulkDownloadUrl`).
+
+---
+
+### T-FE-06 Detail: `BulkGenerateFlow.tsx` Admin Checkbox
+
+**Auth source**: `useCurrentUser()` — custom hook that calls `GET /auth/me` via React Query. Returns `CurrentUserResponse` with `role: string`. Note: this is **NOT** `useAuth()` from `shared/lib/auth.tsx` — it uses a separate query. Both paths ultimately read `user.role`.
+
+**`isAdmin`**: `const isAdmin = currentUser?.role === "admin"` — exact strict equality ✅
+
+**`includeBoth` state**: `const [includeBoth, setIncludeBoth] = useState(false)` — initialized `false` ✅
+
+**Checkbox render**: `{isAdmin && (<label>...<input type="checkbox" ... />...</label>)}` — conditional render on `isAdmin` ✅
+- When `isAdmin=false`, the entire `<label>` element is **not in the DOM** (React conditional render, not CSS `display:none`) ✅
+- Checkbox label text: "Incluir documentos Word (.docx)" ✅
+
+**Non-admin `include_both` guarantee**: `buildBulkDownloadUrl(result.batch_id, "pdf", isAdmin ? includeBoth : false)` — even if somehow `includeBoth=true` (state cannot be set by non-admin since checkbox is not in DOM), the ternary `isAdmin ? includeBoth : false` forces `false` for non-admins ✅
+
+**Bulk download URL**: Always `format=pdf`, `include_both` only set when admin opts in ✅
+
+**`via=share` risk**: `BulkGenerateFlow` does not pass `via` to `buildBulkDownloadUrl` (bulk endpoint does not have a `via` param). Consistent with the bulk download spec (REQ-DDF-11/12 — no `via` param for bulk). ✅
+
+---
+
+### Spec Compliance Matrix (Phase 5 — Frontend scope only)
+
+| Requirement | Scenario | Evidence | Result |
+|-------------|----------|---------|--------|
+| REQ-DDF-17 | Admin sees split-button with PDF + Word options | `DownloadButton.tsx` admin branch renders `DropdownMenu` with two items | ✅ COMPLIANT |
+| REQ-DDF-17 | Non-admin sees single "Descargar PDF" button only | `DownloadButton.tsx` non-admin early-return — no `DropdownMenu`, no Word item in DOM | ✅ COMPLIANT |
+| REQ-DDF-17 | Word option NOT in DOM for non-admin (not just disabled) | `if (!isAdmin) return <Button>...` — DOM never contains Word option for non-admin | ✅ COMPLIANT |
+| REQ-DDF-18 | Admin-only "Incluir documentos Word" checkbox in bulk flow | `BulkGenerateFlow.tsx` `{isAdmin && <label>...<input .../>...}` | ✅ COMPLIANT |
+| REQ-DDF-18 | Checkbox NOT in DOM for non-admin | React conditional render — not CSS hide | ✅ COMPLIANT |
+| REQ-DDF-18 | Checked state → `include_both=true` in URL | `buildBulkDownloadUrl(batch_id, "pdf", isAdmin ? includeBoth : false)` | ✅ COMPLIANT |
+| REQ-DDF-18 | Non-admin always sends `include_both=false` | Ternary `isAdmin ? includeBoth : false` forces `false` | ✅ COMPLIANT |
+| REQ-DDF-06 | All download URLs include `?format=...` | `buildDownloadUrl` always adds `format` param; `DownloadButton` always passes format | ✅ COMPLIANT |
+| REQ-DDF-03/04 | Frontend does not send `output_format` | `rg "output_format" frontend/src/` = 0 matches | ✅ COMPLIANT |
+| Phase 4 contract | Frontend now sends `?format=...` on all download requests | `buildDownloadUrl` adds `format` + `via`; `buildBulkDownloadUrl` adds `format` + optional `include_both` | ✅ YES |
+
+**Compliance summary**: 10/10 Phase 5 frontend scenarios compliant.
+
+---
+
+### Correctness (Static — Structural Evidence)
+
+| Requirement | Status | Notes |
+|------------|--------|-------|
+| REQ-DDF-17: split-button uses DropdownMenu primitive | ✅ Implemented | `@base-ui/react/menu` via `components.json base-nova style` |
+| REQ-DDF-17: role check exact `=== "admin"` | ✅ Implemented | `user?.role === "admin"` — strict equality |
+| REQ-DDF-17: non-admin Word option absent from DOM | ✅ Implemented | Early return before DropdownMenu JSX |
+| REQ-DDF-18: isAdmin read from auth | ✅ Implemented | `useCurrentUser()` → `role === "admin"` |
+| REQ-DDF-18: includeBoth defaults false | ✅ Implemented | `useState(false)` |
+| REQ-DDF-18: non-admin cannot set include_both=true | ✅ Implemented | Ternary guard + checkbox not in DOM |
+| DynamicForm: uses DownloadButton (via="direct") | ✅ Implemented | Inline blob download removed |
+| DocumentList: uses DownloadButton (via="direct") | ✅ Implemented | Icon-only button + inline blob removed |
+| No new top-level npm deps | ✅ Confirmed | `git diff main frontend/package.json` = empty |
+| Backend untouched in Phase 5 | ✅ Confirmed | `git diff HEAD -- backend/` = empty |
+| Migrations / docker-compose / pyproject.toml untouched | ✅ Confirmed | No diff in any of these files |
+
+---
+
+### Coherence (Design)
+
+| Decision | Followed? | Notes |
+|----------|-----------|-------|
+| ADR-PDF-09: `DownloadButton` encapsulates role logic | ✅ Yes | Single component, single role check, zero duplication |
+| ADR-PDF-09: role accessor `useAuth().user.role === "admin"` | ⚠️ Minor deviation | `DynamicForm` + `DocumentList` use `useAuth()` via `DownloadButton`. `BulkGenerateFlow` uses its own `useCurrentUser()` hook instead of `useAuth()`. Both ultimately hit `/auth/me`. Functionally identical; minor pattern inconsistency. |
+| ADR-PDF-09: shadcn dropdown-menu via `npx shadcn-ui@latest add` | ⚠️ Documented deviation (W-FE-01) | Uses `@base-ui/react/menu` instead of Radix — driven by `components.json style: "base-nova"`. No new packages. Equivalent behavior. |
+| Design: `BulkDownloadControls.tsx` as separate component | ⚠️ Deviation | Design doc shows `BulkDownloadControls.tsx` as a new file. Instead, the bulk download controls (checkbox + button) are integrated directly into `BulkGenerateFlow.tsx`. No functional gap — the spec only requires the behavior, not the component structure. |
+| Design: `via=share` available but unused | ✅ Documented | Risk #1 from apply-progress: `via=share` param exists in `buildDownloadUrl` but no route currently passes it. Plumbing is ready. |
+
+---
+
+### Issues Found
+
+**CRITICAL** (must fix before archive):
+None.
+
+**WARNING** (should fix):
+
+- **W-FE-01: `@base-ui/react/menu` instead of Radix UI** — The design (ADR-PDF-09) explicitly states the dropdown-menu primitive uses Radix UI. The implementation uses `@base-ui/react/menu` because the project's `components.json` has `style: "base-nova"`. This is the correct approach for this project (shadcn `base-nova` style is `@base-ui`-based), but it's a deviation from the design doc text. The design doc should be updated to reflect the actual library. Functionally equivalent — keyboard accessible, ARIA-compliant. **Not a regression; not a blocker.**
+
+- **W-FE-02: `BulkGenerateFlow` uses `useCurrentUser()` instead of `useAuth()`** — The design specifies `useAuth().user.role`. `BulkGenerateFlow` has its own `useCurrentUser()` that calls `GET /auth/me` via React Query, which causes an extra HTTP request on each render (mitigated by React Query caching). The other files (`DownloadButton`) correctly use `useAuth()`. This inconsistency may cause a role mismatch if the two user objects diverge (e.g., role changes mid-session). Low practical risk — sessions are short-lived. Recommend aligning to `useAuth()` in a follow-up.
+
+- **W-FE-03: `BulkDownloadControls.tsx` not created as a separate component** — Design doc shows this as a new file. The bulk download controls were integrated inline into `BulkGenerateFlow.tsx`. This is a component structure deviation (not a behavioral one). Low severity — the spec only requires the behavior. Track for future extraction if `BulkGenerateFlow` grows.
+
+**SUGGESTION**:
+
+- **S-FE-01: `via=share` plumbing exists but no route uses it** — Apply-progress Risk #1. The `buildDownloadUrl` always includes `via=...` in the URL. Currently all callers pass `via="direct"`. When the share-recipient inbox page is built (Phase 6+ scope), it will need to pass `via="share"`. The plumbing is ready.
+
+- **S-FE-02: Bulk ZIP download in `BulkGenerateFlow` does not use `triggerBlobDownload` helper** — The bulk download (lines 114–129) duplicates the `createObjectURL` pattern inline instead of calling the shared `triggerBlobDownload` utility. Minor DRY violation. The blob is a ZIP, not a PDF/DOCX, so the file extension logic is different — but the URL pattern could still be extracted. Low priority.
+
+- **S-FE-03: `DocumentList` column width** — Apply-progress noted the "Acciones" column at `w-[120px]` may be too narrow for the full `DownloadButton` split-button. This is a visual concern, not a functional one.
+
+---
+
+### Phase 4 Contract Resolution
+
+**Question**: Does the frontend now send `?format=...` on all single-document and bulk download requests?
+
+**Answer**: ✅ YES — RESOLVED
+
+- Single document: `buildDownloadUrl(id, format, via)` always includes `format` in `URLSearchParams`. Every `DownloadButton` click calls `buildDownloadUrl` with an explicit format string (`"pdf"` or `"docx"`). The old inline blob downloads (which called `/documents/${id}/download` with no format param) are fully removed from `DynamicForm.tsx` and `DocumentList.tsx`.
+- Bulk: `buildBulkDownloadUrl(batchId, "pdf", ...)` always includes `format=pdf`. 
+
+This resolves the Phase 4 "Phase 5 risks" items 2 and 3.
+
+---
+
+### Verdict
+
+**✅ APPROVED_WITH_WARNINGS**
+
+Phase 5 (Frontend) is fully implemented and verified. All 6 tasks complete. TypeScript: 0 errors (exit 0). ESLint: 2 errors + 4 warnings — all 6 are confirmed pre-existing from Phase 4 HEAD; zero new issues introduced by Phase 5. 10/10 frontend spec scenarios (REQ-DDF-17, REQ-DDF-18) are COMPLIANT. Role-aware UI is correctly implemented with strict `=== "admin"` check and DOM-level exclusion of the Word option for non-admins. Backend untouched.
+
+The 3 WARNINGs are design/pattern issues that do not affect functionality: W-FE-01 (`@base-ui` vs Radix — correct for this project's shadcn style), W-FE-02 (auth hook inconsistency in `BulkGenerateFlow`), W-FE-03 (no separate `BulkDownloadControls.tsx` file).
+
+**Phase 6 risks carried forward**:
+1. **`via=share` unimplemented on any route** — `buildDownloadUrl` plumbing exists but the share-recipient inbox page must pass `via="share"` to produce correct audit events.
+2. **W-PRES-02 (from Phase 4) still open** — `download_bulk` endpoint accesses `service._doc_repo` directly (hexagonal boundary leak). Phase 6 should add `list_by_batch_id` port method.
+3. **W-PRES-03 (from Phase 4) still open** — `_audit_service` accessed as private attribute in endpoints. Phase 6 refactor scope.
+
+**Next recommended**: Commit Phase 5 frontend changes. Proceed to Phase 6 (T-INT-01 through T-INT-06 — Integration tests + smoke: E2E happy path, legacy backfill, sharing RBAC, migration regression, quota).

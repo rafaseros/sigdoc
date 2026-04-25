@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { DownloadIcon, Trash2Icon } from "lucide-react";
+import { Trash2Icon } from "lucide-react";
 import { toast } from "sonner";
 import {
   Table,
@@ -12,16 +12,15 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { apiClient } from "@/shared/lib/api-client";
 import { useDocuments } from "../api/queries";
 import { useDeleteDocument } from "../api/mutations";
+import { DownloadButton } from "./DownloadButton";
 
 export function DocumentList() {
   const [page, setPage] = useState(1);
   const size = 20;
   const { data, isLoading, isError, error } = useDocuments({ page, size });
   const deleteDocument = useDeleteDocument();
-  const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   function formatDate(dateString: string) {
@@ -33,28 +32,6 @@ export function DocumentList() {
       minute: "2-digit",
     });
   }
-
-  const handleDownload = async (documentId: string, fileName: string) => {
-    setDownloadingId(documentId);
-    try {
-      const response = await apiClient.get(
-        `/documents/${documentId}/download`,
-        { responseType: "blob" },
-      );
-      const url = window.URL.createObjectURL(new Blob([response.data]));
-      const link = document.createElement("a");
-      link.href = url;
-      link.setAttribute("download", fileName);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
-    } catch {
-      toast.error("Error al descargar el documento");
-    } finally {
-      setDownloadingId(null);
-    }
-  };
 
   const handleDelete = async (documentId: string) => {
     try {
@@ -158,17 +135,11 @@ export function DocumentList() {
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-1">
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          title="Descargar"
-                          disabled={downloadingId === doc.id}
-                          onClick={() =>
-                            handleDownload(doc.id, doc.file_name)
-                          }
-                        >
-                          <DownloadIcon className="size-4" />
-                        </Button>
+                        <DownloadButton
+                          documentId={doc.id}
+                          baseFileName={doc.file_name}
+                          via="direct"
+                        />
                         {confirmDeleteId === doc.id ? (
                           <div className="flex items-center gap-1">
                             <Button

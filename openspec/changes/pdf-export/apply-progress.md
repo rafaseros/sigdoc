@@ -442,3 +442,91 @@ The `file_name` and `minio_path` property aliases on the `Document` entity have 
 3. **Admin split-button**: `format=docx` only works for `role=admin` — non-admin sees the docx option broken at API level even if shown in UI (must be removed from DOM, not just disabled).
 4. **Bulk download URL**: `GET /bulk/{batch_id}/download` now requires `?format=...` — the existing frontend bulk download link will return 422 until T-FE-06 lands.
 5. **`via=share` for share flow**: Share-by-email download path must pass `?via=share` explicitly to get correct audit trail (SCEN-DDF-14).
+
+---
+
+## Phase 5 — Frontend (COMPLETE)
+
+**Batch**: 5 of N
+**Mode**: Standard (no frontend test runner — type-check + lint is the bar)
+**Date**: 2026-04-25
+
+---
+
+## Tasks Status (Phase 5)
+
+| Task ID | Description | Status |
+|---------|-------------|--------|
+| T-FE-01 | Install `dropdown-menu` shadcn primitive | ✅ DONE |
+| T-FE-02 | Update API client download URL builder | ✅ DONE |
+| T-FE-03 | Remove `output_format` from generate mutations | ✅ DONE |
+| T-FE-04 | Create `DownloadButton` role-aware component | ✅ DONE |
+| T-FE-05 | Replace download triggers in `DynamicForm.tsx` and `DocumentList.tsx` | ✅ DONE |
+| T-FE-06 | Update `BulkGenerateFlow.tsx` with bulk download controls | ✅ DONE |
+
+---
+
+## Files Created (Phase 5)
+
+| File | Description |
+|------|-------------|
+| `frontend/src/components/ui/dropdown-menu.tsx` | shadcn v4 dropdown-menu (uses `@base-ui/react/menu`, NOT Radix) — installed via `npx shadcn@latest add dropdown-menu` |
+| `frontend/src/features/documents/components/DownloadButton.tsx` | Role-aware download button: admin gets dropdown with PDF+DOCX, non-admin gets single "Descargar PDF" button (Word option not in DOM) |
+
+## Files Modified (Phase 5)
+
+| File | Change |
+|------|--------|
+| `frontend/src/features/documents/api/queries.ts` | Added `buildDownloadUrl()`, `buildBulkDownloadUrl()`, `triggerBlobDownload()` helpers + `DownloadFormat` and `DownloadVia` types |
+| `frontend/src/features/documents/components/DynamicForm.tsx` | Replaced inline `handleDownload`+`downloading` state with `<DownloadButton documentId={documentId} baseFileName={fileName} via="direct" />` |
+| `frontend/src/features/documents/components/DocumentList.tsx` | Replaced inline `handleDownload`+`downloadingId` state+`DownloadIcon` button with `<DownloadButton documentId={doc.id} baseFileName={doc.file_name} via="direct" />` |
+| `frontend/src/features/documents/components/BulkGenerateFlow.tsx` | Added `includeBoth` state + `isAdmin` derived from `currentUser.role`; updated `handleDownloadZip` to use `buildBulkDownloadUrl(batchId, "pdf", isAdmin ? includeBoth : false)`; added admin-only checkbox "Incluir documentos Word (.docx)" ONLY rendered when `isAdmin` |
+
+---
+
+## Key Implementation Notes
+
+### shadcn dropdown-menu install
+- Uses `@base-ui/react/menu` (NOT `@radix-ui/react-dropdown-menu`) — this project already has `@base-ui/react` as a dependency; no new npm packages were added
+- The `DropdownMenuTrigger` renders a plain `<button>` by default; we apply `buttonVariants()` classnames directly to style it as the project's Button component
+
+### Role detection
+- `DownloadButton` uses `useAuth().user.role === "admin"` — identical pattern to `BulkGenerateFlow` which already used `currentUser.role`
+- `BulkGenerateFlow` derives `isAdmin` from the existing `useCurrentUser()` hook (TanStack Query via `/auth/me`)
+
+### T-FE-03: `output_format` already absent
+- Verified: `mutations.ts` `GenerateRequest` interface only had `template_version_id` and `variables` — `output_format` was never present in the frontend code. No changes needed; the field was never sent by the frontend.
+
+### `via` parameter
+- `DownloadButton` defaults `via="direct"` — both `DynamicForm` and `DocumentList` pass `via="direct"` explicitly
+- No share-flow route exists in the current frontend (share-by-email is a backend + email flow; the recipient's download UI is yet to be implemented). When that route is built, it will pass `via="share"` as a prop
+
+---
+
+## TypeScript / ESLint
+
+| Check | Result |
+|-------|--------|
+| `npx tsc --noEmit -p tsconfig.app.json` | ✅ Clean (0 errors) |
+| `npm run lint` | ⚠️ 2 pre-existing errors + 4 pre-existing warnings — ZERO new issues introduced by Phase 5 |
+
+Pre-existing errors (existed before Phase 5):
+- `DynamicForm.tsx:37` — `'_'` is defined but never used (templateName: _ rename was in original code)
+- `__root.tsx:12` — React Hook rules violation in `notFoundComponent` (pre-existing architectural issue)
+
+---
+
+## Risks for Phase 6 (Integration tests + smoke)
+
+1. **`via=share` param untested end-to-end**: No share-flow route in frontend yet. The `buildDownloadUrl` helper supports `via` but it's only manually testable once the share-recipient UI is built.
+2. **`DropdownMenuTrigger` is not a native `<button>` wrapper**: It renders a button-like element via `@base-ui/react/menu` — keyboard accessibility is inherited from Base UI's ARIA-correct Trigger implementation.
+3. **`DocumentList` table column width**: The "Acciones" column (`w-[120px]`) now contains a full `DownloadButton` (with text) instead of an icon-only button. The admin dropdown button is wider. Column width may need adjustment in Phase 7 / QA.
+4. **Phase 6 smoke tests require live backend**: `GET /documents/{id}/download?format=pdf` now requires `?format=` param. Any smoke test that hits the old URL without `format` will get 422. All tests must use the new URL builders.
+5. **`file_name` field in `DocumentItem`**: The backend now returns `docx_file_name` + a backward-compat `file_name` alias. `DocumentList` still uses `doc.file_name` (the alias). This works for now (Phase 2 decision: keep alias until Phase 5 migrates frontend). The alias should be removed post-Phase-6.
+
+---
+
+## Phases Remaining
+
+- Phase 6 — Integration tests + smoke: T-INT-01..T-INT-06
+- Phase 7 — Operational: T-OPS-01..T-OPS-03

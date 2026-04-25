@@ -206,37 +206,37 @@
 
 ## Phase 5 — Frontend
 
-### T-FE-01: Install `dropdown-menu` shadcn primitive
+### T-FE-01: [x] Install `dropdown-menu` shadcn primitive
 - **Files**: `frontend/src/components/ui/dropdown-menu.tsx`
 - **REQs**: REQ-DDF-17
 - **Depends on**: —
 - **Description**: Run `npx shadcn-ui@latest add dropdown-menu` in `frontend/`. This generates `components/ui/dropdown-menu.tsx` using Radix UI (keyboard accessible by default). Commit the generated file without manual edits.
 
-### T-FE-02: Update API client download URL builder
+### T-FE-02: [x] Update API client download URL builder
 - **Files**: `frontend/src/features/documents/api/queries.ts`
 - **REQs**: REQ-DDF-06, REQ-DDF-15
 - **Depends on**: —
 - **Description**: Update download URL builder to include `format=pdf|docx` query param and optional `via=direct|share` param. All existing callers will be updated in T-FE-04/T-FE-05.
 
-### T-FE-03: Remove `output_format` from generate mutations
+### T-FE-03: [x] Remove `output_format` from generate mutations
 - **Files**: `frontend/src/features/documents/api/mutations.ts`
 - **REQs**: REQ-DDF-03, REQ-DDF-04
 - **Depends on**: —
 - **Description**: Remove `output_format` from the generate and generate-bulk request payloads. The field must be absent (not null/undefined) from the serialized body. Update TypeScript types accordingly.
 
-### T-FE-04: Create `DownloadButton` role-aware component
+### T-FE-04: [x] Create `DownloadButton` role-aware component
 - **Files**: `frontend/src/features/documents/components/DownloadButton.tsx`
 - **REQs**: REQ-DDF-17
 - **Depends on**: T-FE-01, T-FE-02
 - **Description**: Admin renders `DropdownMenu` with "Descargar como PDF" and "Descargar como Word" items. Non-admin renders a single `<Button>` "Descargar PDF" with no caret (Word option NOT in DOM). Role derived from `useAuth().user.role`. Accepts `documentId` and `via?: "direct"|"share"` props.
 
-### T-FE-05: Replace download triggers in `DynamicForm.tsx` and `DocumentList.tsx`
+### T-FE-05: [x] Replace download triggers in `DynamicForm.tsx` and `DocumentList.tsx`
 - **Files**: `frontend/src/features/documents/components/DynamicForm.tsx`, `frontend/src/features/documents/components/DocumentList.tsx`
 - **REQs**: REQ-DDF-17
 - **Depends on**: T-FE-04
 - **Description**: Replace existing download button/action in both files with `<DownloadButton documentId={...} via="direct" />`. Verify no other files in the `documents/` feature contain a download trigger that bypasses the new component.
 
-### T-FE-06: Update `BulkGenerateFlow.tsx` with bulk download controls
+### T-FE-06: [x] Update `BulkGenerateFlow.tsx` with bulk download controls
 - **Files**: `frontend/src/features/documents/components/BulkGenerateFlow.tsx`
 - **REQs**: REQ-DDF-18
 - **Depends on**: T-FE-04, T-FE-02
