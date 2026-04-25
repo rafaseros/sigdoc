@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     minio_secret_key: str
     minio_secure: bool = False
 
+    # Gotenberg (PDF conversion service)
+    gotenberg_url: str = "http://gotenberg:3000"
+    gotenberg_timeout: int = 60  # seconds
+
 
 @lru_cache
 def get_settings() -> Settings:

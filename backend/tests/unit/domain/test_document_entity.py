@@ -59,20 +59,26 @@ def test_document_can_set_pdf_fields() -> None:
     assert doc.pdf_minio_path == "tenant/uuid/report.pdf"
 
 
-def test_document_file_name_alias_returns_docx_file_name() -> None:
-    """file_name property alias must return docx_file_name for backward compat.
+def test_document_file_name_alias_removed_in_phase2() -> None:
+    """Phase 2: file_name alias must NOT exist on Document entity.
 
-    This alias is temporary (Phase 1) — removed in Phase 2 when SQLAlchemy
-    model and all call sites are updated to docx_file_name.
+    The backward-compat property alias was removed in Phase 2 once all call
+    sites were updated to use docx_file_name directly.
     """
     doc = _make_document(docx_file_name="alias-test.docx")
-    assert doc.file_name == "alias-test.docx"
+    assert not hasattr(doc, "_file_name_property"), "alias implementation must be gone"
+    # Accessing .file_name should raise AttributeError (it is no longer a property)
+    import pytest
+    with pytest.raises(AttributeError):
+        _ = doc.file_name  # type: ignore[attr-defined]
 
 
-def test_document_minio_path_alias_returns_docx_minio_path() -> None:
-    """minio_path property alias must return docx_minio_path for backward compat."""
+def test_document_minio_path_alias_removed_in_phase2() -> None:
+    """Phase 2: minio_path alias must NOT exist on Document entity."""
     doc = _make_document(docx_minio_path="alias/path/test.docx")
-    assert doc.minio_path == "alias/path/test.docx"
+    import pytest
+    with pytest.raises(AttributeError):
+        _ = doc.minio_path  # type: ignore[attr-defined]
 
 
 def test_document_no_longer_accepts_old_file_name_kwarg() -> None:

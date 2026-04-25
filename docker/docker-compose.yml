@@ -53,6 +53,18 @@ services:
     networks:
       - sigdoc
 
+  gotenberg:
+    image: gotenberg/gotenberg:8.16  # pinned minor — update to latest 8.x before merge
+    # Port 3000 is internal-only (no host binding — Gotenberg has no admin UI)
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - sigdoc
+
   api:
     build:
       context: ..
@@ -68,6 +80,8 @@ services:
       db:
         condition: service_healthy
       minio:
+        condition: service_healthy
+      gotenberg:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]

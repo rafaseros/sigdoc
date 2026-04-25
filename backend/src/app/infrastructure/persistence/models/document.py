@@ -25,8 +25,10 @@ class DocumentModel(UUIDMixin, TenantMixin, Base):
         ForeignKey("template_versions.id"),
         nullable=False,
     )
-    minio_path: Mapped[str] = mapped_column(String(500), nullable=False)
-    file_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    docx_minio_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    docx_file_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    pdf_file_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    pdf_minio_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     generation_type: Mapped[str] = mapped_column(String(10), nullable=False)
     batch_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
     variables_snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False)

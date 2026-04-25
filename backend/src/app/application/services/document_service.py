@@ -178,7 +178,7 @@ class DocumentService:
 
         download_url = await self._storage.get_presigned_url(
             bucket=self.DOCUMENTS_BUCKET,
-            path=document.minio_path,
+            path=document.docx_minio_path,
         )
 
         return {
@@ -200,7 +200,7 @@ class DocumentService:
             raise DocumentNotFoundError(f"Document {document_id} not found")
         # Delete from MinIO
         try:
-            await self._storage.delete_file(self.DOCUMENTS_BUCKET, document.minio_path)
+            await self._storage.delete_file(self.DOCUMENTS_BUCKET, document.docx_minio_path)
         except Exception:
             pass  # File may already be gone
         # Delete from DB

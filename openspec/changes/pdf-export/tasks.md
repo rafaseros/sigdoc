@@ -62,49 +62,49 @@
 
 ## Phase 2 — Infrastructure (DB, deps, docker, adapter)
 
-### T-INFRA-01: Add Gotenberg config to `Settings`
+### T-INFRA-01: [x] Add Gotenberg config to `Settings`
 - **Files**: `backend/src/app/config.py`
 - **REQs**: REQ-PDF-03
 - **Depends on**: —
 - **Description**: Add `gotenberg_url: str = "http://gotenberg:3000"` and `gotenberg_timeout: int = 60` to the `Settings` class. Config file is at `backend/src/app/config.py` (NOT `core/config.py`).
 
-### T-INFRA-02: Promote `httpx` and add `respx` dev dep in `pyproject.toml`
+### T-INFRA-02: [x] Promote `httpx` and add `respx` dev dep in `pyproject.toml`
 - **Files**: `backend/pyproject.toml`
 - **REQs**: REQ-PDF-04
 - **Depends on**: —
 - **Description**: Move `httpx` from `[project.optional-dependencies]` to `[project.dependencies]` pinned `>=0.27.0,<1.0`. Add `respx>=0.20.0,<1.0` to dev/test deps. These are both mechanical edits.
 
-### T-INFRA-03: Update `DocumentModel` SQLAlchemy columns
+### T-INFRA-03: [x] Update `DocumentModel` SQLAlchemy columns
 - **Files**: `backend/src/app/infrastructure/persistence/models/document.py`
 - **REQs**: REQ-DDF-01, REQ-DDF-02
 - **Depends on**: T-DOMAIN-08
 - **Description**: Rename `file_name` → `docx_file_name` (VARCHAR 255) and `minio_path` → `docx_minio_path` (VARCHAR 500) on the SQLAlchemy model. Add `pdf_file_name: Mapped[str | None]` and `pdf_minio_path: Mapped[str | None]` as nullable columns. Must exactly match migration DDL.
 
-### T-INFRA-04: Create Alembic migration `010_pdf_export.py`
+### T-INFRA-04: [x] Create Alembic migration `010_pdf_export.py`
 - **Files**: `backend/alembic/versions/010_pdf_export.py`
 - **REQs**: REQ-DDF-02
 - **Depends on**: T-INFRA-03
 - **Description**: `upgrade()` renames `file_name→docx_file_name` and `minio_path→docx_minio_path`, adds `pdf_file_name VARCHAR(255) NULL` and `pdf_minio_path VARCHAR(500) NULL`. `downgrade()` reverses all. Set `down_revision = "009"` (verified as latest). No NOT NULL backfill at migration time.
 
-### T-INFRA-05: Add `update_pdf_fields` method to `DocumentRepository`
+### T-INFRA-05: [x] Add `update_pdf_fields` method to `DocumentRepository`
 - **Files**: `backend/src/app/infrastructure/persistence/repositories/document_repository.py`
 - **REQs**: REQ-DDF-09
 - **Depends on**: T-INFRA-03
 - **Description**: Add `async def update_pdf_fields(self, doc_id: UUID, pdf_file_name: str, pdf_minio_path: str) -> Document` that issues a single UPDATE and returns the updated entity. Used exclusively by `ensure_pdf`.
 
-### T-INFRA-06: [TEST] Adapter unit tests for `GotenbergPdfConverter`
+### T-INFRA-06: [x] [TEST] Adapter unit tests for `GotenbergPdfConverter`
 - **Files**: `backend/tests/unit/infrastructure/test_gotenberg_pdf_converter.py`
 - **REQs**: REQ-PDF-02, REQ-PDF-08, REQ-PDF-09, SCEN-PDF-01..05
 - **Depends on**: T-DOMAIN-04, T-INFRA-01, T-INFRA-02
 - **Description**: Use `respx` to mock `httpx`. Cover: 2xx → returns bytes (SCEN-PDF-01); 5xx → `PdfConversionError` with status ref (SCEN-PDF-02); connection refused via `httpx.ConnectError` → `PdfConversionError` (SCEN-PDF-03); timeout via `httpx.TimeoutException` → `PdfConversionError` (SCEN-PDF-04); empty input `b""` → `PdfConversionError` before HTTP call (SCEN-PDF-05). Also verify INFO log on success and ERROR log on failure.
 
-### T-INFRA-07: Implement `GotenbergPdfConverter` adapter
+### T-INFRA-07: [x] Implement `GotenbergPdfConverter` adapter
 - **Files**: `backend/src/app/infrastructure/pdf/__init__.py`, `backend/src/app/infrastructure/pdf/gotenberg_pdf_converter.py`
 - **REQs**: REQ-PDF-02, REQ-PDF-08, REQ-PDF-09, REQ-PDF-10
 - **Depends on**: T-INFRA-06
 - **Description**: Implements `PdfConverter` using `httpx.AsyncClient` (natively async — no `asyncio.to_thread`). POST multipart to `{gotenberg_url}/forms/libreoffice/convert`; field name `files`, `filename="document.docx"`, correct MIME type. Wraps ALL httpx errors and non-2xx into `PdfConversionError`. Logs duration (ms) via existing app logger. `__init__.py` provides `@lru_cache get_pdf_converter()` factory.
 
-### T-INFRA-08: Add `gotenberg` service to `docker-compose.yml`
+### T-INFRA-08: [x] Add `gotenberg` service to `docker-compose.yml`
 - **Files**: `docker/docker-compose.yml`
 - **REQs**: REQ-PDF-05
 - **Depends on**: T-INFRA-01

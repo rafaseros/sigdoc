@@ -79,7 +79,8 @@ async def generate_document(
     return DocumentResponse(
         id=str(doc.id),
         template_version_id=str(doc.template_version_id),
-        file_name=doc.file_name,
+        docx_file_name=doc.docx_file_name,
+        pdf_file_name=doc.pdf_file_name,
         generation_type=doc.generation_type,
         status=doc.status,
         download_url=f"/documents/{doc.id}/download",
@@ -203,13 +204,13 @@ async def download_document(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
     doc = result["document"]
-    file_bytes = await service.download_document(doc.minio_path)
+    file_bytes = await service.download_document(doc.docx_minio_path)
 
     return Response(
         content=file_bytes,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={
-            "Content-Disposition": f'attachment; filename="{doc.file_name}"',
+            "Content-Disposition": f'attachment; filename="{doc.docx_file_name}"',
         },
     )
 
@@ -243,7 +244,8 @@ async def list_documents(
         DocumentResponse(
             id=str(d.id),
             template_version_id=str(d.template_version_id),
-            file_name=d.file_name,
+            docx_file_name=d.docx_file_name,
+            pdf_file_name=d.pdf_file_name,
             generation_type=d.generation_type,
             status=d.status,
             variables_snapshot=d.variables_snapshot,
@@ -271,7 +273,8 @@ async def get_document(
     return DocumentResponse(
         id=str(doc.id),
         template_version_id=str(doc.template_version_id),
-        file_name=doc.file_name,
+        docx_file_name=doc.docx_file_name,
+        pdf_file_name=doc.pdf_file_name,
         generation_type=doc.generation_type,
         status=doc.status,
         download_url=f"/documents/{doc.id}/download",

@@ -1,7 +1,7 @@
 from uuid import UUID
 
 from sqlalchemy import delete as delete_stmt
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update as update_stmt
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -20,14 +20,14 @@ class SQLAlchemyDocumentRepository(DocumentRepositoryPort):
         from app.domain.entities import Document as DomainDocument
 
         if isinstance(document, DomainDocument):
-            # TODO(pdf-export Phase 2): update DocumentModel columns to docx_*
-            # names and remove these aliases after the Alembic migration lands.
             return DocumentModel(
                 id=document.id,
                 tenant_id=document.tenant_id,
                 template_version_id=document.template_version_id,
-                minio_path=document.docx_minio_path,
-                file_name=document.docx_file_name,
+                docx_minio_path=document.docx_minio_path,
+                docx_file_name=document.docx_file_name,
+                pdf_file_name=document.pdf_file_name,
+                pdf_minio_path=document.pdf_minio_path,
                 generation_type=document.generation_type,
                 variables_snapshot=document.variables_snapshot,
                 created_by=document.created_by,
@@ -63,6 +63,34 @@ class SQLAlchemyDocumentRepository(DocumentRepositoryPort):
         stmt = delete_stmt(DocumentModel).where(DocumentModel.id == document_id)
         await self._session.execute(stmt)
         await self._session.flush()
+
+    async def update_pdf_fields(
+        self, doc_id: UUID, pdf_file_name: str, pdf_minio_path: str
+    ) -> DocumentModel:
+        """Update the PDF file fields on an existing document row.
+
+        Issues a single UPDATE statement, then re-fetches the row so the
+        caller always gets a fully-loaded ORM object (including eager-loaded
+        template_version and creator).
+
+        Used exclusively by DocumentService.ensure_pdf (Phase 3).
+        """
+        stmt = (
+            update_stmt(DocumentModel)
+            .where(DocumentModel.id == doc_id)
+            .values(pdf_file_name=pdf_file_name, pdf_minio_path=pdf_minio_path)
+        )
+        await self._session.execute(stmt)
+        await self._session.flush()
+
+        # Re-fetch with eager-loaded relationships
+        fetch_stmt = (
+            select(DocumentModel)
+            .where(DocumentModel.id == doc_id)
+            .options(selectinload(DocumentModel.template_version))
+        )
+        result = await self._session.execute(fetch_stmt)
+        return result.scalar_one()
 
     async def list_paginated(
         self, page: int = 1, size: int = 20, template_id: UUID | None = None, created_by: UUID | None = None
