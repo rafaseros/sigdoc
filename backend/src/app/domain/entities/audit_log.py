@@ -15,6 +15,7 @@ class AuditAction:
     DOCUMENT_GENERATE = "document.generate"
     DOCUMENT_GENERATE_BULK = "document.generate_bulk"
     DOCUMENT_DELETE = "document.delete"
+    DOCUMENT_DOWNLOAD = "document.download"
 
     USER_CREATE = "user.create"
     USER_UPDATE = "user.update"

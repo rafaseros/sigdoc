@@ -110,12 +110,12 @@ class DocumentService:
         safe_name = "".join(
             c for c in str(first_var) if c.isalnum() or c in " _-"
         ).strip()[:50]
-        file_name = f"{safe_name}.docx" if safe_name else f"{doc_id}.docx"
+        docx_file_name = f"{safe_name}.docx" if safe_name else f"{doc_id}.docx"
 
-        minio_path = f"{tenant_id}/{doc_id}/{file_name}"
+        docx_minio_path = f"{tenant_id}/{doc_id}/{docx_file_name}"
         await self._storage.upload_file(
             bucket=self.DOCUMENTS_BUCKET,
-            path=minio_path,
+            path=docx_minio_path,
             data=rendered_bytes,
             content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         )
@@ -125,8 +125,8 @@ class DocumentService:
             id=doc_id,
             tenant_id=uuid.UUID(tenant_id),
             template_version_id=uuid.UUID(template_version_id),
-            minio_path=minio_path,
-            file_name=file_name,
+            docx_minio_path=docx_minio_path,
+            docx_file_name=docx_file_name,
             generation_type="single",
             variables_snapshot=variables,
             created_by=uuid.UUID(created_by),
@@ -162,7 +162,7 @@ class DocumentService:
         # 7. Get presigned download URL
         download_url = await self._storage.get_presigned_url(
             bucket=self.DOCUMENTS_BUCKET,
-            path=minio_path,
+            path=docx_minio_path,
         )
 
         return {
@@ -449,13 +449,13 @@ class DocumentService:
                         for c in str(first_var)
                         if c.isalnum() or c in " _-"
                     ).strip()[:50]
-                    file_name = (
+                    docx_file_name = (
                         f"{i + 1:03d}_{safe_name}.docx"
                         if safe_name
                         else f"{i + 1:03d}_document.docx"
                     )
 
-                    zf.writestr(file_name, rendered_bytes)
+                    zf.writestr(docx_file_name, rendered_bytes)
 
                     # Create document record (domain entity — repo handles ORM mapping)
                     doc_id = uuid.uuid4()
@@ -463,8 +463,8 @@ class DocumentService:
                         id=doc_id,
                         tenant_id=uuid.UUID(tenant_id),
                         template_version_id=uuid.UUID(template_version_id),
-                        minio_path=f"{tenant_id}/{batch_id}/{file_name}",
-                        file_name=file_name,
+                        docx_minio_path=f"{tenant_id}/{batch_id}/{docx_file_name}",
+                        docx_file_name=docx_file_name,
                         generation_type="bulk",
                         batch_id=batch_id,
                         variables_snapshot=row_data,
@@ -473,7 +473,7 @@ class DocumentService:
                     )
                     documents.append(doc)
                     results["success"].append(
-                        {"row": i + 1, "file": file_name}
+                        {"row": i + 1, "file": docx_file_name}
                     )
 
                 except Exception as e:

@@ -55,3 +55,15 @@ class QuotaExceededError(DomainError):
         self.limit_value = limit_value
         self.current_usage = current_usage
         self.tier_name = tier_name
+
+
+class PdfConversionError(DomainError):
+    """PDF conversion failed.
+
+    Raised by PdfConverter implementations for any conversion failure:
+    HTTP errors, network errors, empty input, or unexpected Gotenberg responses.
+    Must NOT be defined in the infrastructure layer (REQ-PDF-06).
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)

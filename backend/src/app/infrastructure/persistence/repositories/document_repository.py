@@ -20,12 +20,14 @@ class SQLAlchemyDocumentRepository(DocumentRepositoryPort):
         from app.domain.entities import Document as DomainDocument
 
         if isinstance(document, DomainDocument):
+            # TODO(pdf-export Phase 2): update DocumentModel columns to docx_*
+            # names and remove these aliases after the Alembic migration lands.
             return DocumentModel(
                 id=document.id,
                 tenant_id=document.tenant_id,
                 template_version_id=document.template_version_id,
-                minio_path=document.minio_path,
-                file_name=document.file_name,
+                minio_path=document.docx_minio_path,
+                file_name=document.docx_file_name,
                 generation_type=document.generation_type,
                 variables_snapshot=document.variables_snapshot,
                 created_by=document.created_by,
