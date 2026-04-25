@@ -274,6 +274,17 @@ class DocumentService:
             page=page, size=size, template_id=tpl_uuid, created_by=created_by_uuid
         )
 
+    async def list_documents_by_batch(
+        self, batch_id: UUID, tenant_id: UUID
+    ) -> list:
+        """Return all documents for a given batch, scoped to tenant.
+
+        Public delegator for DocumentRepository.list_by_batch_id.
+        Replaces the private _doc_repo access pattern used in the bulk
+        download endpoint (W-PRES-02 fix). O(batch_size) instead of O(N total).
+        """
+        return await self._doc_repo.list_by_batch_id(batch_id=batch_id, tenant_id=tenant_id)
+
     # ── Bulk generation methods ──────────────────────────────────────────
 
     async def generate_excel_template(

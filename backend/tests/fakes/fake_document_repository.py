@@ -48,6 +48,18 @@ class FakeDocumentRepository(DocumentRepository):
         doc.pdf_minio_path = pdf_minio_path
         return doc
 
+    async def list_by_batch_id(self, batch_id: UUID, tenant_id: UUID) -> list[Document]:
+        """Return all documents for the given batch_id scoped to tenant_id.
+
+        In-memory filter: O(total docs in fake repo) — acceptable for tests.
+        Matches documents where batch_id == batch_id AND tenant_id == tenant_id.
+        """
+        return [
+            d
+            for d in self._documents.values()
+            if d.batch_id == batch_id and d.tenant_id == tenant_id
+        ]
+
     async def list_paginated(
         self,
         page: int = 1,

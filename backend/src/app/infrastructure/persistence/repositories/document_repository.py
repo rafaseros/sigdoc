@@ -92,6 +92,26 @@ class SQLAlchemyDocumentRepository(DocumentRepositoryPort):
         result = await self._session.execute(fetch_stmt)
         return result.scalar_one()
 
+    async def list_by_batch_id(self, batch_id: UUID, tenant_id: UUID) -> list:
+        """Return all documents for a given batch_id scoped to tenant_id.
+
+        Issues a single SELECT WHERE batch_id = :batch_id AND tenant_id = :tenant_id.
+        O(batch_size) — avoids the O(N total tenant docs) scan of list_paginated.
+        Eager-loads template_version so callers can access doc.template_version
+        without triggering additional queries (matches get_by_id / list_paginated
+        pattern). W-PRES-02 fix.
+        """
+        stmt = (
+            select(DocumentModel)
+            .where(
+                DocumentModel.batch_id == batch_id,
+                DocumentModel.tenant_id == tenant_id,
+            )
+            .options(selectinload(DocumentModel.template_version))
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().unique().all())
+
     async def list_paginated(
         self, page: int = 1, size: int = 20, template_id: UUID | None = None, created_by: UUID | None = None
     ) -> tuple[list, int]:

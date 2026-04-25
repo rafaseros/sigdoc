@@ -238,12 +238,12 @@ async def download_bulk(
     except ValueError:
         raise HTTPException(status_code=422, detail="Invalid batch_id format")
 
-    # Fetch all documents for this batch from the repository
-    # We use list_paginated with a very large page size to get all batch docs.
-    # The batch_id is stored on Document rows; we need to filter by it.
-    # list_paginated doesn't support batch_id filter — we list all and filter.
-    all_docs, _total = await service._doc_repo.list_paginated(page=1, size=10000)
-    batch_docs = [d for d in all_docs if d.batch_id == batch_uuid]
+    # Fetch all documents for this batch from the repository via the public
+    # delegating method (W-PRES-02 fix: replaces service._doc_repo private
+    # access + O(N total tenant docs) full-scan with O(batch_size) query).
+    batch_docs = await service.list_documents_by_batch(
+        batch_id=batch_uuid, tenant_id=current_user.tenant_id
+    )
 
     if not batch_docs:
         raise HTTPException(status_code=404, detail="Bulk download batch not found")

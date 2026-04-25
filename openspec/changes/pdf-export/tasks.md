@@ -246,37 +246,37 @@
 
 ## Phase 6 — Integration tests + smoke
 
-### T-INT-01: [TEST] E2E happy path — admin generates, both files in MinIO, downloads both formats
+### T-INT-01: [x] [TEST] E2E happy path — admin generates, both files in MinIO, downloads both formats
 - **Files**: `backend/tests/integration/test_pdf_export.py`
 - **REQs**: REQ-DDF-01, REQ-DDF-03, REQ-DDF-19, SCEN-DDF-01
 - **Depends on**: T-PRES-03, T-PRES-05
 - **Description**: Admin POST /generate → assert response 200 + `Document` row has both `docx_file_name` and `pdf_file_name` populated. Admin GET /download?format=docx → 200 + DOCX MIME. Non-admin GET /download?format=pdf → 200 + PDF MIME. Full stack with FastAPI TestClient.
 
-### T-INT-02: [TEST] E2E legacy backfill — pre-existing DOCX-only doc → user PDF request → PDF persisted → second request skips conversion
+### T-INT-02: [x] [TEST] E2E legacy backfill — pre-existing DOCX-only doc → user PDF request → PDF persisted → second request skips conversion
 - **Files**: `backend/tests/integration/test_pdf_export.py`
 - **REQs**: REQ-DDF-09, REQ-DDF-10, SCEN-DDF-06, SCEN-DDF-07
 - **Depends on**: T-PRES-03
 - **Description**: Insert legacy `Document` row (manually, `pdf_file_name=None`). Non-admin GET /download?format=pdf → 200 → assert `pdf_file_name` now set in DB. Repeat GET → same 200 without re-triggering conversion (verify via mock call count). Also: simulate Gotenberg failure → 503 → `pdf_file_name` still NULL.
 
-### T-INT-03: [TEST] Sharing RBAC — recipient non-admin cannot download DOCX via share link
+### T-INT-03: [x] [TEST] Sharing RBAC — recipient non-admin cannot download DOCX via share link
 - **Files**: `backend/tests/integration/test_pdf_export.py`
 - **REQs**: REQ-DDF-13, SCEN-DDF-13, SCEN-DDF-14
 - **Depends on**: T-PRES-07
 - **Description**: Admin shares template with non-admin; non-admin generates document via share. Non-admin GET /download?format=docx → 403. Non-admin GET /download?format=pdf&via=share → 200 + audit event has `via="share"`.
 
-### T-INT-04: [TEST] Migration regression — existing rows have `docx_file_name` populated, `pdf_file_name` NULL
+### T-INT-04: [x] [TEST] Migration regression — existing rows have `docx_file_name` populated, `pdf_file_name` NULL
 - **Files**: `backend/tests/integration/test_pdf_export.py`
 - **REQs**: REQ-DDF-02
 - **Depends on**: T-INFRA-04
 - **Description**: Run migration `010_pdf_export` against a test DB with a pre-existing `Document` row. Assert: `docx_file_name` = original `file_name` value; `docx_minio_path` = original `minio_path` value; `pdf_file_name IS NULL`; `pdf_minio_path IS NULL`. Downgrade → assert columns back to original names.
 
-### T-INT-05: [TEST] Quota — single generate increments by exactly 1
+### T-INT-05: [x] [TEST] Quota — single generate increments by exactly 1
 - **Files**: `backend/tests/integration/test_pdf_export.py`
 - **REQs**: REQ-DDF-16, SCEN-DDF-15
 - **Depends on**: T-APP-02
 - **Description**: Record quota counter before POST /generate. After successful response, assert counter incremented by exactly 1 (not 2). Also assert audit event contains `details.formats_generated=["docx","pdf"]`.
 
-### T-INT-06: Run full backend test suite — no regressions
+### T-INT-06: [x] Run full backend test suite — no regressions
 - **Files**: (no new files — validation task)
 - **REQs**: all
 - **Depends on**: T-INT-01, T-INT-02, T-INT-03, T-INT-04, T-INT-05

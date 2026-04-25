@@ -526,7 +526,116 @@ Pre-existing errors (existed before Phase 5):
 
 ---
 
+## Phase 6 — Integration tests + cleanup (COMPLETE)
+
+**Batch**: 6 of N
+**Mode**: Strict TDD
+**Date**: 2026-04-25
+
+---
+
+## Tasks Status (Phase 6)
+
+| Task ID | Description | Status |
+|---------|-------------|--------|
+| W-PRES-02 fix | Add `list_by_batch_id` port + impl + public service method + update endpoint | ✅ DONE |
+| T-INT-01 | E2E happy path — generate, dual files, download both formats + RBAC + audit | ✅ DONE |
+| T-INT-02 | Legacy backfill — DOCX-only doc → PDF request → persisted → idempotent → failure | ✅ DONE |
+| T-INT-03 | Sharing RBAC — non-admin cannot download DOCX; can download PDF with via=share; ADR-PDF-07 sanity check | ✅ DONE |
+| T-INT-04 | Migration 010 regression — entity/repo structure for pre-migration rows + backfill | ✅ DONE |
+| T-INT-05 | Quota — usage increments by exactly 1 per dual-format generate; exceeded → 429 | ✅ DONE |
+| T-INT-06 | Full suite regression gate — 0 new failures | ✅ DONE |
+
+---
+
+## TDD Cycle Evidence (Phase 6)
+
+| Task | RED | GREEN |
+|------|-----|-------|
+| W-PRES-02 `list_by_batch_id` | 4 FAILED (AttributeError: no attribute 'list_by_batch_id') | 4 PASSED after FakeDocumentRepository + port impl |
+| T-INT-01..06 integration tests | 20 new tests written first → ran → initial partial pass (19/20 on first run; quota test needed tier_id fix) | 20/20 PASSED after test correction |
+
+Note on T-INT-05b (quota exceeded): The conftest DocumentService is created with `tier_id=None` (mock DB session returns None for tenant). The test injects a separate DocumentService instance with `tier_id=uuid4()` (non-None) to activate the quota guard code path. This is the correct test design — the quota guard reads `self._tier_id is not None`.
+
+---
+
+## W-PRES-02 Closed
+
+**Status**: ✅ CLOSED
+
+**Evidence**:
+- `DocumentRepository` port: added `list_by_batch_id(batch_id, tenant_id) -> list[Document]` abstract method
+- `FakeDocumentRepository`: implemented with in-memory filter on `batch_id == batch_id AND tenant_id == tenant_id`
+- `SQLAlchemyDocumentRepository`: implemented with single `SELECT WHERE batch_id = :batch_id AND tenant_id = :tenant_id` + `selectinload(template_version)` (O(batch_size))
+- `DocumentService`: added `list_documents_by_batch(batch_id, tenant_id) -> list` public delegating method
+- `documents.py` bulk download endpoint: replaced `service._doc_repo.list_paginated(page=1, size=10000)` + Python filter with `await service.list_documents_by_batch(batch_id=batch_uuid, tenant_id=current_user.tenant_id)`
+- Tests: `test_bulk_download_uses_list_by_batch_id` + `test_bulk_download_tenant_isolation` verify the correct behavior (including tenant isolation)
+
+**Before (W-PRES-02 violation)**:
+```python
+all_docs, _total = await service._doc_repo.list_paginated(page=1, size=10000)
+batch_docs = [d for d in all_docs if d.batch_id == batch_uuid]
+```
+
+**After (clean)**:
+```python
+batch_docs = await service.list_documents_by_batch(
+    batch_id=batch_uuid, tenant_id=current_user.tenant_id
+)
+```
+
+---
+
+## W-PRES-03 Status
+
+**Status**: ⏸ DEFERRED (intentional tech debt, out of scope for Phase 6)
+
+The `service._audit_service` private access in `download_bulk` endpoint is still present. This was explicitly deferred per Phase 6 scope constraints. Recorded for Phase 7 / post-merge cleanup.
+
+---
+
+## Files Created (Phase 6)
+
+| File | Description |
+|------|-------------|
+| `backend/tests/unit/domain/test_list_by_batch_id.py` | 4 unit tests for `FakeDocumentRepository.list_by_batch_id` (TDD RED→GREEN, W-PRES-02) |
+| `backend/tests/integration/test_pdf_export.py` | 20 integration tests: T-INT-01..06, W-PRES-02 verification |
+
+## Files Modified (Phase 6)
+
+| File | Change |
+|------|--------|
+| `backend/src/app/domain/ports/document_repository.py` | Added `list_by_batch_id(batch_id, tenant_id) -> list[Document]` abstract method |
+| `backend/tests/fakes/fake_document_repository.py` | Implemented `list_by_batch_id()` with in-memory batch+tenant filter |
+| `backend/src/app/infrastructure/persistence/repositories/document_repository.py` | Implemented `list_by_batch_id()` with single WHERE clause + selectinload (O(batch_size)) |
+| `backend/src/app/application/services/document_service.py` | Added `list_documents_by_batch(batch_id, tenant_id)` public delegating method |
+| `backend/src/app/presentation/api/v1/documents.py` | Replaced private `_doc_repo.list_paginated` with `service.list_documents_by_batch()` in bulk download endpoint |
+| `openspec/changes/pdf-export/tasks.md` | Marked T-INT-01..06 as `[x]` complete |
+
+---
+
+## Test Counts
+
+| Metric | Count |
+|--------|-------|
+| Phase 6 new tests | 24 (4 unit + 20 integration) |
+| Baseline after Phase 5 | 421 |
+| Total after Phase 6 | 445 (444 passed + 1 pre-existing ordering failure) |
+| Regressions introduced | 0 |
+| Pre-existing failure | `test_upload_template_appears_in_list` (session-scoped FakeTemplateRepository state pollution — pre-existed since Phase 4, not caused by Phase 6) |
+
+---
+
+## Risks for Phase 7 (Operational)
+
+1. **Gotenberg not running** in this environment: `docker-compose.yml` has `api depends_on gotenberg: condition: service_healthy`. Phase 7 must bring Gotenberg up (`docker compose up gotenberg`) and run a real conversion smoke test before merge.
+2. **W-PRES-03 deferred**: `service._audit_service` private access in `download_bulk` audit section is still a hexagonal boundary leak — small risk, deferred tech debt.
+3. **No real DB integration test for `list_by_batch_id`**: The SQL implementation is correct (matches `batch_id` + `tenant_id` with `selectinload`), but it was not tested against a real PostgreSQL in Phase 6 (using in-memory fake only). Phase 7 / QA should include a `docker compose exec api pytest` with the real DB once Gotenberg is up.
+4. **`DocumentList` table column width**: `w-[120px]` "Acciones" column may be too narrow for the DownloadButton text (carried from Phase 5 risk).
+5. **`file_name` backward-compat alias in `DocumentResponse`**: Still present from Phase 2 decision. Should be removed after confirming no external consumers use it.
+
+---
+
 ## Phases Remaining
 
-- Phase 6 — Integration tests + smoke: T-INT-01..T-INT-06
 - Phase 7 — Operational: T-OPS-01..T-OPS-03

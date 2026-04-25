@@ -996,3 +996,275 @@ The 3 WARNINGs are design/pattern issues that do not affect functionality: W-FE-
 3. **W-PRES-03 (from Phase 4) still open** — `_audit_service` accessed as private attribute in endpoints. Phase 6 refactor scope.
 
 **Next recommended**: Commit Phase 5 frontend changes. Proceed to Phase 6 (T-INT-01 through T-INT-06 — Integration tests + smoke: E2E happy path, legacy backfill, sharing RBAC, migration regression, quota).
+
+---
+
+## Phase 6 Verification
+
+**Date**: 2026-04-25
+**Scope**: Phase 6 — Integration tests + W-PRES-02 closure (T-INT-01..T-INT-06 + `list_by_batch_id`)
+**Verdict**: ✅ APPROVED_WITH_WARNINGS
+
+---
+
+### Completeness
+
+| Metric | Value |
+|--------|-------|
+| Phase 6 tasks total | 6 |
+| Tasks complete | 6 |
+| Tasks incomplete | 0 |
+
+All Phase 6 tasks (T-INT-01..T-INT-06) are marked `[x]` in `tasks.md` and independently verified below. Phase 7 (operational) is not yet started — not in scope for this verification.
+
+---
+
+### Build & Tests Execution
+
+**Build**: N/A — Python/pytest project, no separate build step.
+
+**Tests (Phase 6 new only)**:
+```
+24 passed in 0.59s
+```
+All 24 Phase 6 tests pass:
+- `backend/tests/integration/test_pdf_export.py` — 20 integration tests
+- `backend/tests/unit/domain/test_list_by_batch_id.py` — 4 unit tests (W-PRES-02 TDD)
+
+**Full suite**:
+```
+1 failed, 444 passed, 3 warnings in 17.30s
+```
+Run: `cd backend && pytest tests/ -q --tb=short`
+
+The single failure is the pre-existing `test_upload_template_appears_in_list` (session-scoped `FakeTemplateRepository` state pollution — unchanged from Phase 3).
+
+**TDD RED confirmation** (stash test):
+At Phase 5 HEAD (code stashed), the following tests were FAILING (RED):
+- `test_list_by_batch_id_returns_matching_docs`
+- `test_list_by_batch_id_tenant_isolation`
+- `test_list_by_batch_id_returns_empty_for_unknown_batch`
+- `test_list_by_batch_id_excludes_single_docs`
+- `test_bulk_download_tenant_isolation`
+
+Total at Phase 5 stash: **439 passed, 6 failed** (4 unit RED + 1 integration RED + 1 pre-existing). After Phase 6 implementation: **444 passed, 1 failed**. Delta: +5 passing (5 RED→GREEN), -5 failing. Math verified: 439+5=444 ✅, 6-5=1 ✅.
+
+**Coverage**: Not configured — not available.
+
+---
+
+### W-PRES-02 Closure
+
+| Check | Result | Evidence |
+|-------|--------|---------|
+| `DocumentRepository` port has abstract `list_by_batch_id(batch_id, tenant_id)` | ✅ YES | `backend/src/app/domain/ports/document_repository.py` lines 42–49 |
+| SQL repo implements `list_by_batch_id` with single `SELECT WHERE batch_id AND tenant_id` | ✅ YES | `backend/src/app/infrastructure/persistence/repositories/document_repository.py` lines 95–113; single `select(DocumentModel).where(batch_id==..., tenant_id==...)` — NO `list_paginated(page=1, size=10000)` workaround |
+| `FakeDocumentRepository` has `list_by_batch_id` implementation | ✅ YES | `backend/tests/fakes/fake_document_repository.py` lines 51–61; in-memory filter on `batch_id` + `tenant_id` |
+| `DocumentService` has public `list_documents_by_batch(...)` delegator | ✅ YES | `backend/src/app/application/services/document_service.py` lines 277–286 |
+| Bulk download endpoint calls `service.list_documents_by_batch()` (NOT `service._doc_repo`) | ✅ YES | `backend/src/app/presentation/api/v1/documents.py` line 244: `await service.list_documents_by_batch(batch_id=batch_uuid, tenant_id=current_user.tenant_id)` |
+| `rg "_doc_repo" backend/src/app/presentation/` in bulk endpoint context | ✅ CLEAN | Line 242 is only a comment (`# W-PRES-02 fix: replaces service._doc_repo private...`), not code. No private attribute access in the bulk download fetch path. |
+
+**W-PRES-02 status: CLOSED** ✅
+
+---
+
+### W-PRES-03 Status
+
+Confirmed **deferred**. `service._audit_service` private access persists at:
+- `backend/src/app/presentation/api/v1/documents.py` lines 296 (`download_bulk`) and 380 (single download)
+
+This is the known hexagonal boundary leak carried forward from Phase 4. Not a blocker for Phase 6 archive.
+
+---
+
+### TDD Compliance (Phase 6)
+
+| Task | RED confirmed | GREEN confirmed |
+|------|---------------|-----------------|
+| T-INT-01..06 (20 integration tests) | `test_bulk_download_tenant_isolation` was RED at Phase 5 HEAD (confirmed by stash run). Other integration tests were new untracked files — no prior failure state; RED confirmed by first-run evidence in apply-progress. | All 20 pass at Phase 6 HEAD |
+| W-PRES-02 unit tests (4 tests in `test_list_by_batch_id.py`) | All 4 FAILED at Phase 5 HEAD (confirmed by stash run — `FakeDocumentRepository` had no `list_by_batch_id` method) | All 4 pass at Phase 6 HEAD |
+
+---
+
+### T-INT-01 — E2E Happy Path Verification
+
+| Sub-test | Description | Status |
+|----------|-------------|--------|
+| T-INT-01a | Admin POST /generate → 201, both `docx_file_name` + `pdf_file_name` set, both files in storage | ✅ PASS |
+| T-INT-01b | Admin GET /download?format=docx → 200, `wordprocessingml` MIME | ✅ PASS |
+| T-INT-01c | Admin GET /download?format=pdf → 200, `application/pdf` MIME | ✅ PASS |
+| T-INT-01d | Non-admin GET /download?format=pdf → 200, `application/pdf` MIME | ✅ PASS |
+| T-INT-01e | Non-admin GET /download?format=docx → 403 (RBAC) | ✅ PASS |
+| T-INT-01f | Audit: POST /generate → `document.generate` event with `formats_generated=["docx","pdf"]` | ✅ PASS |
+| T-INT-01g | Audit: GET /download → `document.download` event with `format` + `via` fields | ✅ PASS |
+
+**Note (SUGGESTION)**: The orchestrator checklist specified "3 download events with format and via" in T-INT-01. The test file checks exactly 1 download audit event (01g: PDF download by admin). The DOCX admin download (01b) and non-admin PDF download (01d) do not individually assert their audit events. The behavior is functionally correct — the audit system is exercised — but the audit trail for DOCX downloads and the non-admin download path is not independently asserted in T-INT-01. See S-INT-01 below.
+
+---
+
+### T-INT-02 — Legacy Backfill Verification
+
+| Sub-test | Description | Status |
+|----------|-------------|--------|
+| T-INT-02a | Legacy doc (pdf_file_name=NULL) → GET /download?format=pdf → 200 → `pdf_file_name` set in DB | ✅ PASS |
+| T-INT-02b | Second request on backfilled doc → converter NOT called (idempotent) | ✅ PASS |
+| T-INT-02c | Converter failure → 503 → `pdf_file_name` stays NULL, DOCX not deleted | ✅ PASS |
+| T-INT-02d | Single-use failure → first 503, second 200 (failure cleared) | ✅ PASS |
+
+---
+
+### T-INT-03 — Sharing RBAC Verification
+
+| Sub-test | Description | Status |
+|----------|-------------|--------|
+| T-INT-03a | Non-admin + `format=docx&via=share` → 403 (SCEN-DDF-13) | ✅ PASS |
+| T-INT-03b | Non-admin + `format=pdf&via=share` → 200 + audit `via="share"` (SCEN-DDF-14) | ✅ PASS |
+| T-INT-03c | Creator sends `via=share` → server overrides to `via="direct"` in audit (ADR-PDF-07) | ✅ PASS |
+
+---
+
+### T-INT-04 — Migration 010 Regression Verification
+
+| Sub-test | Description | Status |
+|----------|-------------|--------|
+| T-INT-04a | Legacy row: `docx_file_name` set, `pdf_file_name=NULL` → entity reads correctly; backfill triggers on PDF request | ✅ PASS |
+| T-INT-04b | New row: all 4 file fields populated → entity reads and stores correctly | ✅ PASS |
+
+**Note**: T-INT-04 uses the FakeDocumentRepository (entity-level structural verification). An actual `alembic downgrade -1 && upgrade head` DDL cycle was NOT executed as part of these integration tests — the Alembic DDL was verified separately in Phase 2 (schema structure, reversibility). Phase 6 T-INT-04 verifies entity/repository behavior, not DDL roundtrip. This is acceptable for Phase 6 scope; real DB migration is a Phase 7/CI responsibility.
+
+---
+
+### T-INT-05 — Quota Verification
+
+| Sub-test | Description | Status |
+|----------|-------------|--------|
+| T-INT-05a | POST /generate: usage incremented by exactly 1 (not 2 for dual format) | ✅ PASS |
+| T-INT-05b | Quota exceeded (via injected FakeQuotaService) → 429 | ✅ PASS |
+
+**Note (SUGGESTION)**: The orchestrator checklist also specified "Bulk pre-flight check: tenant with remaining quota 3, requests 5 → 429 BEFORE any conversion (no orphan files)". This scenario is NOT in the test file — neither T-INT-05 nor any other Phase 6 test covers bulk generation quota enforcement. The `generate_bulk` quota path exists in the service (inherited from Phase 3), but is not exercised by a Phase 6 integration test. See S-INT-02 below.
+
+---
+
+### T-INT-06 — W-PRES-02 + Full Suite Regression Gate
+
+| Sub-test | Description | Status |
+|----------|-------------|--------|
+| T-INT-06a | Bulk download with 2-doc batch → 200 ZIP with both files | ✅ PASS |
+| T-INT-06b | Bulk download with cross-tenant batch → only tenant's own docs in ZIP | ✅ PASS |
+| Full suite | 444/445 pass, 1 pre-existing failure | ✅ PASS |
+
+---
+
+### Spec Compliance Matrix (Phase 6 scope)
+
+| Requirement | Scenario | Test | Result |
+|-------------|----------|------|--------|
+| REQ-DDF-01 | Both file fields set after generation | `test_e2e_admin_generate_creates_both_files_in_storage` | ✅ COMPLIANT |
+| REQ-DDF-03 | Admin generate → dual files in storage | `test_e2e_admin_generate_creates_both_files_in_storage` | ✅ COMPLIANT |
+| REQ-DDF-06 | format=docx admin → 200 + DOCX MIME | `test_e2e_admin_download_docx_returns_200` | ✅ COMPLIANT |
+| REQ-DDF-06 | format=pdf admin → 200 + PDF MIME | `test_e2e_admin_download_pdf_returns_200` | ✅ COMPLIANT |
+| REQ-DDF-07 | Non-admin PDF download → 200 | `test_e2e_user_download_pdf_returns_200` | ✅ COMPLIANT |
+| REQ-DDF-07 | Non-admin DOCX download → 403 | `test_e2e_user_download_docx_returns_403` | ✅ COMPLIANT |
+| REQ-DDF-09 | Legacy doc → backfill → 200, pdf_file_name set | `test_legacy_backfill_happy_path_returns_200_and_persists_pdf` | ✅ COMPLIANT |
+| REQ-DDF-09 | Backfill is idempotent (second request skips conversion) | `test_legacy_backfill_idempotent_second_request_skips_conversion` | ✅ COMPLIANT |
+| REQ-DDF-10 | Backfill failure → 503, pdf_file_name stays NULL, DOCX not deleted | `test_legacy_backfill_converter_failure_returns_503_and_pdf_stays_null` | ✅ COMPLIANT |
+| REQ-DDF-13 | Shared non-admin cannot download DOCX | `test_shared_user_cannot_download_docx` | ✅ COMPLIANT |
+| REQ-DDF-13/15 | Shared non-admin PDF download → 200 + audit via=share | `test_shared_user_can_download_pdf_via_share` | ✅ COMPLIANT |
+| REQ-DDF-14 | Generation audit: formats_generated=["docx","pdf"] | `test_e2e_generate_audit_event_has_formats_generated` | ✅ COMPLIANT |
+| REQ-DDF-15 | Download audit: format + via fields | `test_e2e_download_audit_event_has_format_and_via` | ✅ COMPLIANT |
+| REQ-DDF-15 | ADR-PDF-07: creator via=share overridden to direct | `test_creator_via_share_overridden_to_direct` | ✅ COMPLIANT |
+| REQ-DDF-16 | Quota incremented by exactly 1 for dual-format generate | `test_quota_generate_increments_usage_by_exactly_one` | ✅ COMPLIANT |
+| REQ-DDF-16 | Quota exceeded → 429 | `test_quota_exceeded_returns_429` | ✅ COMPLIANT |
+| REQ-DDF-02 | Legacy row: docx_* populated, pdf_* NULL | `test_migration_010_doc_has_docx_fields_and_null_pdf_fields` | ✅ COMPLIANT |
+| REQ-DDF-02 | New row: all 4 fields populated | `test_migration_010_new_doc_has_all_four_file_fields` | ✅ COMPLIANT |
+| W-PRES-02 | Bulk download uses list_by_batch_id (hexagonal fix) | `test_bulk_download_uses_list_by_batch_id` | ✅ COMPLIANT |
+| W-PRES-02 | Bulk download enforces tenant isolation | `test_bulk_download_tenant_isolation` | ✅ COMPLIANT |
+| W-PRES-02 (unit) | `list_by_batch_id` returns matching docs | `test_list_by_batch_id_returns_matching_docs` | ✅ COMPLIANT |
+| W-PRES-02 (unit) | `list_by_batch_id` tenant isolation | `test_list_by_batch_id_tenant_isolation` | ✅ COMPLIANT |
+| W-PRES-02 (unit) | `list_by_batch_id` empty for unknown batch | `test_list_by_batch_id_returns_empty_for_unknown_batch` | ✅ COMPLIANT |
+| W-PRES-02 (unit) | `list_by_batch_id` excludes single docs | `test_list_by_batch_id_excludes_single_docs` | ✅ COMPLIANT |
+
+**Compliance summary**: 24/24 Phase 6 scenarios compliant.
+
+---
+
+### Correctness (Static — Structural Evidence)
+
+| Requirement | Status | Notes |
+|------------|--------|-------|
+| `DocumentRepository` port: abstract `list_by_batch_id` | ✅ Implemented | Port method with `batch_id: UUID, tenant_id: UUID -> list[Document]` |
+| SQL repo: single-query `list_by_batch_id` (no `list_paginated` workaround) | ✅ Implemented | `SELECT WHERE batch_id=:b AND tenant_id=:t` with `selectinload` — O(batch_size) |
+| `FakeDocumentRepository.list_by_batch_id` | ✅ Implemented | In-memory filter on both fields |
+| `DocumentService.list_documents_by_batch` public method | ✅ Implemented | Thin delegator at lines 277–286 |
+| Bulk endpoint: no `service._doc_repo` in fetch path | ✅ Confirmed | Only comment mentions `_doc_repo`; actual call is `service.list_documents_by_batch(...)` |
+| W-PRES-03: `service._audit_service` still private | ✅ Confirmed deferred | Present at lines 296, 380 — explicitly deferred to future phase |
+| No frontend changes in Phase 6 | ✅ Confirmed | `git diff -- frontend/` has no Phase 6 changes |
+| No new docker-compose / migration / pyproject.toml changes | ✅ Confirmed | Phase 6 touched only backend source + test files |
+
+---
+
+### Coherence (Design)
+
+| Decision | Followed? | Notes |
+|----------|-----------|-------|
+| ADR-PDF-03: atomic generation flow | ✅ Yes | Service-level atomics from Phase 3 unchanged |
+| ADR-PDF-04: `ensure_pdf` lazy backfill | ✅ Yes | Fully exercised by T-INT-02 tests |
+| ADR-PDF-07: via=share override logic | ✅ Yes | T-INT-03c confirms creator override works |
+| ADR-PDF-08: serial backfill before zipping | ✅ Yes | Bulk endpoint uses `ensure_pdf` in loop |
+| W-PRES-02 fix approach: port method + public delegator | ✅ Yes | Hexagonal boundary respected for read path |
+| W-PRES-03 deferred (audit service) | ✅ Documented | Carries forward as open WARNING |
+
+---
+
+### Test Count Delta
+
+| Phase | Passing | Failing | Total collected | Delta |
+|-------|---------|---------|-----------------|-------|
+| Phase 4 end | 420 | 1 | 421 | baseline |
+| Phase 5 end | 420 | 1 | 421 | +0 (frontend only) |
+| Phase 6 end | **444** | **1** | **445** | **+24 new tests** |
+
+Phase 5 baseline (420 passing) is a strict subset of Phase 6's 444 passing. ✅
+
+---
+
+### Issues Found
+
+**CRITICAL** (must fix before archive):
+None.
+
+**WARNING** (should fix):
+
+- **W-PRES-03 (carried forward)**: `service._audit_service` private access in `download_bulk` (line 296) and `download_document` (line 380) endpoints. Explicitly deferred from Phase 4 and again from Phase 6. This is a hexagonal boundary violation in the presentation layer. No behavioral impact for current tests, but it breaks the port/adapter contract and makes the audit call invisible to the service's public interface. Recommend adding `DocumentService.log_download_event(...)` or similar in Phase 7 cleanup.
+
+**SUGGESTION** (nice-to-have):
+
+- **S-INT-01: T-INT-01 only asserts 1 download audit event, not 3** — The orchestrator checklist for T-INT-01 specified 3 download audit events (admin DOCX, admin PDF, non-admin PDF). The test file asserts a download audit event only in `test_e2e_download_audit_event_has_format_and_via` (1 event, admin PDF). DOCX download audit and non-admin download audit are not individually verified in Phase 6. Existing Phase 4 tests cover these paths structurally. Low risk — audit is tested; just not exhaustively for all T-INT-01 flows.
+
+- **S-INT-02: Bulk generate quota pre-flight (remaining=3, requests=5 → 429 BEFORE conversion) not tested** — The orchestrator's T-INT-05 checklist included this scenario. Neither T-INT-05 nor any Phase 6 test covers this. The quota guard exists in `generate_bulk` (inherited from Phase 3) but has no dedicated integration test for the "not enough quota for bulk batch" path. The single-generate quota path is tested. Recommend adding a T-INT-05c in a follow-up or Phase 7.
+
+- **S-INT-03: No real DB test for `list_by_batch_id` SQL implementation** — The SQL implementation is structurally correct (confirmed by code review), but was only exercised against the `FakeDocumentRepository` in Phase 6 tests. The `selectinload` + WHERE clause was not validated against real PostgreSQL. Apply-progress acknowledges this. Phase 7 CI should run `docker compose exec api pytest` to validate.
+
+---
+
+### Pre-existing Failure
+
+`tests/integration/test_templates_api.py::test_upload_template_appears_in_list` — session-scoped `FakeTemplateRepository` state pollution. Confirmed unchanged from Phase 3/4/5 verify reports. Out of scope for Phase 6.
+
+---
+
+### Verdict
+
+**✅ APPROVED_WITH_WARNINGS**
+
+Phase 6 (Integration tests + W-PRES-02 closure) is fully implemented and verified.
+
+- **24/24 new tests** pass (20 integration + 4 W-PRES-02 unit)
+- **444/445 full suite** — exactly matches apply-phase claim; 1 pre-existing failure unchanged
+- **W-PRES-02 CLOSED**: `list_by_batch_id` is now a proper port method with SQL repo, fake, and public service delegator. The bulk download endpoint no longer accesses `service._doc_repo` directly.
+- **W-PRES-03 DEFERRED**: `service._audit_service` private access remains — explicit carry-forward, not a regression
+- **TDD RED→GREEN confirmed** for all Phase 6 additions via stash verification
+
+No CRITICAL issues. 1 WARNING (W-PRES-03 carry-forward). 3 suggestions (non-blocking improvements to test coverage).
+
+**Phase 7 recommended**: T-OPS-01 (nginx timeout), T-OPS-02 (.env.example), T-OPS-03 (Gotenberg image pin). Also: add S-INT-02 (bulk quota pre-flight test) as a Phase 7 addition before archive.

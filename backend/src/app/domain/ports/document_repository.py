@@ -37,3 +37,13 @@ class DocumentRepository(ABC):
         Used exclusively by DocumentService.ensure_pdf.
         """
         ...
+
+    @abstractmethod
+    async def list_by_batch_id(self, batch_id: UUID, tenant_id: UUID) -> list[Document]:
+        """Return all documents belonging to a given batch, scoped to a tenant.
+
+        Filters by batch_id AND tenant_id for correctness and security.
+        O(batch_size) — does NOT scan the full tenant document table.
+        Used by the bulk download endpoint (W-PRES-02 fix).
+        """
+        ...
