@@ -8,6 +8,7 @@ from app.application.services.template_service import TemplateService
 from app.application.services.usage_service import UsageService
 from app.config import get_settings
 from app.domain.ports.user_repository import UserRepository
+from app.infrastructure.pdf import get_pdf_converter
 from app.infrastructure.persistence.database import async_session_factory
 from app.infrastructure.persistence.repositories.template_repository import (
     SQLAlchemyTemplateRepository,
@@ -129,6 +130,7 @@ async def get_document_service(
         template_repository=SQLAlchemyTemplateRepository(session),
         storage=get_storage_service(),
         engine=get_template_engine(),
+        pdf_converter=get_pdf_converter(),
         bulk_generation_limit=effective_limit,
         usage_service=UsageService(usage_repo=SQLAlchemyUsageRepository(session)),
         audit_service=get_audit_service(),

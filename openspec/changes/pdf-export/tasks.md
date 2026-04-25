@@ -114,43 +114,43 @@
 
 ## Phase 3 — Application service layer (orchestration)
 
-### T-APP-01: [TEST] Unit tests for atomic dual-format generation
+### T-APP-01: [x] [TEST] Unit tests for atomic dual-format generation
 - **Files**: `backend/tests/unit/test_document_service_pdf.py`
 - **REQs**: REQ-DDF-03, REQ-DDF-05, REQ-DDF-14, REQ-DDF-16, SCEN-DDF-05, SCEN-DDF-15
 - **Depends on**: T-DOMAIN-06, T-DOMAIN-07, T-DOMAIN-08
 - **Description**: Using `FakePdfConverter` + `FakeStorageService` + `FakeDocumentRepository`: assert both files in MinIO + row with dual fields on success; assert DOCX deleted from MinIO + no DB row when `PdfConverter.convert()` raises (SCEN-DDF-05); assert `details.formats_generated=["docx","pdf"]` in audit event; assert quota incremented by exactly 1.
 
-### T-APP-02: Modify `DocumentService.generate` for atomic dual-format flow
+### T-APP-02: [x] Modify `DocumentService.generate` for atomic dual-format flow
 - **Files**: `backend/src/app/application/services/document_service.py`
 - **REQs**: REQ-DDF-03, REQ-DDF-05, REQ-DDF-14, REQ-DDF-16
 - **Depends on**: T-APP-01, T-DOMAIN-08, T-INFRA-07
 - **Description**: After DOCX upload, call `await self._pdf_converter.convert(rendered_docx)`. On `PdfConversionError`: delete orphan DOCX from MinIO and re-raise (presentation maps → 503). On success: upload PDF, persist `Document` with all four file fields. Update audit details with `formats_generated=["docx","pdf"]`. Quota increment unchanged (still +1).
 
-### T-APP-03: [TEST] Unit tests for atomic bulk dual-format generation
+### T-APP-03: [x] [TEST] Unit tests for atomic bulk dual-format generation
 - **Files**: `backend/tests/unit/test_document_service_pdf.py`
 - **REQs**: REQ-DDF-04, REQ-DDF-05, SCEN-DDF-05
 - **Depends on**: T-APP-01
 - **Description**: Assert that when any row's conversion fails, ALL previously uploaded DOCX and PDF objects for this batch are deleted from MinIO and no `Document` rows persist. Use `FakePdfConverter` with `set_failure()` on the Nth call.
 
-### T-APP-04: Modify `DocumentService.generate_bulk` for dual-format flow
+### T-APP-04: [x] Modify `DocumentService.generate_bulk` for dual-format flow
 - **Files**: `backend/src/app/application/services/document_service.py`
 - **REQs**: REQ-DDF-04, REQ-DDF-05
 - **Depends on**: T-APP-03, T-APP-02
 - **Description**: Apply the same atomic dual-format logic per row as T-APP-02. Sequential processing. Track all uploaded MinIO keys for the batch. On any `PdfConversionError`: delete ALL accumulated MinIO objects (DOCX + PDF for all rows processed so far), raise without persisting any rows.
 
-### T-APP-05: [TEST] Unit tests for `ensure_pdf` lazy backfill
+### T-APP-05: [x] [TEST] Unit tests for `ensure_pdf` lazy backfill
 - **Files**: `backend/tests/unit/test_document_service_pdf.py`
 - **REQs**: REQ-DDF-09, REQ-DDF-10, SCEN-DDF-06, SCEN-DDF-07
 - **Depends on**: T-INFRA-05, T-DOMAIN-06
 - **Description**: Assert happy path: `pdf_file_name IS NULL` → convert → upload → `update_pdf_fields` called → returns updated doc; idempotent path: `pdf_file_name` already set → returns doc immediately without conversion; failure path: `PdfConversionError` raised → `update_pdf_fields` never called, DOCX not deleted.
 
-### T-APP-06: Implement `DocumentService.ensure_pdf`
+### T-APP-06: [x] Implement `DocumentService.ensure_pdf`
 - **Files**: `backend/src/app/application/services/document_service.py`
 - **REQs**: REQ-DDF-09, REQ-DDF-10
 - **Depends on**: T-APP-05, T-INFRA-05
 - **Description**: New async method `ensure_pdf(document_id: UUID) -> Document`. Fast path returns immediately if `pdf_file_name is not None`. Slow path: download DOCX bytes from MinIO → convert → upload PDF → call `doc_repo.update_pdf_fields()` → return updated doc. On `PdfConversionError`: do NOT delete DOCX, do NOT update DB, let exception propagate (presentation maps → 503).
 
-### T-APP-07: Wire `PdfConverter` into DI / `DocumentService` factory
+### T-APP-07: [x] Wire `PdfConverter` into DI / `DocumentService` factory
 - **Files**: `backend/src/app/application/services/__init__.py`
 - **REQs**: REQ-PDF-02
 - **Depends on**: T-INFRA-07, T-APP-06

@@ -228,3 +228,111 @@ The `file_name` and `minio_path` property aliases on the `Document` entity have 
 2. **`get_document_service` DI factory** (T-APP-07): must pass `get_pdf_converter()` as a new kwarg — trivial once T-APP-02 lands.
 3. **`update_pdf_fields` in repository returns `DocumentModel`** — Phase 3's `ensure_pdf` must be aware it receives an ORM object, not a domain `Document` entity. Consider adding a proper `_to_entity()` method in Phase 3 for clean hexagonal boundary.
 4. **Gotenberg not yet running** (by design — T-OPS scope): `api` service `depends_on: gotenberg: condition: service_healthy` in compose means `docker compose up api` will wait for Gotenberg healthcheck. This is intentional — Phase 7 brings it up operationally.
+
+---
+
+## Phase 3 — Application service layer (COMPLETE)
+
+**Batch**: 3 of N
+**Mode**: Strict TDD
+**Date**: 2026-04-25
+
+---
+
+## Tasks Status (Phase 3)
+
+| Task ID | Description | Status |
+|---------|-------------|--------|
+| T-APP-01 | [TEST] Unit tests for atomic dual-format single generation | ✅ DONE |
+| T-APP-02 | Modify `DocumentService.generate_single` for atomic dual-format flow | ✅ DONE |
+| T-APP-03 | [TEST] Unit tests for atomic bulk dual-format with rollback | ✅ DONE |
+| T-APP-04 | Modify `DocumentService.generate_bulk` for dual-format flow | ✅ DONE |
+| T-APP-05 | [TEST] Unit tests for `ensure_pdf` lazy backfill | ✅ DONE |
+| T-APP-06 | Implement `DocumentService.ensure_pdf` | ✅ DONE |
+| T-APP-07 | Wire `PdfConverter` into DI / `DocumentService` factory | ✅ DONE |
+
+---
+
+## TDD Cycle Evidence (Phase 3)
+
+| Task | RED | GREEN |
+|------|-----|-------|
+| T-APP-01 | 1 FAILED (TypeError: unexpected keyword argument 'pdf_converter') | 17 PASSED |
+| T-APP-02 | covered by T-APP-01 RED cycle | 17 PASSED |
+| T-APP-03 | covered by T-APP-01 RED (file written first, all 17 tests failed) | 17 PASSED |
+| T-APP-04 | covered by T-APP-03 | 17 PASSED |
+| T-APP-05 | covered by T-APP-01 RED cycle | 17 PASSED |
+| T-APP-06 | covered by T-APP-05 | 17 PASSED |
+| T-APP-07 | compile-time wiring only | integration tests pass |
+
+---
+
+## Files Created (Phase 3)
+
+| File | Description |
+|------|-------------|
+| `backend/tests/unit/test_document_service_pdf.py` | 17 tests covering T-APP-01 (Group B), T-APP-03 (Group C), T-APP-05 (Group D) |
+
+## Files Modified (Phase 3)
+
+| File | Change |
+|------|--------|
+| `backend/src/app/domain/ports/document_repository.py` | Added abstract `update_pdf_fields()` method to `DocumentRepository` port |
+| `backend/tests/fakes/fake_document_repository.py` | Implemented `update_pdf_fields()` with call recorder (`_update_pdf_fields_calls`) |
+| `backend/src/app/application/services/document_service.py` | Added `pdf_converter: PdfConverter | None = None` param to `__init__`; modified `generate_single` for atomic DOCX+PDF flow with rollback on failure; modified `generate_bulk` for sequential atomic per-row dual-format flow with full-batch rollback on any failure; added `ensure_pdf(document_id: UUID) -> Document` method; added `formats_generated` to audit details |
+| `backend/src/app/application/services/__init__.py` | Imported `get_pdf_converter`; wired `pdf_converter=get_pdf_converter()` into `get_document_service()` factory |
+| `backend/tests/integration/conftest.py` | Imported `FakePdfConverter`; added `_fake_pdf_converter = FakePdfConverter()` and `pdf_converter=_fake_pdf_converter` to `override_get_document_service` |
+
+---
+
+## Atomic Flow Contract (Phase 3)
+
+### generate_single atomic sequence (ADR-PDF-03)
+1. Render DOCX bytes via template engine
+2. Upload DOCX to `documents/{tenant_id}/{doc_id}/{name}.docx`
+3. Call `await self._pdf_converter.convert(rendered_bytes)` → `pdf_bytes`
+4. On `PdfConversionError`: call `storage.delete_file(DOCUMENTS_BUCKET, docx_minio_path)` (best-effort log on failure), then re-raise — no DB row persisted
+5. Upload PDF to `documents/{tenant_id}/{doc_id}/{name}.pdf`
+6. Create `Document` row with all four file fields
+7. Audit log includes `details.formats_generated=["docx","pdf"]`
+8. Quota: check fires once with `additional=1` (not 2)
+
+### generate_bulk atomic sequence (ADR-PDF-03 bulk)
+- Sequential per-row processing (not concurrent — memory constraint)
+- Accumulates `uploaded_minio_paths: list[str]` tracking all DOCX+PDF keys
+- On any row's `PdfConversionError`: iterates `uploaded_minio_paths`, deletes each (best-effort log), re-raises — no `Document` rows persisted for this batch
+- On all rows succeeding: single `create_batch()` call persists all rows atomically
+- Audit `formats_generated=["docx","pdf"]`
+
+### ensure_pdf idempotency contract (ADR-PDF-04)
+- Fast path: `if document.pdf_file_name is not None: return document` — no converter call
+- PDF MinIO key derived deterministically from DOCX path: `docx_path.replace(".docx", ".pdf")`
+- Concurrency: two concurrent `ensure_pdf` calls may both upload PDF (last-write-wins) — tolerable since the PDF bytes are deterministic for the same DOCX input
+- On `PdfConversionError`: DOCX not deleted (REQ-DDF-10), DB not updated, exception propagates
+
+---
+
+## S-02 Resolution (from Phase 2 verify)
+
+`update_pdf_fields()` in the real SQLAlchemy repository returns a `DocumentModel` (ORM object). Decision: `ensure_pdf` returns whatever `update_pdf_fields()` returns without forcing a domain mapping at the service layer. Both `DocumentModel` and the domain `Document` expose `pdf_file_name` and `pdf_minio_path` attributes with identical names, so Phase 4 presentation code can use either transparently. The domain port `DocumentRepository.update_pdf_fields()` is now declared to return `Document`, and `FakeDocumentRepository.update_pdf_fields()` returns the updated domain entity. The real implementation will return an ORM object — this is an acceptable pragmatic decision documented here.
+
+---
+
+## Test Results (Phase 3)
+
+| Metric | Count |
+|--------|-------|
+| Phase 3 new tests | 17 |
+| Baseline after Phase 2 | 384 |
+| Total after Phase 3 | 401 |
+| Regressions | 0 |
+
+---
+
+## Risks / Open Issues for Phase 4
+
+1. **`ensure_pdf` return type**: Real repo returns `DocumentModel` (ORM), fake returns `Document` (entity). Phase 4 endpoint should use `result.pdf_minio_path` string attribute — works for both types.
+2. **`ensure_pdf` signature** for Phase 4: `async def ensure_pdf(self, document_id: UUID) -> Document`. The endpoint must call it with a UUID, not a string.
+3. **`generate_bulk` error field removed**: Old implementation returned `errors` list (partial failures per row). New implementation raises on any failure — no partial success. Phase 4 endpoint must handle `PdfConversionError` → HTTP 503.
+4. **Gotenberg not running** during integration tests: All tests use `FakePdfConverter`. Container-level tests require Gotenberg to be healthy (docker compose `depends_on`). Phase 6 smoke tests will need Gotenberg up.
+5. **`pdf_converter=None` backward compat**: `DocumentService` with `pdf_converter=None` still generates DOCX-only (no PDF). Existing tests that don't set `pdf_converter` remain green. This allows gradual migration but means pre-Phase-3 test fixtures that omit `pdf_converter` won't test the new PDF path — those tests are explicitly checking old behavior.

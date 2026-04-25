@@ -10,6 +10,7 @@ class FakeDocumentRepository(DocumentRepository):
 
     def __init__(self) -> None:
         self._documents: dict[UUID, Document] = {}
+        self._update_pdf_fields_calls: list[dict] = []  # call recorder for assertions
 
     async def create(self, document: Document) -> Document:
         # Simulate DB-assigned created_at so API responses pass schema validation
@@ -31,6 +32,21 @@ class FakeDocumentRepository(DocumentRepository):
 
     async def delete(self, document_id: UUID) -> None:
         self._documents.pop(document_id, None)
+
+    async def update_pdf_fields(
+        self, doc_id: UUID, pdf_file_name: str, pdf_minio_path: str
+    ) -> Document:
+        """Update pdf_file_name and pdf_minio_path on the stored document."""
+        self._update_pdf_fields_calls.append(
+            {"doc_id": doc_id, "pdf_file_name": pdf_file_name, "pdf_minio_path": pdf_minio_path}
+        )
+        doc = self._documents.get(doc_id)
+        if doc is None:
+            raise KeyError(f"Document {doc_id} not found in fake repository")
+        # Dataclass is mutable — update in-place
+        doc.pdf_file_name = pdf_file_name
+        doc.pdf_minio_path = pdf_minio_path
+        return doc
 
     async def list_paginated(
         self,

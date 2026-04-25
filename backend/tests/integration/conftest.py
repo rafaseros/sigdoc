@@ -49,6 +49,7 @@ from app.presentation.middleware.tenant import CurrentUser, get_current_user
 from tests.fakes import (
     FakeAuditRepository,
     FakeDocumentRepository,
+    FakePdfConverter,
     FakeQuotaService,
     FakeStorageService,
     FakeSubscriptionTierRepository,
@@ -159,12 +160,15 @@ def app(
         )
 
     # Override get_document_service → DocumentService with all fakes
+    _fake_pdf_converter = FakePdfConverter()
+
     async def override_get_document_service() -> DocumentService:
         return DocumentService(
             document_repository=fake_document_repo,
             template_repository=fake_template_repo,
             storage=fake_storage,
             engine=fake_template_engine,
+            pdf_converter=_fake_pdf_converter,
             bulk_generation_limit=10,
             usage_service=_usage_service,
             audit_service=_audit_service,
