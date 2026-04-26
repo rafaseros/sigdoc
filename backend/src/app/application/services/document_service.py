@@ -711,3 +711,72 @@ class DocumentService:
         # domain entity expose this attribute with the same name, so the
         # presentation layer works transparently with either type.
         return updated
+
+    # ------------------------------------------------------------------
+    # W-PRES-03: public audit helpers — presentation layer calls these
+    # instead of reaching into self._audit_service directly.
+    # ------------------------------------------------------------------
+
+    async def log_download_event(
+        self,
+        *,
+        actor_id: UUID,
+        tenant_id: UUID,
+        document_id: UUID,
+        format: str,
+        via: str,
+    ) -> None:
+        """Record a single-document download in the audit log.
+
+        Delegates to self._audit_service.log() if audit_service is set.
+        No-op when audit_service is None (backward compat).
+        """
+        if self._audit_service is None:
+            return
+        from app.domain.entities import AuditAction
+        self._audit_service.log(
+            actor_id=actor_id,
+            tenant_id=tenant_id,
+            action=AuditAction.DOCUMENT_DOWNLOAD,
+            resource_type="document",
+            resource_id=document_id,
+            details={
+                "format": format,
+                "document_id": str(document_id),
+                "via": via,
+            },
+            ip_address=None,
+        )
+
+    async def log_bulk_download_event(
+        self,
+        *,
+        actor_id: UUID,
+        tenant_id: UUID,
+        batch_id: UUID,
+        format: str,
+        via: str,
+        include_both: bool,
+    ) -> None:
+        """Record a bulk-document download in the audit log.
+
+        Delegates to self._audit_service.log() if audit_service is set.
+        No-op when audit_service is None (backward compat).
+        """
+        if self._audit_service is None:
+            return
+        from app.domain.entities import AuditAction
+        self._audit_service.log(
+            actor_id=actor_id,
+            tenant_id=tenant_id,
+            action=AuditAction.DOCUMENT_DOWNLOAD,
+            resource_type="document_batch",
+            resource_id=batch_id,
+            details={
+                "format": format,
+                "document_id": str(batch_id),
+                "via": via,
+                "include_both": include_both,
+            },
+            ip_address=None,
+        )

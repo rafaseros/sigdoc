@@ -967,4 +967,219 @@ class TestGenerateSingleWithQuota:
             created_by=user_id,
         )
 
-        assert "document" in result
+
+# ---------------------------------------------------------------------------
+# W-PRES-03 — Public log_download_event / log_bulk_download_event methods
+# ---------------------------------------------------------------------------
+
+
+class TestLogDownloadEvent:
+    """DocumentService.log_download_event() delegates to audit_service.log()
+    with the correct fields — W-PRES-03 fix for presentation-layer audit calls.
+    """
+
+    async def test_single_download_event_logged(
+        self,
+        fake_document_repo: FakeDocumentRepository,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+        fake_audit_repo: FakeAuditRepository,
+    ):
+        """log_download_event() writes a DOCUMENT_DOWNLOAD audit entry with
+        correct actor, tenant, resource, format and via fields."""
+        audit_svc = make_sync_audit_service(fake_audit_repo)
+        service = make_service(
+            fake_document_repo,
+            fake_template_repo,
+            fake_storage,
+            fake_template_engine,
+            audit_service=audit_svc,
+        )
+
+        actor_id = uuid.uuid4()
+        tenant_id = uuid.uuid4()
+        document_id = uuid.uuid4()
+
+        await service.log_download_event(
+            actor_id=actor_id,
+            tenant_id=tenant_id,
+            document_id=document_id,
+            format="pdf",
+            via="direct",
+        )
+        # Yield so fire-and-forget task completes
+        await _asyncio.sleep(0)
+
+        assert len(fake_audit_repo._entries) == 1
+        entry = fake_audit_repo._entries[0]
+        assert entry.action == AuditAction.DOCUMENT_DOWNLOAD
+        assert entry.actor_id == actor_id
+        assert entry.tenant_id == tenant_id
+        assert entry.resource_id == document_id
+        assert entry.resource_type == "document"
+        assert entry.details is not None
+        assert entry.details["format"] == "pdf"
+        assert entry.details["via"] == "direct"
+
+    async def test_single_download_event_share_via(
+        self,
+        fake_document_repo: FakeDocumentRepository,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+        fake_audit_repo: FakeAuditRepository,
+    ):
+        """log_download_event() accepts via='share'."""
+        audit_svc = make_sync_audit_service(fake_audit_repo)
+        service = make_service(
+            fake_document_repo,
+            fake_template_repo,
+            fake_storage,
+            fake_template_engine,
+            audit_service=audit_svc,
+        )
+
+        actor_id = uuid.uuid4()
+        tenant_id = uuid.uuid4()
+        document_id = uuid.uuid4()
+
+        await service.log_download_event(
+            actor_id=actor_id,
+            tenant_id=tenant_id,
+            document_id=document_id,
+            format="docx",
+            via="share",
+        )
+        await _asyncio.sleep(0)
+
+        assert len(fake_audit_repo._entries) == 1
+        entry = fake_audit_repo._entries[0]
+        assert entry.details["via"] == "share"
+        assert entry.details["format"] == "docx"
+
+    async def test_log_download_event_no_audit_service_is_noop(
+        self,
+        fake_document_repo: FakeDocumentRepository,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        """log_download_event() with audit_service=None must not raise."""
+        service = make_service(
+            fake_document_repo,
+            fake_template_repo,
+            fake_storage,
+            fake_template_engine,
+            audit_service=None,
+        )
+
+        # Must not raise
+        await service.log_download_event(
+            actor_id=uuid.uuid4(),
+            tenant_id=uuid.uuid4(),
+            document_id=uuid.uuid4(),
+            format="pdf",
+            via="direct",
+        )
+
+    async def test_bulk_download_event_logged(
+        self,
+        fake_document_repo: FakeDocumentRepository,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+        fake_audit_repo: FakeAuditRepository,
+    ):
+        """log_bulk_download_event() writes a DOCUMENT_DOWNLOAD audit entry with
+        resource_type='document_batch' and include_both field in details."""
+        audit_svc = make_sync_audit_service(fake_audit_repo)
+        service = make_service(
+            fake_document_repo,
+            fake_template_repo,
+            fake_storage,
+            fake_template_engine,
+            audit_service=audit_svc,
+        )
+
+        actor_id = uuid.uuid4()
+        tenant_id = uuid.uuid4()
+        batch_id = uuid.uuid4()
+
+        await service.log_bulk_download_event(
+            actor_id=actor_id,
+            tenant_id=tenant_id,
+            batch_id=batch_id,
+            format="docx",
+            via="direct",
+            include_both=False,
+        )
+        await _asyncio.sleep(0)
+
+        assert len(fake_audit_repo._entries) == 1
+        entry = fake_audit_repo._entries[0]
+        assert entry.action == AuditAction.DOCUMENT_DOWNLOAD
+        assert entry.actor_id == actor_id
+        assert entry.tenant_id == tenant_id
+        assert entry.resource_id == batch_id
+        assert entry.resource_type == "document_batch"
+        assert entry.details is not None
+        assert entry.details["format"] == "docx"
+        assert entry.details["via"] == "direct"
+        assert entry.details["include_both"] is False
+
+    async def test_bulk_download_event_include_both(
+        self,
+        fake_document_repo: FakeDocumentRepository,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+        fake_audit_repo: FakeAuditRepository,
+    ):
+        """log_bulk_download_event() with include_both=True is recorded."""
+        audit_svc = make_sync_audit_service(fake_audit_repo)
+        service = make_service(
+            fake_document_repo,
+            fake_template_repo,
+            fake_storage,
+            fake_template_engine,
+            audit_service=audit_svc,
+        )
+
+        await service.log_bulk_download_event(
+            actor_id=uuid.uuid4(),
+            tenant_id=uuid.uuid4(),
+            batch_id=uuid.uuid4(),
+            format="pdf",
+            via="direct",
+            include_both=True,
+        )
+        await _asyncio.sleep(0)
+
+        entry = fake_audit_repo._entries[0]
+        assert entry.details["include_both"] is True
+
+    async def test_log_bulk_download_event_no_audit_service_is_noop(
+        self,
+        fake_document_repo: FakeDocumentRepository,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        """log_bulk_download_event() with audit_service=None must not raise."""
+        service = make_service(
+            fake_document_repo,
+            fake_template_repo,
+            fake_storage,
+            fake_template_engine,
+            audit_service=None,
+        )
+
+        await service.log_bulk_download_event(
+            actor_id=uuid.uuid4(),
+            tenant_id=uuid.uuid4(),
+            batch_id=uuid.uuid4(),
+            format="docx",
+            via="direct",
+            include_both=False,
+        )

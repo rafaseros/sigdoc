@@ -153,6 +153,16 @@ async def generate_bulk(
     REQ-DDF-05 / W-04: PdfConversionError → HTTP 503.
     W-05: errors field is always [] on success (breaking change from partial-failure model).
     """
+    # REQ-DDF-04: output_format must not be accepted in the multipart body.
+    # FastAPI silently ignores unexpected form fields, so we explicitly inspect
+    # the raw form data and reject if 'output_format' is present.
+    form = await request.form()
+    if "output_format" in form:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="The 'output_format' field is not accepted; both formats are always generated.",
+        )
+
     await _require_verified_email(current_user, session)
     # Validate file type
     if not (file.filename and file.filename.endswith(".xlsx")):
@@ -293,22 +303,14 @@ async def download_bulk(
     zip_bytes = zip_buffer.read()
 
     # Audit log — REQ-DDF-15
-    if service._audit_service is not None:
-        from app.domain.entities import AuditAction
-        service._audit_service.log(
-            actor_id=current_user.user_id,
-            tenant_id=current_user.tenant_id,
-            action=AuditAction.DOCUMENT_DOWNLOAD,
-            resource_type="document_batch",
-            resource_id=batch_uuid,
-            details={
-                "format": format,
-                "document_id": str(batch_uuid),
-                "via": "direct",
-                "include_both": include_both,
-            },
-            ip_address=None,
-        )
+    await service.log_bulk_download_event(
+        actor_id=current_user.user_id,
+        tenant_id=current_user.tenant_id,
+        batch_id=batch_uuid,
+        format=format,
+        via="direct",
+        include_both=include_both,
+    )
 
     return Response(
         content=zip_bytes,
@@ -377,21 +379,13 @@ async def download_document(
         effective_via = "direct"
 
     # Audit log — REQ-DDF-15
-    if service._audit_service is not None:
-        from app.domain.entities import AuditAction
-        service._audit_service.log(
-            actor_id=current_user.user_id,
-            tenant_id=current_user.tenant_id,
-            action=AuditAction.DOCUMENT_DOWNLOAD,
-            resource_type="document",
-            resource_id=document_id,
-            details={
-                "format": format,
-                "document_id": str(document_id),
-                "via": effective_via,
-            },
-            ip_address=None,
-        )
+    await service.log_download_event(
+        actor_id=current_user.user_id,
+        tenant_id=current_user.tenant_id,
+        document_id=document_id,
+        format=format,
+        via=effective_via,
+    )
 
     return Response(
         content=file_bytes,

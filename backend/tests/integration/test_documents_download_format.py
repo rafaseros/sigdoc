@@ -148,35 +148,44 @@ async def test_generate_with_output_format_returns_422(
 
 @pytest.mark.asyncio
 async def test_generate_bulk_with_output_format_returns_422(
-    async_client, auth_headers
+    async_client, auth_headers, fake_template_repo, fake_storage
 ):
-    """SCEN-DDF-04 bulk: output_format must not be accepted in any generate request.
+    """SCEN-DDF-04 bulk: output_format must be explicitly rejected with 422.
 
-    For generate-bulk this is a form upload, so output_format would need to be
-    in the multipart body — this test verifies the endpoint doesn't silently
-    accept it as an unexpected form field.
+    REQ-DDF-04: output_format in multipart bulk body MUST return 422 with a
+    clear error message stating the field is not accepted. A real .xlsx file is
+    used to ensure the validation fires before any file-parsing logic.
     """
-    # Minimal invalid file to trigger early parsing (not the real concern here)
-    # The point: an extra 'output_format' form field MUST NOT cause 200.
-    # In practice, FastAPI/pydantic rejects extra fields on the Pydantic body;
-    # multipart extra fields are ignored unless explicitly parsed — so we just
-    # verify the endpoint signature hasn't accidentally added output_format.
     import io as _io
-    dummy_xlsx = _io.BytesIO(b"PK\x03\x04")  # minimal, will fail parsing → 4xx not 200
-    dummy_xlsx.name = "data.xlsx"
+    import openpyxl as _openpyxl
+
+    # Build a real minimal .xlsx so the 422 comes from our custom validation,
+    # not from an earlier file-type/parse rejection.
+    version_id = _seed_template_version_for_download(fake_template_repo, fake_storage)
+    wb = _openpyxl.Workbook()
+    ws = wb.active
+    ws.append(["name", "date"])
+    ws.append(["Alice", "2025-01-01"])
+    buf = _io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    xlsx_bytes = buf.read()
+
     response = await async_client.post(
         "/api/v1/documents/generate-bulk",
         headers=auth_headers,
         data={
-            "template_version_id": str(uuid.uuid4()),
-            "output_format": "pdf",  # extra form field — should be ignored/rejected
+            "template_version_id": version_id,
+            "output_format": "pdf",  # MUST be explicitly rejected — REQ-DDF-04
         },
-        files={"file": ("data.xlsx", _io.BytesIO(b"PK\x03\x04"), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        files={"file": ("data.xlsx", xlsx_bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
     )
-    # The response should NOT be 200 — it will be 400 (empty/invalid file), 404
-    # (version not found), or 422 (validation). The key assertion is NOT 200/201.
-    assert response.status_code != 200
-    assert response.status_code != 201
+    # REQ-DDF-04: MUST be 422 (not just != 200) with a clear rejection message
+    assert response.status_code == 422, response.text
+    detail = response.json().get("detail", "")
+    assert "output_format" in detail.lower() or "output_format" in str(detail).lower(), (
+        f"Error message must mention 'output_format'. Got: {detail!r}"
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════
