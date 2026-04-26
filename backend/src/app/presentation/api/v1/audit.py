@@ -1,14 +1,15 @@
 from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.services import get_audit_service
 from app.application.services.audit_service import AuditService
 from app.infrastructure.persistence.models.user import UserModel
-from app.presentation.middleware.tenant import CurrentUser, get_current_user, get_tenant_session
+from app.presentation.api.dependencies import require_audit_viewer
+from app.presentation.middleware.tenant import CurrentUser, get_tenant_session
 from app.presentation.schemas.audit import AuditActionEnum, AuditLogListResponse, AuditLogResponse
 
 router = APIRouter()
@@ -37,7 +38,7 @@ async def list_audit_log(
     actor_id: UUID | None = Query(None),
     date_from: datetime | None = Query(None),
     date_to: datetime | None = Query(None),
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_audit_viewer),
     audit_service: AuditService = Depends(get_audit_service),
     session: AsyncSession = Depends(get_tenant_session),
 ):
@@ -52,12 +53,6 @@ async def list_audit_log(
     - actor_id: filtra por el usuario que realizó la acción
     - date_from / date_to: límites de fecha en ISO-8601 (inclusive)
     """
-    if current_user.role != "admin":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Solo administradores pueden realizar esta acción",
-        )
-
     entries, total = await audit_service.list_audit_logs(
         page=page,
         size=size,

@@ -1,6 +1,6 @@
 from datetime import date
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,6 +8,7 @@ from app.application.services import get_quota_service, get_usage_service
 from app.application.services.quota_service import QuotaService
 from app.application.services.usage_service import UsageService
 from app.infrastructure.persistence.models.tenant import TenantModel
+from app.presentation.api.dependencies import require_tenant_usage_viewer
 from app.presentation.middleware.tenant import CurrentUser, get_current_user, get_tenant_session
 from app.presentation.schemas.usage import TenantUsageResponse, UserUsageResponse, UserUsageStat
 
@@ -21,14 +22,6 @@ router = APIRouter()
 def _current_year_month() -> tuple[int, int]:
     today = date.today()
     return today.year, today.month
-
-
-def _require_admin(current_user: CurrentUser) -> None:
-    if current_user.role != "admin":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Solo administradores pueden realizar esta acción",
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -89,15 +82,13 @@ async def get_user_usage(
 async def get_tenant_usage(
     year: int | None = Query(None, ge=2000, le=9999),
     month: int | None = Query(None, ge=1, le=12),
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_tenant_usage_viewer),
     usage_service: UsageService = Depends(get_usage_service),
 ):
     """Return all users' usage within the tenant for a given month.
 
     Admin-only — returns 403 for non-admin callers.
     """
-    _require_admin(current_user)
-
     if year is None or month is None:
         year, month = _current_year_month()
 

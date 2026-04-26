@@ -8,6 +8,7 @@ from sqlalchemy.orm import selectinload
 
 from app.domain.entities import TemplateShare
 from app.domain.ports.template_repository import TemplateRepository as TemplateRepositoryPort
+from app.domain.services.permissions import can_view_all_templates
 from app.infrastructure.persistence.models.template import TemplateModel
 from app.infrastructure.persistence.models.template_share import TemplateShareModel
 from app.infrastructure.persistence.models.template_version import TemplateVersionModel
@@ -164,7 +165,7 @@ class SQLAlchemyTemplateRepository(TemplateRepositoryPort):
         Admin role sees all templates in the tenant (tenant filter applied by TenantMixin event).
         Each returned TemplateModel has a transient `access_type` attribute: "owned" or "shared".
         """
-        if role == "admin":
+        if can_view_all_templates(role):
             # Admins see everything in the tenant
             stmt = select(TemplateModel).options(selectinload(TemplateModel.versions))
             count_stmt = select(func.count()).select_from(TemplateModel)
@@ -308,7 +309,7 @@ class SQLAlchemyTemplateRepository(TemplateRepositoryPort):
 
     async def has_access(self, template_id: UUID, user_id: UUID, role: str) -> bool:
         """Return True if user owns the template, has a share, or is admin."""
-        if role == "admin":
+        if can_view_all_templates(role):
             return True
 
         stmt = select(

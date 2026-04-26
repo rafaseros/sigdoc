@@ -13,6 +13,7 @@ from app.domain.exceptions import (
     TemplateSharingError,
 )
 from app.domain.ports.user_repository import UserRepository
+from app.domain.services.permissions import can_view_all_templates
 from app.infrastructure.templating import get_template_engine
 from app.presentation.middleware.tenant import CurrentUser, get_current_user
 from app.presentation.schemas.template import (
@@ -308,7 +309,7 @@ async def get_template(
             current_vars = current_version.variables
 
     is_owner = str(getattr(t, "created_by", "")) == str(current_user.user_id)
-    access_type = "owned" if is_owner else ("admin" if current_user.role == "admin" else "shared")
+    access_type = "owned" if is_owner else ("admin" if can_view_all_templates(current_user.role) else "shared")
 
     return TemplateResponse(
         id=str(t.id),

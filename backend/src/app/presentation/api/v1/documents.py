@@ -20,7 +20,11 @@ from app.domain.exceptions import (
     TemplateVersionNotFoundError,
     VariablesMismatchError,
 )
-from app.domain.services.document_permissions import can_download_format
+from app.domain.services.permissions import (
+    can_download_format,
+    can_include_both_formats,
+    can_view_all_documents,
+)
 from app.infrastructure.persistence.database import get_session
 from app.infrastructure.persistence.repositories.user_repository import SQLAlchemyUserRepository
 from app.presentation.middleware.rate_limit import limiter, tier_limit_bulk, tier_limit_generate
@@ -236,7 +240,7 @@ async def download_bulk(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Este formato de descarga no está disponible para tu rol.",
         )
-    if include_both and current_user.role != "admin":
+    if include_both and not can_include_both_formats(current_user.role):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="La opción de incluir ambos formatos solo está disponible para administradores.",
@@ -416,7 +420,7 @@ async def list_documents(
     service: DocumentService = Depends(get_document_service),
 ):
     """List generated documents with pagination."""
-    created_by = None if current_user.role == "admin" else str(current_user.user_id)
+    created_by = None if can_view_all_documents(current_user.role) else str(current_user.user_id)
     documents, total = await service.list_documents(page=page, size=size, template_id=template_id, created_by=created_by)
 
     items = [

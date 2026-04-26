@@ -7,11 +7,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.application.services import get_audit_service, get_quota_service
 from app.application.services.quota_service import QuotaService
 from app.domain.entities import AuditAction
+from app.domain.services.permissions import is_admin_role
 from app.infrastructure.auth.jwt_handler import hash_password
 from app.infrastructure.persistence.models.tenant import TenantModel
 from app.infrastructure.persistence.models.user import UserModel
 from app.infrastructure.persistence.repositories.user_repository import SQLAlchemyUserRepository
-from app.presentation.middleware.tenant import CurrentUser, get_current_user, get_tenant_session
+from app.presentation.api.dependencies import require_user_manager
+from app.presentation.middleware.tenant import CurrentUser, get_tenant_session
 from app.presentation.schemas.user import (
     CreateUserRequest,
     UpdateUserRequest,
@@ -21,14 +23,10 @@ from app.presentation.schemas.user import (
 
 router = APIRouter()
 
-
-def require_admin(current_user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
-    if current_user.role != "admin":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Solo administradores pueden realizar esta acción",
-        )
-    return current_user
+# Backwards-compat alias — kept so external callers / tests importing
+# `require_admin` from this module continue to work. Prefer
+# `app.presentation.api.dependencies.require_user_manager` for new code.
+require_admin = require_user_manager
 
 
 @router.post("", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
@@ -145,9 +143,9 @@ async def update_user(
             )
 
     # Last-admin guard: if demoting from admin, ensure at least one admin remains
-    if "role" in update_data and update_data["role"] != "admin":
+    if "role" in update_data and not is_admin_role(update_data["role"]):
         target_user = await repo.get_by_id(user_id)
-        if target_user and target_user.role == "admin":
+        if target_user and is_admin_role(target_user.role):
             admin_count = await repo.count_admins_by_tenant(admin.tenant_id)
             if admin_count <= 1:
                 raise HTTPException(
@@ -201,7 +199,7 @@ async def deactivate_user(
         )
 
     # Last-admin guard: cannot deactivate the last admin in a tenant
-    if user.role == "admin":
+    if is_admin_role(user.role):
         admin_count = await repo.count_admins_by_tenant(admin.tenant_id)
         if admin_count <= 1:
             raise HTTPException(

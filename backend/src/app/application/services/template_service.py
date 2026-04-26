@@ -15,6 +15,7 @@ from app.domain.exceptions import (
 from app.domain.ports.storage_service import StorageService
 from app.domain.ports.template_engine import TemplateEngine
 from app.domain.ports.template_repository import TemplateRepository
+from app.domain.services.permissions import can_view_all_templates
 
 if TYPE_CHECKING:
     from app.application.services.audit_service import AuditService
@@ -142,7 +143,7 @@ class TemplateService:
         if not template:
             raise TemplateNotFoundError(f"Template {template_id} not found")
 
-        if role == "admin":
+        if can_view_all_templates(role):
             return
 
         is_owner = template.created_by == user_id
