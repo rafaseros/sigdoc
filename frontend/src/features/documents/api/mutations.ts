@@ -10,7 +10,8 @@ interface GenerateRequest {
 interface GenerateResponse {
   id: string;
   template_version_id: string;
-  file_name: string;
+  docx_file_name: string;
+  pdf_file_name: string | null;
   generation_type: string;
   status: string;
   download_url: string | null;

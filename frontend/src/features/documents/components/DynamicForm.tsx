@@ -34,7 +34,6 @@ export function DynamicForm({
   templateVersionId,
   variables,
   variablesMeta = [],
-  templateName: _,
 }: DynamicFormProps) {
   const schema = buildSchema(variables);
   type FormData = z.infer<typeof schema>;
@@ -58,7 +57,7 @@ export function DynamicForm({
         variables: data,
       });
       setDocumentId(result.id);
-      setFileName(result.file_name);
+      setFileName(result.docx_file_name);
       toast.success("¡Documento generado con éxito!");
     } catch {
       toast.error("Error al generar el documento");

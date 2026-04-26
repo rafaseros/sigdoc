@@ -7,21 +7,18 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useDownloadExcelTemplate, useBulkGenerate } from "../api/mutations";
 import { apiClient } from "@/shared/lib/api-client";
-import { buildBulkDownloadUrl } from "../api/queries";
+import { useAuth } from "@/shared/lib/auth";
+import { BulkDownloadControls } from "./BulkDownloadControls";
 
-interface CurrentUserResponse {
-  id: string;
-  email: string;
-  role: string;
-  tenant_id: string;
+interface BulkLimitsResponse {
   effective_bulk_limit: number | null;
 }
 
-function useCurrentUser() {
+function useBulkLimits() {
   return useQuery({
-    queryKey: ["auth", "me"],
+    queryKey: ["auth", "me", "bulk-limits"],
     queryFn: async () => {
-      const { data } = await apiClient.get<CurrentUserResponse>("/auth/me");
+      const { data } = await apiClient.get<BulkLimitsResponse>("/auth/me");
       return data;
     },
   });
@@ -49,11 +46,10 @@ export function BulkGenerateFlow({
 
   const downloadExcel = useDownloadExcelTemplate();
   const bulkGenerate = useBulkGenerate();
-  const [downloading, setDownloading] = useState(false);
-  const [includeBoth, setIncludeBoth] = useState(false);
-  const { data: currentUser } = useCurrentUser();
-  const effectiveBulkLimit = currentUser?.effective_bulk_limit ?? null;
-  const isAdmin = currentUser?.role === "admin";
+  const { user } = useAuth();
+  const { data: bulkLimits } = useBulkLimits();
+  const effectiveBulkLimit = bulkLimits?.effective_bulk_limit ?? null;
+  const isAdmin = user?.role === "admin";
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     accept: {
@@ -98,34 +94,6 @@ export function BulkGenerateFlow({
         (err as { response?: { data?: { detail?: string } } }).response?.data
           ?.detail;
       toast.error((detail as string) || "Error al generar los documentos");
-    }
-  };
-
-  const handleDownloadZip = async () => {
-    if (!result) return;
-    setDownloading(true);
-    try {
-      // Always download PDF format; admins may opt-in to also include DOCX files
-      const downloadUrl = buildBulkDownloadUrl(
-        result.batch_id,
-        "pdf",
-        isAdmin ? includeBoth : false,
-      );
-      const response = await apiClient.get(downloadUrl, {
-        responseType: "blob",
-      });
-      const url = window.URL.createObjectURL(new Blob([response.data]));
-      const link = document.createElement("a");
-      link.href = url;
-      link.setAttribute("download", `bulk_${result.batch_id}.zip`);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
-    } catch {
-      toast.error("Error al descargar el ZIP");
-    } finally {
-      setDownloading(false);
     }
   };
 
@@ -255,22 +223,7 @@ export function BulkGenerateFlow({
                 </ul>
               </div>
             )}
-            {/* Admin-only: include Word documents in the ZIP */}
-            {isAdmin && (
-              <label className="flex items-center gap-2 text-sm text-[#434655] cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={includeBoth}
-                  onChange={(e) => setIncludeBoth(e.target.checked)}
-                  disabled={downloading}
-                  className="size-4 rounded accent-[#2563eb]"
-                />
-                Incluir documentos Word (.docx)
-              </label>
-            )}
-            <Button onClick={handleDownloadZip} disabled={downloading} className="bg-[#059669] text-white hover:bg-[#047857] transition-all">
-              {downloading ? "Descargando..." : "Descargar ZIP"}
-            </Button>
+            <BulkDownloadControls batchId={result.batch_id} isAdmin={isAdmin ?? false} />
           </CardContent>
         </Card>
       )}

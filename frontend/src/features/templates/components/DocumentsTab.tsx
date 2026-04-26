@@ -97,7 +97,7 @@ export function DocumentsTab({ templateId }: DocumentsTabProps) {
           {data.items.map((doc) => (
             <TableRow key={doc.id}>
               <TableCell className="max-w-[250px] truncate font-medium">
-                {doc.file_name}
+                {doc.docx_file_name}
               </TableCell>
               <TableCell>
                 <Badge
@@ -115,7 +115,7 @@ export function DocumentsTab({ templateId }: DocumentsTabProps) {
                 <div className="flex items-center gap-1">
                   <DownloadButton
                     documentId={doc.id}
-                    baseFileName={doc.file_name}
+                    baseFileName={doc.docx_file_name}
                     via="direct"
                   />
                   {confirmDeleteId === doc.id ? (
