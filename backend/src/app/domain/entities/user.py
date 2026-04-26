@@ -10,7 +10,7 @@ class User:
     email: str
     hashed_password: str
     full_name: str
-    role: str = "user"
+    role: str = "document_generator"
     is_active: bool = True
     bulk_generation_limit: int | None = None
     created_at: datetime | None = None

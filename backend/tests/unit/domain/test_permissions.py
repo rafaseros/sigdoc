@@ -6,17 +6,27 @@ Unknown-role default mirrors the safe-by-default approach in
 `document_permissions.can_download_format` (deny non-PDF for unknown roles).
 
 T-PERM-01: write tests FIRST; must FAIL before T-PERM-02 implements the helpers.
+
+T-DOMAIN-01 (roles-expansion): Extend truth tables with `template_creator` and
+`document_generator` rows — both must return False for admin-only capabilities,
+locking the contract that new roles do not inherit any existing admin capability.
+
+T-DOMAIN-03 (roles-expansion): Truth table for `can_manage_own_templates` — four
+inputs (admin/template_creator/document_generator/unknown); True for admin and
+template_creator, False otherwise.
 """
 import pytest
 
 
-# (role, expected) — same truth table is reused for every helper.
+# (role, expected) — same truth table is reused for every admin-only helper.
 ROLE_EXPECTATIONS = [
     ("admin", True),
     ("user", False),
+    ("template_creator", False),
+    ("document_generator", False),
     ("unknown_role", False),
 ]
-ROLE_IDS = ["admin", "user", "unknown"]
+ROLE_IDS = ["admin", "user", "template_creator", "document_generator", "unknown"]
 
 
 @pytest.mark.parametrize("role, expected", ROLE_EXPECTATIONS, ids=ROLE_IDS)
@@ -87,3 +97,36 @@ def test_permissions_reexports_can_download_format() -> None:
     )
 
     assert can_download_format is original
+
+
+# ---------------------------------------------------------------------------
+# T-DOMAIN-03: can_manage_own_templates truth table (roles-expansion)
+# ---------------------------------------------------------------------------
+
+CAN_MANAGE_OWN_TEMPLATES_EXPECTATIONS = [
+    ("admin", True),
+    ("template_creator", True),
+    ("document_generator", False),
+    ("unknown_role", False),
+]
+CAN_MANAGE_OWN_TEMPLATES_IDS = [
+    "admin",
+    "template_creator",
+    "document_generator",
+    "unknown",
+]
+
+
+@pytest.mark.parametrize(
+    "role, expected",
+    CAN_MANAGE_OWN_TEMPLATES_EXPECTATIONS,
+    ids=CAN_MANAGE_OWN_TEMPLATES_IDS,
+)
+def test_can_manage_own_templates(role: str, expected: bool) -> None:
+    """T-DOMAIN-03: can_manage_own_templates returns True for admin and
+    template_creator only; False for document_generator and any unknown string.
+    ADR-TMP-01, REQ-TMP-01.
+    """
+    from app.domain.services.permissions import can_manage_own_templates
+
+    assert can_manage_own_templates(role) is expected

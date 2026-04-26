@@ -33,6 +33,7 @@ __all__ = [
     "can_view_all_documents",
     "can_view_all_templates",
     "can_include_both_formats",
+    "can_manage_own_templates",
     "is_admin_role",
 ]
 
@@ -83,6 +84,16 @@ def can_include_both_formats(role: str) -> bool:
     per-format) — it gates the cross-format ZIP packaging option.
     """
     return role == "admin"
+
+
+def can_manage_own_templates(role: str) -> bool:
+    """Whether the role may create, update, or delete their own templates.
+
+    Both `admin` and `template_creator` can manage templates they own.
+    `document_generator` and any unknown role are denied (safe-default deny).
+    ADR-TMP-01, REQ-TMP-01.
+    """
+    return role in {"admin", "template_creator"}
 
 
 def is_admin_role(role: str) -> bool:
