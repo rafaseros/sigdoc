@@ -55,9 +55,10 @@ export function DownloadButton({
     try {
       const url = buildDownloadUrl(documentId, format, via);
       const ext = format === "pdf" ? ".pdf" : ".docx";
-      const filename = baseFileName
-        ? `${baseFileName}${ext}`
-        : `document_${documentId}${ext}`;
+      const cleanBase =
+        baseFileName?.replace(/\.(docx|pdf)$/i, "") ??
+        `document_${documentId}`;
+      const filename = `${cleanBase}${ext}`;
       await triggerBlobDownload(url, filename);
     } catch {
       toast.error("Error al descargar el documento");

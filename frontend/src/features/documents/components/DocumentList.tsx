@@ -75,7 +75,7 @@ export function DocumentList() {
                 <TableHead>Variables</TableHead>
                 <TableHead>Estado</TableHead>
                 <TableHead>Fecha</TableHead>
-                <TableHead className="w-[120px]">Acciones</TableHead>
+                <TableHead className="w-[220px]">Acciones</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
