@@ -153,7 +153,15 @@ async def test_upload_template_appears_in_list(
     assert upload_response.status_code == 201
     created_id = upload_response.json()["id"]
 
-    list_response = await async_client.get("/api/v1/templates", headers=auth_headers)
+    # Use the unique name as a search filter so the assertion is not affected by
+    # the number of templates accumulated in the session-scoped fake repository.
+    # Without this, a full test suite run can push the new template past page 1
+    # (default size=20), causing a false negative while the test passes in isolation.
+    list_response = await async_client.get(
+        "/api/v1/templates",
+        headers=auth_headers,
+        params={"search": "ListableTemplate"},
+    )
     assert list_response.status_code == 200
     ids = [item["id"] for item in list_response.json()["items"]]
     assert created_id in ids
