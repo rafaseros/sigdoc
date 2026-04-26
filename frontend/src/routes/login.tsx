@@ -1,4 +1,4 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, redirect, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { useAuth } from "@/shared/lib/auth";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/login")({
+  beforeLoad: () => {
+    if (localStorage.getItem("access_token")) {
+      throw redirect({ to: "/templates" });
+    }
+  },
   component: LoginPage,
 });
 
@@ -17,13 +22,6 @@ function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
-
-  // Redirect if already authenticated
-  const existingToken = localStorage.getItem("access_token");
-  if (existingToken) {
-    navigate({ to: "/templates" });
-    return null;
-  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
