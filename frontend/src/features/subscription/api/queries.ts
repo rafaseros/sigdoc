@@ -54,7 +54,7 @@ export function useTenantTier() {
   return useQuery({
     queryKey: subscriptionKeys.tenantTier(),
     queryFn: async () => {
-      const { data } = await apiClient.get<TenantTierResponse>("/tenant/tier");
+      const { data } = await apiClient.get<TenantTierResponse>("/tiers/tenant");
       return data;
     },
   });
