@@ -66,6 +66,39 @@ None. Implementation matches design decisions D-01 and D-11 exactly.
 - `test_quota_service.py` failures suggest the `User` entity needs `monthly_document_limit` and `unlimited_usage` fields — Phase 2 should add these to the entity if they don't exist yet, or the pre-existing test failures will remain.
 - The `_quota_exceeded_handler` and `QuotaExceededError` exception handler remain in `main.py` — Phase 2 will leave them (they're needed as long as quota enforcement can still be toggled via `_QUOTA_DISABLED=False`).
 
-## Next Batch
+---
 
-Phase 2 — T-2-01, T-2-02: QuotaService `_QUOTA_DISABLED` flag (TDD).
+## Phase 6+7 — Test cleanup + Final verification (FINAL BATCH — 2026-04-27)
+
+### Tasks Completed
+
+- [x] **T-6-01** — Deleted stale integration test files (host + container):
+  - `backend/tests/integration/test_signup_api.py`
+  - `backend/tests/integration/test_tiers_api.py`
+  - `backend/tests/integration/test_usage_api.py`
+- [x] **T-6-02** — Trimmed `test_auth_api.py`: removed `_make_full_repo_class` helper + 7 stale tests for verify-email/forgot-password/reset-password self-service flows. Cleaned unused imports (`datetime`, `timezone`, `FakeEmailService`). Synced to container via `docker cp`. KEPT `test_users_password_reset.py` (admin-driven reset — cc71902 feature — all 6 PWRESET tests preserved).
+- [x] **T-6-03** — NO-OP confirmed: `rg "check_user_limit|quota_service" test_users_api.py` → NO_MATCHES. No changes needed.
+- [x] **T-7-01** — Backend suite: **553 passed, 0 failed**, 32 warnings (pre-existing SQLAlchemy async RuntimeWarning).
+- [x] **T-7-02** — TypeScript: `npx tsc --noEmit -p tsconfig.app.json` → **EXIT 0** ✅
+- [x] **T-7-03** — ESLint: `npm run lint` → **0 errors, 4 pre-existing warnings** ✅
+- [x] **T-7-03 (smoke)** — `curl http://localhost:3100/login | grep "Regístrese|Olvidaste|signup"` → **0** ✅
+
+### Files Changed / Deleted (Phase 6)
+
+| File | Action | Notes |
+|------|--------|-------|
+| `backend/tests/integration/test_signup_api.py` | DELETED (host + container) | Stale: signup route now 404 |
+| `backend/tests/integration/test_tiers_api.py` | DELETED (host + container) | Stale: tiers router unrouted |
+| `backend/tests/integration/test_usage_api.py` | DELETED (host + container) | Stale: usage router unrouted |
+| `backend/tests/integration/test_auth_api.py` | TRIMMED + synced to container | 7 stale self-service auth tests removed; kept /me, login, refresh tests |
+
+### Final State
+
+| Gate | Result |
+|------|--------|
+| Backend tests | **553 passed, 0 failed** |
+| Frontend tsc | **EXIT 0** |
+| Frontend lint | **0 errors, 4 warnings** (pre-existing) |
+| Smoke check | **0** signup/forgot references on /login |
+
+**ALL 28/28 tasks complete.** `single-org-cutover` implementation is finished. Ready for `sdd-archive`.

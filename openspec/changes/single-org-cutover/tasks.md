@@ -162,19 +162,19 @@
 
 ## Phase 6 — Test cleanup
 
-### T-6-01: Delete stale integration test files
+### [x] T-6-01: Delete stale integration test files
 - **Files**: `backend/tests/integration/test_signup_api.py`, `test_tiers_api.py`, `test_usage_api.py`
 - **REQs**: D-12
 - **Depends on**: T-1-01, T-1-03
 - **Description**: Delete all three files. They test endpoints that are now 404. Per D-12, we do NOT write 404 assertions for unrouted endpoints.
 
-### T-6-02: Delete or update password reset integration tests
+### [x] T-6-02: Delete or update password reset integration tests
 - **Files**: `backend/tests/integration/test_users_password_reset.py` (and any forgot-password test file)
 - **REQs**: REQ-SOS-02 / D-12
 - **Depends on**: T-1-02
 - **Description**: Review `test_users_password_reset.py` — if it tests the now-removed self-service `/auth/forgot-password` and `/auth/reset-password` handlers, delete or trim the relevant tests. Admin-driven password reset (via `/users/{id}/password`) is a different flow — keep those tests.
 
-### T-6-03: Update test_users_api.py — remove quota mock from create_user
+### [x] T-6-03: Update test_users_api.py — remove quota mock from create_user
 - **Files**: `backend/tests/integration/test_users_api.py`
 - **REQs**: REQ-QSI-10 / D-04
 - **Depends on**: T-3-03
@@ -184,19 +184,19 @@
 
 ## Phase 7 — Verification gate
 
-### T-7-01: Run full backend test suite
+### [x] T-7-01: Run full backend test suite
 - **Files**: —
 - **REQs**: All
 - **Depends on**: Phases 1-6 complete
 - **Description**: Run `docker compose exec -T api pytest -q` from the project root. Expected: ~530-540 passing (down from 565 due to deleted stale files + new tests from Phases 2-3). 0 failing, 0 regressions.
 
-### T-7-02: Run frontend TypeScript type-check
+### [x] T-7-02: Run frontend TypeScript type-check
 - **Files**: —
 - **REQs**: REQ-SOS-17
 - **Depends on**: Phases 4-5 complete (atomic commit)
 - **Description**: Run `npx tsc --noEmit -p tsconfig.app.json` from `frontend/`. Must exit 0.
 
-### T-7-03: Run frontend ESLint
+### [x] T-7-03: Run frontend ESLint
 - **Files**: —
 - **REQs**: REQ-SOS-18
 - **Depends on**: Phases 4-5 complete
