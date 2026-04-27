@@ -143,7 +143,10 @@ async def get_me(
         role=user.role,
         tenant_id=str(user.tenant_id),
         effective_bulk_limit=effective_bulk_limit,
-        email_verified=getattr(user, "email_verified", True),
+        # Per single-org-cutover (REQ-SOS-14): hardcode True unconditionally.
+        # Legacy DB rows may still have email_verified=False; they MUST be presented
+        # as verified to the frontend. The column stays until Nivel B migration 013.
+        email_verified=True,
     )
 
 

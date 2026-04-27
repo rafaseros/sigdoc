@@ -1,7 +1,6 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.services import get_audit_service, get_quota_service
@@ -9,7 +8,6 @@ from app.application.services.quota_service import QuotaService
 from app.domain.entities import AuditAction
 from app.domain.services.permissions import is_admin_role
 from app.infrastructure.auth.jwt_handler import hash_password
-from app.infrastructure.persistence.models.tenant import TenantModel
 from app.infrastructure.persistence.models.user import UserModel
 from app.infrastructure.persistence.repositories.user_repository import SQLAlchemyUserRepository
 from app.presentation.api.dependencies import require_user_manager
@@ -40,15 +38,10 @@ async def create_user(
     """Create a new user in the admin's tenant."""
     repo = SQLAlchemyUserRepository(session)
 
-    # Quota check — enforce max_users limit for the tenant's tier
-    tenant_stmt = select(TenantModel).where(TenantModel.id == admin.tenant_id)
-    tenant_result = await session.execute(tenant_stmt)
-    tenant = tenant_result.scalar_one_or_none()
-    if tenant is not None and tenant.tier_id is not None:
-        await quota_service.check_user_limit(
-            tenant_id=admin.tenant_id,
-            tier_id=tenant.tier_id,
-        )
+    # Per single-org-cutover (REQ-SOS-19 / REQ-QSI-10): explicit check_user_limit
+    # call removed. QuotaService._QUOTA_DISABLED=True already silences this at
+    # service level, but removing the call site is cleaner and avoids the
+    # unnecessary DB round-trip for tenant.tier_id.
 
     # Check email uniqueness within tenant
     existing = await repo.get_by_email(request.email.lower())

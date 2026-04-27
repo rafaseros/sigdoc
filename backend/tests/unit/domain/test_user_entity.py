@@ -46,3 +46,36 @@ class TestUserEntityDefaultRole:
         user_default = _make_user()
         user_explicit = _make_user(role="document_generator")
         assert user_default.role == user_explicit.role
+
+
+class TestUserEntityEmailVerifiedDefault:
+    """REQ-SOS-15: User entity email_verified default must be True after single-org-cutover.
+
+    Previously the default was False (migration 009 field). Post-cutover it must be
+    True so any newly constructed User — before DB persistence — is treated as verified.
+    """
+
+    def test_user_entity_email_verified_default_is_true(self) -> None:
+        """REQ-SOS-15 / SCEN: User() with no email_verified arg → email_verified is True.
+
+        RED: fails while user.py still has email_verified: bool = False.
+        GREEN: passes after default is changed to True.
+        """
+        user = _make_user()
+        assert user.email_verified is True, (
+            f"Expected email_verified=True (single-org-cutover default), got {user.email_verified}"
+        )
+
+    def test_explicit_false_is_still_accepted(self) -> None:
+        """Triangulation: explicit False can still be set (DB rows may have legacy False).
+
+        This confirms the dataclass does not coerce False to True — the default is True,
+        but explicit False must be preserved for existing DB rows.
+        """
+        user = _make_user(email_verified=False)
+        assert user.email_verified is False
+
+    def test_explicit_true_is_preserved(self) -> None:
+        """Triangulation: explicit True is preserved (no override of caller's intent)."""
+        user = _make_user(email_verified=True)
+        assert user.email_verified is True

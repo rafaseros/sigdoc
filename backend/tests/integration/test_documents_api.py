@@ -254,50 +254,83 @@ async def test_shared_user_can_generate_from_shared_template(
             app.dependency_overrides.pop(get_current_user, None)
 
 
-# ── T-VERIFY-15: Email verification gate on generate ─────────────────────────
+# ── REQ-SOS-13: No email-verification gate on generate ───────────────────────
+# T-VERIFY-15 (SCEN-VERIFY-04 / SCEN-VERIFY-05) removed: _require_verified_email
+# is being deleted per single-org-cutover. Tests below assert the gate is GONE.
 
 
-def _make_unverified_session(user: User):
-    """Return a fake get_session override that returns a user with email_verified=False."""
-    fake_repo = FakeUserRepository()
-    fake_repo._users[user.id] = user
-    fake_repo._by_email[user.email] = user.id
+@pytest.mark.asyncio
+async def test_document_generate_works_for_unverified_user(
+    async_client, auth_headers, fake_template_repo, fake_storage
+):
+    """REQ-SOS-13 / SCEN-SOS-12: User with email_verified=False MUST get 201 (no gate).
 
-    class _Repo:
-        def __init__(self, session):
-            self._fake = fake_repo
+    RED: currently fails with 403 because _require_verified_email still exists.
+    GREEN: passes after _require_verified_email is removed from the handler.
+    """
+    version_id = seed_template_version(fake_template_repo, fake_storage, ["name", "date"])
 
-        async def get_by_id(self, user_id):
-            return await self._fake.get_by_id(user_id)
+    # The conftest already wires an unverified-friendly user via get_current_user override.
+    # We confirm the endpoint accepts any authenticated user regardless of email_verified.
+    response = await async_client.post(
+        "/api/v1/documents/generate",
+        headers=auth_headers,
+        json={
+            "template_version_id": version_id,
+            "variables": {"name": "UnverifiedAlice", "date": "2025-01-01"},
+        },
+    )
+    assert response.status_code == 201, (
+        f"Expected 201 (no email-verification gate), got {response.status_code}: {response.text}"
+    )
+    data = response.json()
+    assert data["status"] == "completed"
 
-    import app.infrastructure.persistence.repositories.user_repository as repo_module
 
-    return _Repo, fake_repo
+@pytest.mark.asyncio
+async def test_document_generate_bulk_works_for_unverified_user(
+    async_client, auth_headers, fake_template_repo, fake_storage
+):
+    """REQ-SOS-13 (bulk): Unverified user MUST succeed on generate-bulk (no gate).
+
+    Triangulation: second endpoint confirms _require_verified_email is gone from
+    both generate and generate-bulk.
+    """
+    import io
+    import openpyxl
+
+    version_id = seed_template_version(fake_template_repo, fake_storage, ["name", "date"])
+
+    # Build a minimal valid .xlsx with one data row
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(["name", "date"])  # header row
+    ws.append(["Bob", "2025-06-01"])  # data row
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    response = await async_client.post(
+        "/api/v1/documents/generate-bulk",
+        headers=auth_headers,
+        data={"template_version_id": version_id},
+        files={"file": ("data.xlsx", buf, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+    )
+    assert response.status_code == 201, (
+        f"Expected 201 (no email-verification gate on bulk), got {response.status_code}: {response.text}"
+    )
 
 
 @pytest.mark.asyncio
 async def test_generate_document_blocked_for_unverified_user(
     async_client, app, auth_headers, fake_template_repo, fake_storage, monkeypatch
 ):
-    """SCEN-VERIFY-04: Unverified user gets 403 when trying to generate a document."""
+    """SCEN-VERIFY-04: kept as historical marker — NOW EXPECTS 201 (gate removed).
+
+    After _require_verified_email is deleted, unverified users are no longer blocked.
+    This replaces the old 403 assertion with the new 201 expectation.
+    """
     version_id = seed_template_version(fake_template_repo, fake_storage, ["name", "date"])
-
-    unverified_user = User(
-        id=CONFTEST_USER_ID,
-        tenant_id=CONFTEST_TENANT_ID,
-        email="unverified@test.com",
-        hashed_password=hash_password("secret"),
-        full_name="Unverified User",
-        role="user",
-        is_active=True,
-        email_verified=False,
-    )
-
-    repo_class, _ = _make_unverified_session(unverified_user)
-    monkeypatch.setattr(
-        "app.presentation.api.v1.documents.SQLAlchemyUserRepository",
-        repo_class,
-    )
 
     response = await async_client.post(
         "/api/v1/documents/generate",
@@ -307,33 +340,16 @@ async def test_generate_document_blocked_for_unverified_user(
             "variables": {"name": "Alice", "date": "2025-01-01"},
         },
     )
-    assert response.status_code == 403, response.text
-    assert "verificar" in response.json()["detail"].lower()
+    # Gate is gone — unverified user gets through to normal processing
+    assert response.status_code == 201, response.text
 
 
 @pytest.mark.asyncio
 async def test_generate_document_allowed_for_verified_user(
     async_client, app, auth_headers, fake_template_repo, fake_storage, monkeypatch
 ):
-    """SCEN-VERIFY-05: Verified user can generate documents normally."""
+    """SCEN-VERIFY-05: Verified user can still generate documents normally."""
     version_id = seed_template_version(fake_template_repo, fake_storage, ["name", "date"])
-
-    verified_user = User(
-        id=CONFTEST_USER_ID,
-        tenant_id=CONFTEST_TENANT_ID,
-        email="verified@test.com",
-        hashed_password=hash_password("secret"),
-        full_name="Verified User",
-        role="user",
-        is_active=True,
-        email_verified=True,
-    )
-
-    repo_class, _ = _make_unverified_session(verified_user)
-    monkeypatch.setattr(
-        "app.presentation.api.v1.documents.SQLAlchemyUserRepository",
-        repo_class,
-    )
 
     response = await async_client.post(
         "/api/v1/documents/generate",
@@ -344,3 +360,5 @@ async def test_generate_document_allowed_for_verified_user(
         },
     )
     assert response.status_code == 201, response.text
+
+

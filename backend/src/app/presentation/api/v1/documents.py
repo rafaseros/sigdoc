@@ -8,8 +8,6 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import Response
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.application.services import get_document_service
 from app.application.services.document_service import DocumentService
 from app.domain.exceptions import (
@@ -25,8 +23,6 @@ from app.domain.services.permissions import (
     can_include_both_formats,
     can_view_all_documents,
 )
-from app.infrastructure.persistence.database import get_session
-from app.infrastructure.persistence.repositories.user_repository import SQLAlchemyUserRepository
 from app.presentation.middleware.rate_limit import limiter, tier_limit_bulk, tier_limit_generate
 from app.presentation.middleware.tenant import CurrentUser, get_current_user
 from app.presentation.schemas.document import (
@@ -44,30 +40,6 @@ _PDF_MIME = "application/pdf"
 _ZIP_MIME = "application/zip"
 
 
-async def _require_verified_email(
-    current_user: CurrentUser,
-    session: AsyncSession,
-) -> None:
-    """Check that the current user has a verified email address.
-
-    Spec: REQ-VERIFY-05
-    If email_verified is False (and the field exists), raise 403.
-    If the field doesn't exist (pre-migration), allow through.
-    """
-    repo = SQLAlchemyUserRepository(session)
-    user = await repo.get_by_id(current_user.user_id)
-    if user is None:
-        return  # Let downstream handle missing user
-
-    email_verified = getattr(user, "email_verified", None)
-    # Only gate if the field is explicitly False (not None / missing)
-    if email_verified is False:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Debés verificar tu correo electrónico antes de generar documentos",
-        )
-
-
 @router.post("/generate", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED)
 @limiter.limit(tier_limit_generate)
 async def generate_document(
@@ -75,14 +47,13 @@ async def generate_document(
     body: GenerateRequest,
     current_user: CurrentUser = Depends(get_current_user),
     service: DocumentService = Depends(get_document_service),
-    session: AsyncSession = Depends(get_session),
 ):
     """Generate a single document from a template version.
 
     REQ-DDF-03: output_format is NOT accepted (GenerateRequest has extra="forbid").
     REQ-DDF-05: PdfConversionError → HTTP 503 (atomic rollback already done in service).
+    Per REQ-SOS-13: _require_verified_email removed (single-org-cutover).
     """
-    await _require_verified_email(current_user, session)
     try:
         result = await service.generate_single(
             template_version_id=body.template_version_id,
@@ -149,13 +120,13 @@ async def generate_bulk(
     file: UploadFile = File(...),
     current_user: CurrentUser = Depends(get_current_user),
     service: DocumentService = Depends(get_document_service),
-    session: AsyncSession = Depends(get_session),
 ):
     """Generate multiple documents from a filled Excel file.
 
     REQ-DDF-04: output_format is NOT accepted in the body.
     REQ-DDF-05 / W-04: PdfConversionError → HTTP 503.
     W-05: errors field is always [] on success (breaking change from partial-failure model).
+    Per REQ-SOS-13: _require_verified_email removed (single-org-cutover).
     """
     # REQ-DDF-04: output_format must not be accepted in the multipart body.
     # FastAPI silently ignores unexpected form fields, so we explicitly inspect
@@ -167,7 +138,6 @@ async def generate_bulk(
             detail="The 'output_format' field is not accepted; both formats are always generated.",
         )
 
-    await _require_verified_email(current_user, session)
     # Validate file type
     if not (file.filename and file.filename.endswith(".xlsx")):
         raise HTTPException(status_code=400, detail="Only .xlsx files are accepted")

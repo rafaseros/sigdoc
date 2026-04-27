@@ -15,8 +15,10 @@ class User:
     bulk_generation_limit: int | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
-    # Email verification (added in migration 009)
-    email_verified: bool = False
+    # Email verification (added in migration 009).
+    # Per single-org-cutover (REQ-SOS-15): default is True — email verification
+    # is no longer enforced; all newly constructed users are treated as verified.
+    email_verified: bool = True
     email_verification_token: str | None = None
     email_verification_sent_at: datetime | None = None
     # Password reset (added in migration 009)

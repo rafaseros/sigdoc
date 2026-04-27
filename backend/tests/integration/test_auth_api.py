@@ -327,6 +327,46 @@ async def test_get_me_includes_email_verified_field(async_client, auth_headers, 
     assert "email_verified" in response.json()
 
 
+@pytest.mark.asyncio
+async def test_auth_me_returns_email_verified_true_even_if_db_false(
+    async_client, auth_headers, monkeypatch
+):
+    """REQ-SOS-14 / SCEN-SOS-09: GET /auth/me MUST return email_verified=True even when DB has False.
+
+    RED: currently passes if auth.py uses getattr(user, 'email_verified', True) AND the
+    user has email_verified=False — because getattr returns False from DB.
+    GREEN: passes after email_verified is hardcoded to True unconditionally.
+    """
+    from unittest.mock import MagicMock
+
+    user = User(
+        id=CONFTEST_USER_ID,
+        tenant_id=CONFTEST_TENANT_ID,
+        email="unverified-me@test.com",
+        hashed_password=hash_password("any"),
+        full_name="Unverified Me User",
+        role="user",
+        email_verified=False,  # DB value is False — response MUST still be True
+    )
+
+    monkeypatch.setattr(
+        "app.presentation.api.v1.auth.SQLAlchemyUserRepository",
+        _make_fake_repo_class(user),
+    )
+
+    mock_settings = MagicMock()
+    mock_settings.bulk_generation_limit = 10
+    monkeypatch.setattr("app.presentation.api.v1.auth.get_settings", lambda: mock_settings)
+
+    response = await async_client.get("/api/v1/auth/me", headers=auth_headers)
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["email_verified"] is True, (
+        f"Expected email_verified=True regardless of DB value, got: {data['email_verified']}"
+    )
+
+
 # ── Helper for verification/reset endpoint tests ──────────────────────────────
 
 

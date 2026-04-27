@@ -54,37 +54,37 @@
 
 ## Phase 3 — Backend documents.py, users.py, auth/me, and domain entity
 
-### T-3-01: [RED] Test that email_verified=False user can generate documents
+### [x] T-3-01: [RED] Test that email_verified=False user can generate documents
 - **Files**: `backend/tests/integration/test_documents_api.py`
 - **REQs**: REQ-SOS-13 / D-02
 - **Depends on**: —
 - **Description**: Remove the existing `_require_verified_email` test block (lines 257-330, T-VERIFY-15). Add a test asserting a user with `email_verified=False` in DB can call `POST /api/v1/documents/generate` and get 200/202 (no 403).
 
-### T-3-02: [GREEN] Remove _require_verified_email from documents.py
+### [x] T-3-02: [GREEN] Remove _require_verified_email from documents.py
 - **Files**: `backend/src/app/presentation/api/v1/documents.py`
 - **REQs**: REQ-SOS-13 / D-02
 - **Depends on**: T-3-01
 - **Description**: Delete the `_require_verified_email` function (lines 47-68) and its two `Depends(...)` call sites (lines 85 and 170). Remove `SQLAlchemyUserRepository` import if it becomes unused after this removal.
 
-### T-3-03: Remove quota_service.check_user_limit call from users.py
+### [x] T-3-03: Remove quota_service.check_user_limit call from users.py
 - **Files**: `backend/src/app/presentation/api/v1/users.py`
 - **REQs**: REQ-QSI-10, REQ-SOS-19 / D-04
 - **Depends on**: T-2-02
 - **Description**: Remove the `quota_service.check_user_limit` call (lines 38-51 area) from `create_user`. The `QuotaService` DI stays wired (silenced at service level) — only remove the explicit `check_user_limit` call from the handler. Also verify no `EmailVerificationService` call exists in this handler (SCEN-SOS-11).
 
-### T-3-04: [RED] Test /auth/me returns email_verified true despite DB false
+### [x] T-3-04: [RED] Test /auth/me returns email_verified true despite DB false
 - **Files**: `backend/tests/integration/test_auth_api.py`
 - **REQs**: REQ-SOS-14 / D-03
 - **Depends on**: —
 - **Description**: Remove existing test assertions that expect `email_verified` to reflect DB value (lines 302-327). Add a test asserting `/auth/me` returns `email_verified: true` for a user whose DB row has `email_verified=False`.
 
-### T-3-05: [GREEN] Hardcode email_verified=True in /auth/me response and domain entity
+### [x] T-3-05: [GREEN] Hardcode email_verified=True in /auth/me response and domain entity
 - **Files**: `backend/src/app/presentation/api/v1/auth.py`, `backend/src/app/domain/entities/user.py`
 - **REQs**: REQ-SOS-14, REQ-SOS-15 / D-03
 - **Depends on**: T-3-04
 - **Description**: In `auth.py` line 209, change to `email_verified=True` unconditionally. In `user.py` line 19, change `email_verified: bool = False` to `email_verified: bool = True`.
 
-### T-3-06: Drop SignupRequest/SignupResponse/SignupUserResponse from auth schemas
+### [x] T-3-06: Drop SignupRequest/SignupResponse/SignupUserResponse from auth schemas
 - **Files**: `backend/src/app/presentation/schemas/auth.py`
 - **REQs**: REQ-SOS-01 / D-01
 - **Depends on**: T-1-01
