@@ -1,8 +1,10 @@
 import { createFileRoute, Link, Outlet, redirect, useNavigate } from "@tanstack/react-router";
 import { useAuth } from "@/shared/lib/auth";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { ChangePasswordDialog, VerificationBanner } from "@/features/users";
 import { QuotaExceededDialog } from "@/features/subscription/components/QuotaExceededDialog";
+import { getRoleLabel } from "@/shared/lib/role-labels";
 
 export const Route = createFileRoute("/_authenticated")({
   beforeLoad: () => {
@@ -73,6 +75,9 @@ function AuthenticatedLayout() {
             <span className="text-sm text-[#434655]">
               {user?.email ?? "Usuario"}
             </span>
+            <Badge variant="secondary" className="text-xs">
+              {getRoleLabel(user?.role)}
+            </Badge>
             <ChangePasswordDialog />
             <Button variant="outline" size="sm" onClick={handleLogout} className="border-[rgba(195,198,215,0.3)] hover:bg-[#e6e8ea] text-[#434655]">
               Cerrar Sesión

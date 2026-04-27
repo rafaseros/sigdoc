@@ -2,12 +2,15 @@ import { createFileRoute } from "@tanstack/react-router";
 import { TemplateList, UploadTemplateDialog, TemplateGuideButton, TemplateGuideBanner } from "@/features/templates";
 import { Badge } from "@/components/ui/badge";
 import { useTenantTier } from "@/features/subscription/api/queries";
+import { useAuth } from "@/shared/lib/auth";
+import { canUploadTemplates } from "@/shared/lib/permissions";
 
 export const Route = createFileRoute("/_authenticated/templates/")({
   component: TemplatesPage,
 });
 
 function TemplatesPage() {
+  const { user } = useAuth();
   const { data: tierData } = useTenantTier();
   const templateUsage = tierData?.usage.templates ?? null;
 
@@ -36,7 +39,7 @@ function TemplatesPage() {
         </div>
         <div className="flex items-center gap-2">
           <TemplateGuideButton />
-          <UploadTemplateDialog />
+          {canUploadTemplates(user?.role) && <UploadTemplateDialog />}
         </div>
       </div>
       <TemplateGuideBanner />

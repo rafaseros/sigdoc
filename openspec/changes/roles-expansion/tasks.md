@@ -178,37 +178,37 @@
 
 ## Phase 5 — Frontend
 
-### T-FE-01: Create `frontend/src/shared/lib/permissions.ts` — `Role` type + capability helpers
+### T-FE-01: Create `frontend/src/shared/lib/permissions.ts` — `Role` type + capability helpers ✅
 - **Files**: `frontend/src/shared/lib/permissions.ts` (NEW)
 - **REQs/ADRs**: REQ-TMP-06, ADR-FE-01
 - **Depends on**: —
 - **Description**: Export `Role = "admin" | "template_creator" | "document_generator"`. Export `canUploadTemplates`, `canManageUsers`, `canViewAudit`, `canViewTenantUsage` mirroring backend logic. Add comment pointing to `domain/services/permissions.py` as the authoritative source.
 
-### T-FE-02: Create `frontend/src/shared/lib/role-labels.ts` — `ROLE_LABELS` + `roleLabel` helper
+### T-FE-02: Create `frontend/src/shared/lib/role-labels.ts` — `ROLE_LABELS` + `roleLabel` helper ✅
 - **Files**: `frontend/src/shared/lib/role-labels.ts` (NEW)
 - **REQs/ADRs**: REQ-TMP-08, ADR-FE-02
 - **Depends on**: T-FE-01
 - **Description**: Export `ROLE_LABELS: Record<Role, string>` with Spanish mappings (`admin` → `"Administrador"`, `template_creator` → `"Creador de plantillas"`, `document_generator` → `"Generador de documentos"`). Export `roleLabel(r: string | undefined): string` with `"Usuario"` fallback for unknown/undefined roles.
 
-### T-FE-03: Wrap `<UploadTemplateDialog />` with `canUploadTemplates(user?.role)` conditional in templates page
+### T-FE-03: Wrap `<UploadTemplateDialog />` with `canUploadTemplates(user?.role)` conditional in templates page ✅
 - **Files**: `frontend/src/routes/_authenticated/templates/index.tsx` (line 39)
 - **REQs/ADRs**: REQ-TMP-07, SCEN-TMP-09, SCEN-TMP-10, ADR-FE-03
 - **Depends on**: T-FE-01
 - **Description**: Replace unconditional render with `{canUploadTemplates(user?.role) && <UploadTemplateDialog />}`. For `document_generator`, the element must be absent from the DOM entirely. For `template_creator` and `admin`, the button remains present.
 
-### T-FE-04: Update `EditUserDialog` role `<Select>` from 2 to 3 options using `ROLE_LABELS`
+### T-FE-04: Update `EditUserDialog` role `<Select>` from 2 to 3 options using `ROLE_LABELS` ✅
 - **Files**: `frontend/src/features/users/components/EditUserDialog.tsx` (lines 128–129)
 - **REQs/ADRs**: REQ-TMP-10, ADR-FE-03
 - **Depends on**: T-FE-02
 - **Description**: Expand Select options to include `admin`, `template_creator`, and `document_generator`. Use `ROLE_LABELS` for display text. Remove `"user"` from options. Set default fallback `setRole(v ?? "document_generator")` on SelectItem change.
 
-### T-FE-05: Add role badge pill to authenticated header in `_authenticated.tsx`
+### T-FE-05: Add role badge pill to authenticated header in `_authenticated.tsx` ✅
 - **Files**: `frontend/src/routes/_authenticated.tsx` (near line 73)
 - **REQs/ADRs**: REQ-TMP-09, ADR-FE-03
 - **Depends on**: T-FE-02
 - **Description**: Add shadcn `<Badge variant="secondary">{roleLabel(user?.role)}</Badge>` next to the email span in the authenticated layout header. Every authenticated user sees their Spanish role label on all pages.
 
-### T-FE-06: Verify admin-only navigation tabs still gate correctly — `user?.role === "admin"` covers all non-admin roles
+### T-FE-06: Verify admin-only navigation tabs still gate correctly — `user?.role === "admin"` covers all non-admin roles ✅
 - **Files**: `frontend/src/routes/_authenticated.tsx`
 - **REQs/ADRs**: ADR-FE-04 (deferred note)
 - **Depends on**: T-FE-05

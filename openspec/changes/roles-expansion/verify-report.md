@@ -607,3 +607,204 @@ None.
 Phase 4 is complete, correct, and coherent. All 10 presentation tasks implemented following strict TDD. 523 tests pass, 0 failures, 0 regressions. REQ-ROLE-06 (Literal schema validator), REQ-ROLE-08 (default-on-create), REQ-TMP-02 (require_template_manager helper), REQ-TMP-03 (upload gate), REQ-TMP-04 (versions gate), and REQ-TMP-05 (generate ungated) are all satisfied with behavioral test evidence. Phase 1–3 work is fully intact. No migration, no frontend changes.
 
 Phase 5 (T-FE-01..06) may proceed.
+
+---
+
+## Phase 5 Verification
+
+**Change**: roles-expansion
+**Phase verified**: Phase 5 — Frontend (T-FE-01..06)
+**Mode**: Standard (frontend — no test runner; typecheck + lint only)
+**Verdict**: APPROVED
+
+---
+
+### Completeness
+
+| Metric | Value |
+|--------|-------|
+| Tasks total (Phase 5) | 6 |
+| Tasks complete | 6 |
+| Tasks incomplete | 0 |
+
+All Phase 5 tasks checked off: T-FE-01, T-FE-02, T-FE-03, T-FE-04, T-FE-05, T-FE-06.
+
+---
+
+### Build & Tests Execution
+
+**TypeScript** (`npx tsc --noEmit -p tsconfig.app.json`): ✅ Exit 0 — no errors
+
+**Lint** (`npm run lint`): ✅ Exit 0 — 0 errors, 4 warnings (pre-existing baseline)
+```
+badge.tsx:52   warning  react-refresh/only-export-components (pre-existing)
+button.tsx:58  warning  react-refresh/only-export-components (pre-existing)
+tabs.tsx:80    warning  react-refresh/only-export-components (pre-existing)
+auth.tsx:80    warning  react-refresh/only-export-components (pre-existing)
+```
+No new warnings introduced by Phase 5 files (`permissions.ts`, `role-labels.ts` are utility modules with no component exports; they do not trigger the react-refresh rule).
+
+**Backend suite** (no backend changes in Phase 5 — regression check):
+```
+523 passed, 34 warnings in 21.36s
+0 failed, 0 errors
+```
+Zero regressions. Backend baseline unchanged from Phase 4.
+
+**Frontend test runner**: Not available (per ADR-TEST-01 and tasks.md: "Frontend: Manual + typecheck + lint (no test runner)"). Behavioral verification via static analysis below.
+
+---
+
+### Structural Evidence (per checklist item)
+
+#### 1. `frontend/src/shared/lib/permissions.ts` (T-FE-01) ✅
+- File exists at the exact path.
+- Exports `Role` type as `"admin" | "template_creator" | "document_generator"` (line 1).
+- Exports `canUploadTemplates`, `canManageUsers`, `canViewAudit`, `canViewTenantUsage` — all four present (lines 6–16).
+- Each function is a single inline boolean expression (`role === "admin" || role === "template_creator"` or `role === "admin"`).
+- Comment at lines 3–4: `// NOTE: Authoritative source is backend/src/app/domain/services/permissions.py.` — points to backend as the authoritative source (REQ-TMP-06 ✅).
+
+#### 2. `frontend/src/shared/lib/role-labels.ts` (T-FE-02) ✅
+- Exports `ROLE_LABELS: Record<Role, string>` with correct Spanish mappings:
+  - `admin` → `"Administrador"` ✅
+  - `template_creator` → `"Creador de plantillas"` ✅
+  - `document_generator` → `"Generador de documentos"` ✅
+- Exports `getRoleLabel(role: string | undefined): string` (lines 9–12) with `"Usuario"` fallback for `undefined` and unknown values (REQ-TMP-08 ✅).
+- **Naming note**: Design ADR-FE-02 used `roleLabel` as the helper name; apply phase used `getRoleLabel`. The actual function is `getRoleLabel`, consistently used in `_authenticated.tsx` (line 79: `getRoleLabel(user?.role)`). The deviation is cosmetic — the contract (fallback `"Usuario"`, type signature) is identical. No inconsistency across usages.
+
+#### 3. `UploadTemplateDialog` conditional render (T-FE-03) ✅
+- File: `frontend/src/routes/_authenticated/templates/index.tsx` line 42.
+- Implementation: `{canUploadTemplates(user?.role) && <UploadTemplateDialog />}` — JSX short-circuit, not CSS hide.
+- For `document_generator`: `canUploadTemplates("document_generator")` → `false` → element is NOT rendered → absent from DOM (SCEN-TMP-09 ✅).
+- For `template_creator`/`admin`: returns `true` → element IS rendered (SCEN-TMP-10 ✅).
+- `canUploadTemplates` imported from `@/shared/lib/permissions` (line 6) — correct import (REQ-TMP-07 ✅).
+
+#### 4. `EditUserDialog` Select (T-FE-04) ✅
+- File: `frontend/src/features/users/components/EditUserDialog.tsx` lines 128–133.
+- Three `<SelectItem>` elements present:
+  - `value="admin"` with `{ROLE_LABELS.admin}` → `"Administrador"` ✅
+  - `value="template_creator"` with `{ROLE_LABELS.template_creator}` → `"Creador de plantillas"` ✅
+  - `value="document_generator"` with `{ROLE_LABELS.document_generator}` → `"Generador de documentos"` ✅
+- `ROLE_LABELS` imported from `@/shared/lib/role-labels` (line 23) ✅.
+- Legacy `"user"` option: ABSENT from the SelectContent — removed ✅.
+- `onValueChange={(v) => setRole(v ?? "document_generator")}` — fallback present (line 124) ✅.
+- `canEditRole` guard (`isAdmin && !isEditingSelf`) wraps the entire Select block — admin-only editing preserved (REQ-TMP-10 ✅).
+
+#### 5. Role badge pill in `_authenticated.tsx` (T-FE-05) ✅
+- File: `frontend/src/routes/_authenticated.tsx` lines 78–80.
+- `<Badge variant="secondary" className="text-xs">{getRoleLabel(user?.role)}</Badge>` — exact pattern.
+- Uses `getRoleLabel` (imported at line 7) ✅.
+- `variant="secondary"` ✅, `className="text-xs"` ✅.
+- Falls back to `"Usuario"` for missing/unknown role (via `getRoleLabel` implementation) ✅.
+- Badge is inside the header `<div className="flex items-center gap-3">` next to the email span (line 75–80) ✅ (REQ-TMP-09 ✅).
+
+#### 6. Navigation tabs guard (T-FE-06) ✅ (no code change needed — verified)
+- `isAdmin = user?.role === "admin"` (line 28).
+- `/users` link (line 44): wrapped in `{isAdmin && ...}` ✅ — hidden for `template_creator` and `document_generator`.
+- `/audit` link (line 64): wrapped in `{isAdmin && ...}` ✅ — hidden for non-admins.
+- `/usage` link (line 52): NOT wrapped with `isAdmin` — intentional, it is an informational page visible to all authenticated users. T-FE-06 listed `/usage` but the design (ADR-FE-04 deferred) and existing codebase never gated it. This matches the codebase intent and was pre-existing before Phase 5.
+
+---
+
+### Spec Compliance Matrix
+
+Note: REQ-TMP-06..10 are frontend requirements. No automated test runner exists for frontend (per ADR-TEST-01). Compliance is established via static structural analysis + typecheck exit 0 as the evidence layer.
+
+| Requirement | Scenario | Evidence | Result |
+|-------------|----------|----------|--------|
+| REQ-TMP-06: canUploadTemplates helper | `true` for admin/template_creator; `false` for others | `permissions.ts:6–7` — inline boolean; `tsc --noEmit` exit 0 | ✅ COMPLIANT |
+| REQ-TMP-07: UploadTemplateDialog conditional | document_generator: element absent from DOM | `templates/index.tsx:42` — `{canUploadTemplates(user?.role) && <UploadTemplateDialog />}` | ✅ COMPLIANT |
+| REQ-TMP-07: UploadTemplateDialog conditional | template_creator/admin: element present in DOM | Same expression — short-circuit renders when true | ✅ COMPLIANT |
+| REQ-TMP-08: ROLE_LABELS export | Spanish labels for all 3 roles | `role-labels.ts:3–7` — Record<Role, string> with correct values | ✅ COMPLIANT |
+| REQ-TMP-08: getRoleLabel helper | Fallback "Usuario" for unknown/undefined | `role-labels.ts:9–12` — `?? "Usuario"` and `if (!role) return "Usuario"` | ✅ COMPLIANT |
+| REQ-TMP-09: Authenticated header role badge | Badge visible on all authenticated pages | `_authenticated.tsx:78–80` — `<Badge variant="secondary" className="text-xs">{getRoleLabel(user?.role)}</Badge>` | ✅ COMPLIANT |
+| REQ-TMP-10: EditUserDialog 3 options via ROLE_LABELS | admin, template_creator, document_generator options | `EditUserDialog.tsx:128–133` — 3 SelectItems using ROLE_LABELS | ✅ COMPLIANT |
+| REQ-TMP-10: Legacy "user" option removed | Prevented client-side | No "user" SelectItem in SelectContent | ✅ COMPLIANT |
+
+**Compliance summary**: 8/8 REQ-TMP-06..10 scenarios compliant.
+
+---
+
+### Correctness (Static — Structural Evidence)
+
+| Check | Status | Notes |
+|-------|--------|-------|
+| `permissions.ts` exports `Role` type | ✅ Implemented | Line 1 — union literal type |
+| `permissions.ts` exports 4 helpers | ✅ Implemented | Lines 6, 9, 12, 15 |
+| Backend-mirror comment in `permissions.ts` | ✅ Implemented | Lines 3–4 |
+| `role-labels.ts` exports `ROLE_LABELS` typed `Record<Role, string>` | ✅ Implemented | Lines 3–7 |
+| `role-labels.ts` exports `getRoleLabel` with "Usuario" fallback | ✅ Implemented | Lines 9–12 |
+| `UploadTemplateDialog` gated with `canUploadTemplates(user?.role)` | ✅ Implemented | `templates/index.tsx:42` |
+| Gate is JSX short-circuit (not CSS hide) | ✅ Confirmed | `&&` operator — no `display:none` or `hidden` |
+| `EditUserDialog` has exactly 3 role options | ✅ Implemented | Lines 129–131 |
+| `EditUserDialog` uses `ROLE_LABELS` for display | ✅ Implemented | `{ROLE_LABELS.admin}` etc. |
+| `EditUserDialog` "user" option removed | ✅ Confirmed | Not present in SelectContent |
+| Role badge `<Badge variant="secondary" className="text-xs">` | ✅ Implemented | `_authenticated.tsx:78–80` |
+| Badge uses `getRoleLabel(user?.role)` | ✅ Implemented | Line 79 |
+| `/users` and `/audit` nav tabs admin-only | ✅ Confirmed | Both wrapped `{isAdmin && ...}` at lines 44, 64 |
+| `/usage` nav tab not gated | ✅ Confirmed | Pre-existing; intentional (informational page) |
+| TypeScript: 0 errors | ✅ Confirmed | `tsc --noEmit` exit 0 |
+| Lint: 0 errors, 4 warnings (pre-existing) | ✅ Confirmed | `npm run lint` exit 0 |
+| Backend suite: 523 passed, 0 failed | ✅ Confirmed | Zero regressions |
+
+---
+
+### Coherence (Design)
+
+| Decision | Followed? | Notes |
+|----------|-----------|-------|
+| ADR-FE-01: `permissions.ts` exports `Role` type + 4 helpers | ✅ Yes | Exact match; includes `canViewTenantUsage` (exported even if not yet used in nav) |
+| ADR-FE-02: `ROLE_LABELS: Record<Role, string>` + fallback helper | ✅ Yes | Spanish labels correct; fallback `"Usuario"` present |
+| ADR-FE-02: helper name `roleLabel` | ⚠️ Deviated (cosmetic) | Implemented as `getRoleLabel` instead. Consistent across all usages — no broken contract. Design name was aspirational. |
+| ADR-FE-03: `templates/index.tsx` — `{canUploadTemplates(user?.role) && <UploadTemplateDialog />}` | ✅ Yes | Exact pattern at line 42 |
+| ADR-FE-03: `_authenticated.tsx` — `<Badge variant="secondary">{roleLabel(user?.role)}</Badge>` | ✅ Yes (name deviated) | `getRoleLabel` used instead of `roleLabel`; `text-xs` class added (not in spec, improves UI) |
+| ADR-FE-03: `EditUserDialog` 3 SelectItems + `ROLE_LABELS` display + `?? "document_generator"` fallback | ✅ Yes | Lines 124, 128–133 |
+| Phase 5 scope: frontend-only, no backend changes | ✅ Yes | Clean boundary; backend suite unchanged at 523 |
+
+---
+
+### Issues Found
+
+**CRITICAL** (must fix before archive):
+None.
+
+**WARNING** (should fix):
+None.
+
+**SUGGESTION**:
+- `getRoleLabel` vs `roleLabel` naming: ADR-FE-02 specifies `roleLabel` as the helper name; apply chose `getRoleLabel`. The naming is a cosmetic deviation — the contract is identical and usage is consistent in all call sites (`_authenticated.tsx:79`). If the team has a preference for one naming convention, it could be aligned in a follow-up. Non-blocking.
+- `canViewTenantUsage` is exported from `permissions.ts` but not yet used as a nav guard for the `/usage` route (T-FE-06 confirmed `/usage` is open to all). The helper is correctly defined and available if a future change gates that route. No action needed now.
+
+---
+
+### Test Counts
+
+| Metric | Value |
+|--------|-------|
+| Backend Phase 4 baseline | 523 |
+| After Phase 5 | 523 |
+| Net new (Phase 5) | 0 (frontend — no test runner) |
+| TypeScript errors | 0 |
+| Lint errors | 0 |
+| Lint warnings | 4 (pre-existing baseline; no new) |
+| Backend failures | 0 |
+| Regressions | 0 |
+
+---
+
+### Verdict
+
+**APPROVED**
+
+Phase 5 is complete, correct, and coherent. All 6 frontend tasks implemented following the design. TypeScript exit 0, lint exit 0 (4 pre-existing warnings, 0 new). Backend suite unchanged at 523/523 — zero regressions. REQ-TMP-06 through REQ-TMP-10 are fully satisfied with structural evidence:
+
+- `permissions.ts` mirrors backend with correct 3-role logic + backend reference comment.
+- `role-labels.ts` exports correct Spanish labels and `getRoleLabel` fallback helper.
+- `UploadTemplateDialog` is conditionally rendered via JSX short-circuit — absent from DOM for `document_generator`.
+- `EditUserDialog` shows exactly 3 role options via `ROLE_LABELS`; legacy `"user"` option removed.
+- Role badge `<Badge variant="secondary" className="text-xs">` displays `getRoleLabel(user?.role)` in the authenticated header on every page.
+- Admin-only nav tabs (`/users`, `/audit`) remain correctly gated with `isAdmin`; `/usage` was and remains intentionally open to all authenticated users.
+
+One cosmetic deviation from design: `getRoleLabel` vs `roleLabel` naming (consistent across all usages, non-blocking).
+
+Phase 6 (T-REG-01, T-REG-02, T-REG-03) may proceed.

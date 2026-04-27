@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/select";
 import { useUpdateUser, type UserResponse } from "../api";
 import { useAuth } from "@/shared/lib/auth";
+import { ROLE_LABELS } from "@/shared/lib/role-labels";
 
 interface EditUserDialogProps {
   user: UserResponse;
@@ -120,13 +121,14 @@ export function EditUserDialog({
             {canEditRole && (
               <div className="grid gap-2">
                 <Label htmlFor="edit-role">Rol</Label>
-                <Select value={role} onValueChange={(v) => setRole(v ?? "user")}>
+                <Select value={role} onValueChange={(v) => setRole(v ?? "document_generator")}>
                   <SelectTrigger id="edit-role">
                     <SelectValue placeholder="Seleccionar rol" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="admin">Administrador</SelectItem>
-                    <SelectItem value="user">Usuario</SelectItem>
+                    <SelectItem value="admin">{ROLE_LABELS.admin}</SelectItem>
+                    <SelectItem value="template_creator">{ROLE_LABELS.template_creator}</SelectItem>
+                    <SelectItem value="document_generator">{ROLE_LABELS.document_generator}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
