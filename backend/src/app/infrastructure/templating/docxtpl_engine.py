@@ -10,45 +10,16 @@ from docxtpl import DocxTemplate
 from app.domain.ports.template_engine import TemplateEngine
 
 
-_MAX_CONTEXT_LENGTH = 120
-
-
-def _truncate_context(paragraph: str, variable: str) -> str:
+def _normalize_paragraph(paragraph: str) -> str:
     """
-    Truncate a paragraph around the variable occurrence to ~120 chars.
+    Normalize a paragraph string for use as variable context.
 
-    If the paragraph is short enough, return it as-is.
-    Otherwise, extract a window centered on the variable and add ellipsis.
+    Returns the paragraph stripped of leading/trailing whitespace.
+    Returning the full paragraph (rather than a truncated snippet) ensures
+    that all variables found in the same paragraph share the SAME context
+    string, so the frontend can deduplicate by exact string match.
     """
-    if len(paragraph) <= _MAX_CONTEXT_LENGTH:
-        return paragraph
-
-    # Find the variable pattern in the paragraph
-    pattern = re.compile(r"\{\{\s*" + re.escape(variable) + r"\s*\}\}")
-    match = pattern.search(paragraph)
-    if not match:
-        # Fallback: just truncate from the start
-        return paragraph[:_MAX_CONTEXT_LENGTH] + "..."
-
-    var_start = match.start()
-    var_end = match.end()
-    var_len = var_end - var_start
-
-    # Calculate available space for surrounding text
-    available = _MAX_CONTEXT_LENGTH - var_len
-    before = available // 2
-    after = available - before
-
-    # Calculate window boundaries
-    win_start = max(0, var_start - before)
-    win_end = min(len(paragraph), var_end + after)
-
-    snippet = paragraph[win_start:win_end]
-
-    prefix = "..." if win_start > 0 else ""
-    suffix = "..." if win_end < len(paragraph) else ""
-
-    return prefix + snippet + suffix
+    return paragraph.strip()
 
 
 def _camel_to_snake(name: str) -> str:
@@ -116,7 +87,7 @@ class DocxTemplateEngine(TemplateEngine):
                         if var_name not in var_contexts:
                             var_contexts[var_name] = []
                             var_order.append(var_name)
-                        context = _truncate_context(para_text, var_name)
+                        context = _normalize_paragraph(para_text)
                         if context not in var_contexts[var_name]:
                             var_contexts[var_name].append(context)
 
@@ -288,7 +259,7 @@ class DocxTemplateEngine(TemplateEngine):
                     for var_name in all_para_vars:
                         if var_name not in contexts_by_var:
                             contexts_by_var[var_name] = []
-                        ctx = _truncate_context(full_text, var_name)
+                        ctx = _normalize_paragraph(full_text)
                         if ctx not in contexts_by_var[var_name]:
                             contexts_by_var[var_name].append(ctx)
 
