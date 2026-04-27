@@ -1,4 +1,6 @@
-"""EmailVerificationService — handles email verification token lifecycle.
+"""DEPRECATED: route disabled per single-org-cutover; remove in Nivel B.
+
+EmailVerificationService — handles email verification token lifecycle.
 
 Spec: REQ-VERIFY-02, REQ-VERIFY-03, REQ-VERIFY-04
 Design: ADR-ASEW-02 (tokens in users table), ADR-ASEW-03 (fire-and-forget)

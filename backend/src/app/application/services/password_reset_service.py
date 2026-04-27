@@ -1,4 +1,6 @@
-"""PasswordResetService — handles forgot password token lifecycle.
+"""DEPRECATED: route disabled per single-org-cutover; remove in Nivel B.
+
+PasswordResetService — handles forgot password token lifecycle.
 
 Spec: REQ-RESET-01, REQ-RESET-02, REQ-RESET-03
 Design: ADR-ASEW-02 (tokens in users table), ADR-ASEW-03 (fire-and-forget)

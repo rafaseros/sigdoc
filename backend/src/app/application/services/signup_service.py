@@ -1,4 +1,6 @@
-"""SignupService — atomic self-service tenant onboarding.
+"""DEPRECATED: route disabled per single-org-cutover; remove in Nivel B.
+
+SignupService — atomic self-service tenant onboarding.
 
 Spec: REQ-SIGNUP-01 through REQ-SIGNUP-11
 Design: ADR-SIGNUP-01 through ADR-SIGNUP-05

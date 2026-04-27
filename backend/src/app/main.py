@@ -9,7 +9,7 @@ from slowapi.middleware import SlowAPIMiddleware
 
 from app.config import get_settings
 from app.domain.exceptions import QuotaExceededError
-from app.presentation.api.v1 import auth, templates, documents, health, users, usage, audit, tiers, dev
+from app.presentation.api.v1 import auth, templates, documents, health, users, audit, dev
 from app.presentation.middleware.rate_limit import TierPreloadMiddleware, limiter
 
 
@@ -68,9 +68,7 @@ def create_app() -> FastAPI:
     app.include_router(templates.router, prefix=f"{settings.api_v1_prefix}/templates", tags=["templates"])
     app.include_router(documents.router, prefix=f"{settings.api_v1_prefix}/documents", tags=["documents"])
     app.include_router(users.router, prefix=f"{settings.api_v1_prefix}/users", tags=["users"])
-    app.include_router(usage.router, prefix=f"{settings.api_v1_prefix}/usage", tags=["usage"])
     app.include_router(audit.router, prefix=f"{settings.api_v1_prefix}/audit-log", tags=["audit"])
-    app.include_router(tiers.router, prefix=f"{settings.api_v1_prefix}/tiers", tags=["tiers"])
 
     if settings.enable_dev_reset:
         app.include_router(dev.router, prefix=f"{settings.api_v1_prefix}/dev", tags=["dev"])
