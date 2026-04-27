@@ -94,31 +94,31 @@
 
 ## Phase 4 — Frontend deletions (atomic — all deletions must land with Phase 5)
 
-### T-4-01: Delete features/subscription/ directory (6 files)
+### [x] T-4-01: Delete features/subscription/ directory (6 files)
 - **Files**: `frontend/src/features/subscription/` (all 6 files: `api/index.ts`, `api/keys.ts`, `api/queries.ts`, `components/QuotaExceededDialog.tsx`, `components/TierCard.tsx`, `index.ts`)
 - **REQs**: REQ-SOS-11 / D-05
 - **Depends on**: Phase 5 must land in same commit
 - **Description**: Delete the entire `features/subscription/` directory. This will break TypeScript until Phase 5 removes all consumers.
 
-### T-4-02: Delete features/usage/ directory (6 files)
+### [x] T-4-02: Delete features/usage/ directory (6 files)
 - **Files**: `frontend/src/features/usage/` (all 6 files: `api/index.ts`, `api/keys.ts`, `api/queries.ts`, `components/TenantUsageTable.tsx`, `components/UsageWidget.tsx`, `index.ts`)
 - **REQs**: REQ-SOS-12 / D-05
 - **Depends on**: Phase 5 must land in same commit
 - **Description**: Delete the entire `features/usage/` directory.
 
-### T-4-03: Delete frontend route files (signup, verify-email, forgot-password, reset-password)
+### [x] T-4-03: Delete frontend route files (signup, verify-email, forgot-password, reset-password)
 - **Files**: `frontend/src/routes/signup.tsx`, `frontend/src/routes/verify-email.tsx`, `frontend/src/routes/forgot-password.tsx`, `frontend/src/routes/reset-password.tsx`
 - **REQs**: REQ-SOS-04, REQ-SOS-05 / D-05, D-10
 - **Depends on**: Phase 5 must land in same commit
 - **Description**: Delete all four route files. TanStack Router file-based routing removes the routes automatically on next dev/build.
 
-### T-4-04: Delete authenticated subscription and usage route directories
+### [x] T-4-04: Delete authenticated subscription and usage route directories
 - **Files**: `frontend/src/routes/_authenticated/subscription/index.tsx`, `frontend/src/routes/_authenticated/usage/index.tsx`
 - **REQs**: REQ-SOS-06 / D-05
 - **Depends on**: Phase 5 must land in same commit
 - **Description**: Delete both route files (and their containing dirs if they become empty).
 
-### T-4-05: Delete VerificationBanner component
+### [x] T-4-05: Delete VerificationBanner component
 - **Files**: `frontend/src/features/users/components/VerificationBanner.tsx`
 - **REQs**: REQ-SOS-09 / D-05
 - **Depends on**: Phase 5 must land in same commit
@@ -128,31 +128,31 @@
 
 ## Phase 5 — Frontend consumer edits (atomic with Phase 4)
 
-### T-5-01: Edit login.tsx — remove signup and forgot-password links
+### [x] T-5-01: Edit login.tsx — remove signup and forgot-password links
 - **Files**: `frontend/src/routes/login.tsx`
 - **REQs**: REQ-SOS-07 / D-06
 - **Depends on**: T-4-03 (route files gone)
 - **Description**: Remove the `<p>` block containing "¿No tiene cuenta? Regístrese" (lines 87-92). Remove the "¿Olvidaste tu contraseña?" link block (lines ~64-70). Login form must contain only credential fields and submit button.
 
-### T-5-02: Edit _authenticated.tsx — remove SaaS nav, VerificationBanner, QuotaExceededDialog
+### [x] T-5-02: Edit _authenticated.tsx — remove SaaS nav, VerificationBanner, QuotaExceededDialog
 - **Files**: `frontend/src/routes/_authenticated.tsx`
 - **REQs**: REQ-SOS-08, REQ-SOS-09, REQ-SOS-10 / D-07
 - **Depends on**: T-4-01 (subscription dir gone), T-4-02 (usage dir gone), T-4-05 (banner gone)
 - **Description**: Remove `VerificationBanner` import and its render at line 32. Remove `QuotaExceededDialog` import and render at line 91. Remove `<Link to="/usage">` block (lines 52-58) and `<Link to="/subscription">` block (lines 59-65) and their role-based gating.
 
-### T-5-03: Edit api-client.ts — remove QUOTA_EXCEEDED_EVENT dispatch
+### [x] T-5-03: Edit api-client.ts — remove QUOTA_EXCEEDED_EVENT dispatch
 - **Files**: `frontend/src/shared/lib/api-client.ts`
 - **REQs**: REQ-SOS-10 / D-07
 - **Depends on**: T-4-01 (subscription dir gone)
 - **Description**: Remove `QUOTA_EXCEEDED_EVENT` import (line 2) and the 429/quota dispatch block (lines 36-40). 429 responses must still propagate normally — only the custom event dispatch is removed.
 
-### T-5-04: Edit auth.tsx — remove email_verified field and signup method
+### [x] T-5-04: Edit auth.tsx — remove email_verified field and signup method
 - **Files**: `frontend/src/shared/lib/auth.tsx`
 - **REQs**: REQ-SOS-04 (dead code), D-05
 - **Depends on**: T-4-03 (signup route gone)
 - **Description**: Remove `email_verified: boolean` from the `User` interface (line 9). Remove `signup` method from `AuthContextType` (line 16), its implementation (lines 45-64), and from the context value (line 74).
 
-### T-5-05: Edit users/index.tsx — count-only badge, remove useTenantTier
+### [x] T-5-05: Edit users/index.tsx — count-only badge, remove useTenantTier
 - **Files**: `frontend/src/routes/_authenticated/users/index.tsx`
 - **REQs**: REQ-SOS-16 / D-09
 - **Depends on**: T-4-01 (subscription/api/queries gone)

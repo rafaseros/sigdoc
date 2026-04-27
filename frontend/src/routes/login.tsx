@@ -1,4 +1,4 @@
-import { createFileRoute, Link, redirect, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { useAuth } from "@/shared/lib/auth";
 import { Button } from "@/components/ui/button";
@@ -60,12 +60,6 @@ function LoginPage() {
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <Label htmlFor="password" className="text-[#434655] font-medium">Contraseña</Label>
-                <Link
-                  to="/forgot-password"
-                  className="text-xs text-[#2563eb] hover:underline"
-                >
-                  ¿Olvidaste tu contraseña?
-                </Link>
               </div>
               <Input
                 id="password"
@@ -84,12 +78,6 @@ function LoginPage() {
               {loading ? "Iniciando sesión..." : "Iniciar sesión"}
             </Button>
           </form>
-          <p className="mt-6 text-center text-sm text-[#7a7e99]">
-            ¿No tiene cuenta?{" "}
-            <Link to="/signup" className="text-[#2563eb] font-medium hover:underline">
-              Regístrese
-            </Link>
-          </p>
         </CardContent>
       </Card>
     </div>

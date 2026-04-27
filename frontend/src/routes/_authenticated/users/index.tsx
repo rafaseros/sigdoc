@@ -1,7 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { UserList, CreateUserDialog } from "@/features/users";
+import { UserList, CreateUserDialog, useUsers } from "@/features/users";
 import { Badge } from "@/components/ui/badge";
-import { useTenantTier } from "@/features/subscription/api/queries";
 
 export const Route = createFileRoute("/_authenticated/users/")({
   beforeLoad: () => {
@@ -12,8 +11,8 @@ export const Route = createFileRoute("/_authenticated/users/")({
 });
 
 function UsersPage() {
-  const { data: tierData } = useTenantTier();
-  const userUsage = tierData?.usage.users ?? null;
+  const { data } = useUsers();
+  const userCount = data?.total ?? data?.items.length ?? 0;
 
   return (
     <div className="space-y-6">
@@ -25,18 +24,9 @@ function UsersPage() {
               Gestione los usuarios del sistema
             </p>
           </div>
-          {userUsage !== null && (
-            <Badge
-              className={
-                userUsage.near_limit
-                  ? "bg-[#ffdad6] text-[#ba1a1a] border-0 rounded-full"
-                  : "bg-[#dbe1ff] text-[#004ac6] border-0 rounded-full"
-              }
-            >
-              {userUsage.used}
-              {userUsage.limit !== null ? ` / ${userUsage.limit}` : ""} usuarios
-            </Badge>
-          )}
+          <Badge className="bg-[#dbe1ff] text-[#004ac6] border-0 rounded-full">
+            {userCount} usuarios
+          </Badge>
         </div>
         <CreateUserDialog />
       </div>

@@ -1,7 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { TemplateList, UploadTemplateDialog, TemplateGuideButton, TemplateGuideBanner } from "@/features/templates";
+import { TemplateList, UploadTemplateDialog, TemplateGuideButton, TemplateGuideBanner, useTemplates } from "@/features/templates";
 import { Badge } from "@/components/ui/badge";
-import { useTenantTier } from "@/features/subscription/api/queries";
 import { useAuth } from "@/shared/lib/auth";
 import { canUploadTemplates } from "@/shared/lib/permissions";
 
@@ -11,8 +10,8 @@ export const Route = createFileRoute("/_authenticated/templates/")({
 
 function TemplatesPage() {
   const { user } = useAuth();
-  const { data: tierData } = useTenantTier();
-  const templateUsage = tierData?.usage.templates ?? null;
+  const { data } = useTemplates();
+  const templateCount = data?.total ?? data?.items.length ?? 0;
 
   return (
     <div className="space-y-6">
@@ -24,18 +23,9 @@ function TemplatesPage() {
               Gestione sus plantillas de documentos
             </p>
           </div>
-          {templateUsage !== null && (
-            <Badge
-              className={
-                templateUsage.near_limit
-                  ? "bg-[#ffdad6] text-[#ba1a1a] border-0 rounded-full"
-                  : "bg-[#dbe1ff] text-[#004ac6] border-0 rounded-full"
-              }
-            >
-              {templateUsage.used}
-              {templateUsage.limit !== null ? ` / ${templateUsage.limit}` : ""} plantillas
-            </Badge>
-          )}
+          <Badge className="bg-[#dbe1ff] text-[#004ac6] border-0 rounded-full">
+            {templateCount} plantillas
+          </Badge>
         </div>
         <div className="flex items-center gap-2">
           <TemplateGuideButton />

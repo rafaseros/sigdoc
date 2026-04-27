@@ -9,46 +9,20 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as VerifyEmailRouteImport } from './routes/verify-email'
-import { Route as SignupRouteImport } from './routes/signup'
-import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as LoginRouteImport } from './routes/login'
-import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
 import { Route as AuthenticatedRouteImport } from './routes/_authenticated'
 import { Route as AuthenticatedIndexRouteImport } from './routes/_authenticated/index'
 import { Route as AuthenticatedUsersIndexRouteImport } from './routes/_authenticated/users/index'
-import { Route as AuthenticatedUsageIndexRouteImport } from './routes/_authenticated/usage/index'
 import { Route as AuthenticatedTemplatesIndexRouteImport } from './routes/_authenticated/templates/index'
-import { Route as AuthenticatedSubscriptionIndexRouteImport } from './routes/_authenticated/subscription/index'
 import { Route as AuthenticatedDocumentsIndexRouteImport } from './routes/_authenticated/documents/index'
 import { Route as AuthenticatedAuditIndexRouteImport } from './routes/_authenticated/audit/index'
 import { Route as AuthenticatedTemplatesTemplateIdRouteImport } from './routes/_authenticated/templates/$templateId'
 import { Route as AuthenticatedDocumentsGenerateVersionIdRouteImport } from './routes/_authenticated/documents/generate/$versionId'
 import { Route as AuthenticatedDocumentsBulkVersionIdRouteImport } from './routes/_authenticated/documents/bulk/$versionId'
 
-const VerifyEmailRoute = VerifyEmailRouteImport.update({
-  id: '/verify-email',
-  path: '/verify-email',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SignupRoute = SignupRouteImport.update({
-  id: '/signup',
-  path: '/signup',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ResetPasswordRoute = ResetPasswordRouteImport.update({
-  id: '/reset-password',
-  path: '/reset-password',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ForgotPasswordRoute = ForgotPasswordRouteImport.update({
-  id: '/forgot-password',
-  path: '/forgot-password',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AuthenticatedRoute = AuthenticatedRouteImport.update({
@@ -65,21 +39,10 @@ const AuthenticatedUsersIndexRoute = AuthenticatedUsersIndexRouteImport.update({
   path: '/users/',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
-const AuthenticatedUsageIndexRoute = AuthenticatedUsageIndexRouteImport.update({
-  id: '/usage/',
-  path: '/usage/',
-  getParentRoute: () => AuthenticatedRoute,
-} as any)
 const AuthenticatedTemplatesIndexRoute =
   AuthenticatedTemplatesIndexRouteImport.update({
     id: '/templates/',
     path: '/templates/',
-    getParentRoute: () => AuthenticatedRoute,
-  } as any)
-const AuthenticatedSubscriptionIndexRoute =
-  AuthenticatedSubscriptionIndexRouteImport.update({
-    id: '/subscription/',
-    path: '/subscription/',
     getParentRoute: () => AuthenticatedRoute,
   } as any)
 const AuthenticatedDocumentsIndexRoute =
@@ -114,34 +77,22 @@ const AuthenticatedDocumentsBulkVersionIdRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof AuthenticatedIndexRoute
-  '/forgot-password': typeof ForgotPasswordRoute
   '/login': typeof LoginRoute
-  '/reset-password': typeof ResetPasswordRoute
-  '/signup': typeof SignupRoute
-  '/verify-email': typeof VerifyEmailRoute
   '/templates/$templateId': typeof AuthenticatedTemplatesTemplateIdRoute
   '/audit/': typeof AuthenticatedAuditIndexRoute
   '/documents/': typeof AuthenticatedDocumentsIndexRoute
-  '/subscription/': typeof AuthenticatedSubscriptionIndexRoute
   '/templates/': typeof AuthenticatedTemplatesIndexRoute
-  '/usage/': typeof AuthenticatedUsageIndexRoute
   '/users/': typeof AuthenticatedUsersIndexRoute
   '/documents/bulk/$versionId': typeof AuthenticatedDocumentsBulkVersionIdRoute
   '/documents/generate/$versionId': typeof AuthenticatedDocumentsGenerateVersionIdRoute
 }
 export interface FileRoutesByTo {
-  '/forgot-password': typeof ForgotPasswordRoute
   '/login': typeof LoginRoute
-  '/reset-password': typeof ResetPasswordRoute
-  '/signup': typeof SignupRoute
-  '/verify-email': typeof VerifyEmailRoute
   '/': typeof AuthenticatedIndexRoute
   '/templates/$templateId': typeof AuthenticatedTemplatesTemplateIdRoute
   '/audit': typeof AuthenticatedAuditIndexRoute
   '/documents': typeof AuthenticatedDocumentsIndexRoute
-  '/subscription': typeof AuthenticatedSubscriptionIndexRoute
   '/templates': typeof AuthenticatedTemplatesIndexRoute
-  '/usage': typeof AuthenticatedUsageIndexRoute
   '/users': typeof AuthenticatedUsersIndexRoute
   '/documents/bulk/$versionId': typeof AuthenticatedDocumentsBulkVersionIdRoute
   '/documents/generate/$versionId': typeof AuthenticatedDocumentsGenerateVersionIdRoute
@@ -149,18 +100,12 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_authenticated': typeof AuthenticatedRouteWithChildren
-  '/forgot-password': typeof ForgotPasswordRoute
   '/login': typeof LoginRoute
-  '/reset-password': typeof ResetPasswordRoute
-  '/signup': typeof SignupRoute
-  '/verify-email': typeof VerifyEmailRoute
   '/_authenticated/': typeof AuthenticatedIndexRoute
   '/_authenticated/templates/$templateId': typeof AuthenticatedTemplatesTemplateIdRoute
   '/_authenticated/audit/': typeof AuthenticatedAuditIndexRoute
   '/_authenticated/documents/': typeof AuthenticatedDocumentsIndexRoute
-  '/_authenticated/subscription/': typeof AuthenticatedSubscriptionIndexRoute
   '/_authenticated/templates/': typeof AuthenticatedTemplatesIndexRoute
-  '/_authenticated/usage/': typeof AuthenticatedUsageIndexRoute
   '/_authenticated/users/': typeof AuthenticatedUsersIndexRoute
   '/_authenticated/documents/bulk/$versionId': typeof AuthenticatedDocumentsBulkVersionIdRoute
   '/_authenticated/documents/generate/$versionId': typeof AuthenticatedDocumentsGenerateVersionIdRoute
@@ -169,52 +114,34 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
-    | '/forgot-password'
     | '/login'
-    | '/reset-password'
-    | '/signup'
-    | '/verify-email'
     | '/templates/$templateId'
     | '/audit/'
     | '/documents/'
-    | '/subscription/'
     | '/templates/'
-    | '/usage/'
     | '/users/'
     | '/documents/bulk/$versionId'
     | '/documents/generate/$versionId'
   fileRoutesByTo: FileRoutesByTo
   to:
-    | '/forgot-password'
     | '/login'
-    | '/reset-password'
-    | '/signup'
-    | '/verify-email'
     | '/'
     | '/templates/$templateId'
     | '/audit'
     | '/documents'
-    | '/subscription'
     | '/templates'
-    | '/usage'
     | '/users'
     | '/documents/bulk/$versionId'
     | '/documents/generate/$versionId'
   id:
     | '__root__'
     | '/_authenticated'
-    | '/forgot-password'
     | '/login'
-    | '/reset-password'
-    | '/signup'
-    | '/verify-email'
     | '/_authenticated/'
     | '/_authenticated/templates/$templateId'
     | '/_authenticated/audit/'
     | '/_authenticated/documents/'
-    | '/_authenticated/subscription/'
     | '/_authenticated/templates/'
-    | '/_authenticated/usage/'
     | '/_authenticated/users/'
     | '/_authenticated/documents/bulk/$versionId'
     | '/_authenticated/documents/generate/$versionId'
@@ -222,48 +149,16 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   AuthenticatedRoute: typeof AuthenticatedRouteWithChildren
-  ForgotPasswordRoute: typeof ForgotPasswordRoute
   LoginRoute: typeof LoginRoute
-  ResetPasswordRoute: typeof ResetPasswordRoute
-  SignupRoute: typeof SignupRoute
-  VerifyEmailRoute: typeof VerifyEmailRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/verify-email': {
-      id: '/verify-email'
-      path: '/verify-email'
-      fullPath: '/verify-email'
-      preLoaderRoute: typeof VerifyEmailRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/signup': {
-      id: '/signup'
-      path: '/signup'
-      fullPath: '/signup'
-      preLoaderRoute: typeof SignupRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/reset-password': {
-      id: '/reset-password'
-      path: '/reset-password'
-      fullPath: '/reset-password'
-      preLoaderRoute: typeof ResetPasswordRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/login': {
       id: '/login'
       path: '/login'
       fullPath: '/login'
       preLoaderRoute: typeof LoginRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/forgot-password': {
-      id: '/forgot-password'
-      path: '/forgot-password'
-      fullPath: '/forgot-password'
-      preLoaderRoute: typeof ForgotPasswordRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_authenticated': {
@@ -287,25 +182,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedUsersIndexRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
-    '/_authenticated/usage/': {
-      id: '/_authenticated/usage/'
-      path: '/usage'
-      fullPath: '/usage/'
-      preLoaderRoute: typeof AuthenticatedUsageIndexRouteImport
-      parentRoute: typeof AuthenticatedRoute
-    }
     '/_authenticated/templates/': {
       id: '/_authenticated/templates/'
       path: '/templates'
       fullPath: '/templates/'
       preLoaderRoute: typeof AuthenticatedTemplatesIndexRouteImport
-      parentRoute: typeof AuthenticatedRoute
-    }
-    '/_authenticated/subscription/': {
-      id: '/_authenticated/subscription/'
-      path: '/subscription'
-      fullPath: '/subscription/'
-      preLoaderRoute: typeof AuthenticatedSubscriptionIndexRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
     '/_authenticated/documents/': {
@@ -351,9 +232,7 @@ interface AuthenticatedRouteChildren {
   AuthenticatedTemplatesTemplateIdRoute: typeof AuthenticatedTemplatesTemplateIdRoute
   AuthenticatedAuditIndexRoute: typeof AuthenticatedAuditIndexRoute
   AuthenticatedDocumentsIndexRoute: typeof AuthenticatedDocumentsIndexRoute
-  AuthenticatedSubscriptionIndexRoute: typeof AuthenticatedSubscriptionIndexRoute
   AuthenticatedTemplatesIndexRoute: typeof AuthenticatedTemplatesIndexRoute
-  AuthenticatedUsageIndexRoute: typeof AuthenticatedUsageIndexRoute
   AuthenticatedUsersIndexRoute: typeof AuthenticatedUsersIndexRoute
   AuthenticatedDocumentsBulkVersionIdRoute: typeof AuthenticatedDocumentsBulkVersionIdRoute
   AuthenticatedDocumentsGenerateVersionIdRoute: typeof AuthenticatedDocumentsGenerateVersionIdRoute
@@ -364,9 +243,7 @@ const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedTemplatesTemplateIdRoute: AuthenticatedTemplatesTemplateIdRoute,
   AuthenticatedAuditIndexRoute: AuthenticatedAuditIndexRoute,
   AuthenticatedDocumentsIndexRoute: AuthenticatedDocumentsIndexRoute,
-  AuthenticatedSubscriptionIndexRoute: AuthenticatedSubscriptionIndexRoute,
   AuthenticatedTemplatesIndexRoute: AuthenticatedTemplatesIndexRoute,
-  AuthenticatedUsageIndexRoute: AuthenticatedUsageIndexRoute,
   AuthenticatedUsersIndexRoute: AuthenticatedUsersIndexRoute,
   AuthenticatedDocumentsBulkVersionIdRoute:
     AuthenticatedDocumentsBulkVersionIdRoute,
@@ -380,11 +257,7 @@ const AuthenticatedRouteWithChildren = AuthenticatedRoute._addFileChildren(
 
 const rootRouteChildren: RootRouteChildren = {
   AuthenticatedRoute: AuthenticatedRouteWithChildren,
-  ForgotPasswordRoute: ForgotPasswordRoute,
   LoginRoute: LoginRoute,
-  ResetPasswordRoute: ResetPasswordRoute,
-  SignupRoute: SignupRoute,
-  VerifyEmailRoute: VerifyEmailRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
