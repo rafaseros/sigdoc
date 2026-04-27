@@ -4,6 +4,7 @@ Raises QuotaExceededError when a limit is exceeded.
 Returns None (no exception) when a limit is None (unlimited).
 """
 from datetime import date
+from typing import ClassVar
 from uuid import UUID
 
 from app.domain.entities.subscription_tier import SubscriptionTier
@@ -18,7 +19,21 @@ class QuotaService:
     """Enforces per-tier quota limits.
 
     Dependencies are repositories only — no circular service deps.
+
+    Nivel A (single-org-cutover):
+        _QUOTA_DISABLED = True silences all check_* methods so they return
+        immediately without querying the DB or raising QuotaExceededError.
+        get_tier_for_tenant is NOT silenced — TierPreloadMiddleware depends on
+        it for per-tenant slowapi rate-limit resolution (REQ-QSI-08).
+
+    To re-enable enforcement for Nivel B (future):
+        Set _QUOTA_DISABLED = False in this class (one-line change).
+        All check_* methods will resume normal enforcement automatically.
+        Unit tests verify this invariant via monkeypatching (REQ-QSI-11).
     """
+
+    _QUOTA_DISABLED: ClassVar[bool] = True
+    """Nivel A cutover flag. True = all quota checks are no-ops. See class docstring."""
 
     def __init__(
         self,
@@ -67,6 +82,8 @@ class QuotaService:
             raise ValueError(f"SubscriptionTier '{slug}' not found")
         return tier
 
+    # NOT silenced — TierPreloadMiddleware uses this for slowapi rate-limit lookup.
+    # See REQ-QSI-08: this method MUST always execute its full implementation.
     async def get_tier_for_tenant(self, tier_id: UUID) -> SubscriptionTier:
         """Public API: load the tier by its UUID (stored on Tenant.tier_id)."""
         return await self._load_tier_by_id(tier_id)
@@ -81,6 +98,9 @@ class QuotaService:
 
         Uses the current calendar month.
         """
+        if self._QUOTA_DISABLED:
+            return None  # Nivel A: quota enforcement silenced
+
         tier = await self._load_tier_by_id(tier_id)
         if tier.monthly_document_limit is None:
             return  # unlimited
@@ -103,6 +123,9 @@ class QuotaService:
         tier_id: UUID,
     ) -> None:
         """Raise QuotaExceededError if tenant already has max_templates."""
+        if self._QUOTA_DISABLED:
+            return None  # Nivel A: quota enforcement silenced
+
         tier = await self._load_tier_by_id(tier_id)
         if tier.max_templates is None:
             return  # unlimited
@@ -122,6 +145,9 @@ class QuotaService:
         tier_id: UUID,
     ) -> None:
         """Raise QuotaExceededError if tenant already has max_users active users."""
+        if self._QUOTA_DISABLED:
+            return None  # Nivel A: quota enforcement silenced
+
         tier = await self._load_tier_by_id(tier_id)
         if tier.max_users is None:
             return  # unlimited
@@ -149,6 +175,9 @@ class QuotaService:
         2. tier.bulk_generation_limit
         3. Fallback: 10
         """
+        if self._QUOTA_DISABLED:
+            return None  # Nivel A: quota enforcement silenced
+
         if user_bulk_override is not None:
             effective_limit = user_bulk_override
             tier_name = "user-override"
@@ -172,6 +201,9 @@ class QuotaService:
         template_id: UUID,
     ) -> None:
         """Raise QuotaExceededError if template already has max_template_shares shares."""
+        if self._QUOTA_DISABLED:
+            return None  # Nivel A: quota enforcement silenced
+
         tier = await self._load_tier_by_id(tier_id)
         if tier.max_template_shares is None:
             return  # unlimited
@@ -195,7 +227,18 @@ class QuotaService:
         Returns a dict with keys: tier, documents, templates, users.
         Each resource key maps to {used, limit, percentage_used, near_limit}.
         near_limit is True when usage >= 80% of limit (ignored when unlimited).
+
+        When _QUOTA_DISABLED is True, returns a no-limits stub (limit=None for
+        all resources). No DB queries are performed in this path.
         """
+        if self._QUOTA_DISABLED:
+            return {
+                "tier": None,
+                "documents": {"used": 0, "limit": None, "percentage_used": None, "near_limit": False},
+                "templates": {"used": 0, "limit": None, "percentage_used": None, "near_limit": False},
+                "users": {"used": 0, "limit": None, "percentage_used": None, "near_limit": False},
+            }
+
         tier = await self._load_tier_by_id(tier_id)
 
         today = date.today()

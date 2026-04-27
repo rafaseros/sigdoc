@@ -1,6 +1,13 @@
 """Unit tests for QuotaService (task 7.1).
 
 All deps are replaced with in-memory fakes; no DB or network required.
+
+Phase 2 notes (single-org-cutover):
+  - All existing enforcement test classes set _QUOTA_DISABLED = False via
+    a class-level autouse fixture so the enforcement logic runs and original
+    assertions hold (preserves Nivel B reversibility coverage).
+  - TestQuotaServiceSilencing covers the new _QUOTA_DISABLED=True behavior
+    (REQ-QSI-01 through REQ-QSI-08 and REQ-QSI-11).
 """
 from __future__ import annotations
 
@@ -113,6 +120,15 @@ def seed_users(repo: FakeUserRepository, tenant_id: UUID, count: int) -> None:
 
 
 class TestCheckDocumentQuota:
+    @pytest.fixture(autouse=True)
+    def _force_enforcement(self, monkeypatch):
+        """Ensure enforcement runs even after _QUOTA_DISABLED=True is the class default.
+
+        This preserves the original test intent for Nivel B reversibility coverage.
+        REQ-QSI-11: setting _QUOTA_DISABLED=False on the instance restores enforcement.
+        """
+        monkeypatch.setattr(QuotaService, "_QUOTA_DISABLED", False)
+
     async def test_under_limit_does_not_raise(self):
         """3 docs used, limit = 50 → passes."""
         tenant_id = uuid.uuid4()
@@ -188,6 +204,11 @@ class TestCheckDocumentQuota:
 
 
 class TestCheckTemplateLimit:
+    @pytest.fixture(autouse=True)
+    def _force_enforcement(self, monkeypatch):
+        """Ensure enforcement runs even after _QUOTA_DISABLED=True is the class default."""
+        monkeypatch.setattr(QuotaService, "_QUOTA_DISABLED", False)
+
     async def test_under_limit_does_not_raise(self):
         """3 templates, limit = 5 → passes."""
         tenant_id = uuid.uuid4()
@@ -241,6 +262,11 @@ class TestCheckTemplateLimit:
 
 
 class TestCheckUserLimit:
+    @pytest.fixture(autouse=True)
+    def _force_enforcement(self, monkeypatch):
+        """Ensure enforcement runs even after _QUOTA_DISABLED=True is the class default."""
+        monkeypatch.setattr(QuotaService, "_QUOTA_DISABLED", False)
+
     async def test_under_limit_does_not_raise(self):
         """2 users, limit = 3 → passes."""
         tenant_id = uuid.uuid4()
@@ -293,6 +319,11 @@ class TestCheckUserLimit:
 
 
 class TestCheckShareLimit:
+    @pytest.fixture(autouse=True)
+    def _force_enforcement(self, monkeypatch):
+        """Ensure enforcement runs even after _QUOTA_DISABLED=True is the class default."""
+        monkeypatch.setattr(QuotaService, "_QUOTA_DISABLED", False)
+
     async def test_under_limit_does_not_raise(self):
         """3 shares, limit = 5 → passes."""
         tenant_id = uuid.uuid4()
@@ -363,6 +394,11 @@ class TestCheckShareLimit:
 
 
 class TestCheckBulkLimit:
+    @pytest.fixture(autouse=True)
+    def _force_enforcement(self, monkeypatch):
+        """Ensure enforcement runs even after _QUOTA_DISABLED=True is the class default."""
+        monkeypatch.setattr(QuotaService, "_QUOTA_DISABLED", False)
+
     async def test_under_tier_limit_does_not_raise(self):
         """4 rows requested, tier limit = 5 → passes."""
         svc = make_service()
@@ -442,6 +478,11 @@ class TestCheckBulkLimit:
 
 
 class TestGetUsageSummary:
+    @pytest.fixture(autouse=True)
+    def _force_enforcement(self, monkeypatch):
+        """Ensure enforcement runs even after _QUOTA_DISABLED=True is the class default."""
+        monkeypatch.setattr(QuotaService, "_QUOTA_DISABLED", False)
+
     async def test_returns_correct_structure(self):
         """get_usage_summary returns a dict with tier, documents, templates, users keys."""
         tenant_id = uuid.uuid4()
@@ -531,3 +572,204 @@ class TestGetUsageSummary:
         assert tier_info["name"] == "Free"
         assert tier_info["slug"] == "free"
         assert str(FREE_TIER_ID) == tier_info["id"]
+
+
+# ---------------------------------------------------------------------------
+# TestQuotaServiceSilencing — Phase 2 / single-org-cutover
+# REQ-QSI-01 through REQ-QSI-08, REQ-QSI-11
+# ---------------------------------------------------------------------------
+
+
+class TestQuotaServiceSilencing:
+    """Covers _QUOTA_DISABLED=True (the Nivel A default) and its reversibility.
+
+    No monkeypatch needed here — _QUOTA_DISABLED defaults to True after T-2-02.
+    Individual reversibility tests flip it to False explicitly.
+    """
+
+    # ------------------------------------------------------------------
+    # REQ-QSI-02: check_user_limit is a no-op when disabled
+    # ------------------------------------------------------------------
+
+    async def test_check_user_limit_returns_when_disabled(self):
+        """With _QUOTA_DISABLED=True (default), check_user_limit returns None
+        even when the Free tier limit of 3 users is already exceeded.
+
+        Verifies REQ-QSI-02 (SCEN-QSI-03).
+        """
+        tenant_id = uuid.uuid4()
+        user_repo = FakeUserRepository()
+        # Seed 10 users — well past Free tier max_users=3
+        seed_users(user_repo, tenant_id, 10)
+
+        svc = make_service(user_repo=user_repo)
+        # _QUOTA_DISABLED is True by default (after T-2-02) — must NOT raise
+        result = await svc.check_user_limit(tenant_id=tenant_id, tier_id=FREE_TIER_ID)
+        assert result is None
+
+    # ------------------------------------------------------------------
+    # REQ-QSI-03: check_document_quota is a no-op when disabled
+    # ------------------------------------------------------------------
+
+    async def test_check_document_quota_returns_when_disabled(self):
+        """With _QUOTA_DISABLED=True, check_document_quota returns None
+        even when the tenant has generated 50 docs (exactly at Free limit).
+
+        Verifies REQ-QSI-03 (SCEN-QSI-01).
+        """
+        tenant_id = uuid.uuid4()
+        usage_repo = FakeUsageRepository()
+        # Seed 50 docs — at the Free tier monthly_document_limit=50
+        seed_usage(usage_repo, tenant_id, 50)
+
+        svc = make_service(usage_repo=usage_repo)
+        # Must NOT raise QuotaExceededError
+        result = await svc.check_document_quota(
+            tenant_id=tenant_id, tier_id=FREE_TIER_ID, additional=1
+        )
+        assert result is None
+
+    # ------------------------------------------------------------------
+    # REQ-QSI-04: check_bulk_limit is a no-op when disabled
+    # ------------------------------------------------------------------
+
+    async def test_check_bulk_limit_returns_when_disabled(self):
+        """With _QUOTA_DISABLED=True, check_bulk_limit returns None
+        even when requested_count=50 exceeds the Free tier bulk_generation_limit=5.
+
+        Verifies REQ-QSI-04 (SCEN-QSI-02).
+        """
+        svc = make_service()
+        # 50 >> Free tier bulk_generation_limit=5 — must NOT raise
+        result = await svc.check_bulk_limit(
+            tenant_id=uuid.uuid4(),
+            tier_id=FREE_TIER_ID,
+            requested_count=50,
+        )
+        assert result is None
+
+    # ------------------------------------------------------------------
+    # REQ-QSI-05: check_template_limit is a no-op when disabled
+    # ------------------------------------------------------------------
+
+    async def test_check_template_limit_returns_when_disabled(self):
+        """With _QUOTA_DISABLED=True, check_template_limit returns None
+        even when the tenant already has 5 templates (at the Free tier max_templates=5).
+
+        Verifies REQ-QSI-05.
+        """
+        tenant_id = uuid.uuid4()
+        template_repo = FakeTemplateRepository()
+        seed_templates(template_repo, tenant_id, 5)
+
+        svc = make_service(template_repo=template_repo)
+        result = await svc.check_template_limit(
+            tenant_id=tenant_id, tier_id=FREE_TIER_ID
+        )
+        assert result is None
+
+    # ------------------------------------------------------------------
+    # REQ-QSI-06: check_share_limit is a no-op when disabled
+    # ------------------------------------------------------------------
+
+    async def test_check_share_limit_returns_when_disabled(self):
+        """With _QUOTA_DISABLED=True, check_share_limit returns None
+        even when the template already has 5 shares (at the Free tier limit=5).
+
+        Verifies REQ-QSI-06.
+        """
+        tenant_id = uuid.uuid4()
+        template_repo = FakeTemplateRepository()
+        template_id = uuid.uuid4()
+        for _ in range(5):
+            template_repo._shares[(template_id, uuid.uuid4())] = None  # type: ignore[assignment]
+
+        svc = make_service(template_repo=template_repo)
+        result = await svc.check_share_limit(
+            tenant_id=tenant_id,
+            tier_id=FREE_TIER_ID,
+            template_id=template_id,
+        )
+        assert result is None
+
+    # ------------------------------------------------------------------
+    # REQ-QSI-07: get_usage_summary returns no-limits stub when disabled
+    # ------------------------------------------------------------------
+
+    async def test_get_usage_summary_returns_no_limits_stub_when_disabled(self):
+        """With _QUOTA_DISABLED=True, get_usage_summary returns a stub where
+        every tracked resource has limit=None and no DB queries are performed.
+
+        Verifies REQ-QSI-07 (SCEN-QSI-06).
+        """
+        tenant_id = uuid.uuid4()
+        svc = make_service()
+        summary = await svc.get_usage_summary(tenant_id=tenant_id, tier_id=FREE_TIER_ID)
+
+        # All three tracked resources must have limit=None (no-limits sentinel)
+        assert summary["documents"]["limit"] is None
+        assert summary["templates"]["limit"] is None
+        assert summary["users"]["limit"] is None
+
+    # ------------------------------------------------------------------
+    # REQ-QSI-08: get_tier_for_tenant is NOT silenced (triangulation)
+    # ------------------------------------------------------------------
+
+    async def test_get_tier_for_tenant_not_silenced_returns_actual_tier(self):
+        """With _QUOTA_DISABLED=True, get_tier_for_tenant still queries the DB
+        and returns the real tier object — NOT a stub.
+
+        This is required by TierPreloadMiddleware for slowapi rate-limit lookup.
+        Verifies REQ-QSI-08 (SCEN-QSI-04).
+        """
+        svc = make_service()
+        tier = await svc.get_tier_for_tenant(tier_id=FREE_TIER_ID)
+
+        # Must return the actual Free tier — not None, not a stub
+        assert tier is not None
+        assert tier.name == "Free"
+        assert tier.slug == "free"
+        assert tier.id == FREE_TIER_ID
+        # Confirm real rate limit data is present (TierPreloadMiddleware depends on this)
+        assert tier.rate_limit_generate is not None
+
+    async def test_get_tier_for_tenant_not_silenced_returns_pro_tier(self):
+        """Triangulation: get_tier_for_tenant works for a different tier too.
+
+        Confirms the method is genuinely live, not accidentally returning a
+        hardcoded Free tier.
+        """
+        svc = make_service()
+        tier = await svc.get_tier_for_tenant(tier_id=PRO_TIER_ID)
+
+        assert tier is not None
+        assert tier.name == "Pro"
+        assert tier.slug == "pro"
+        assert tier.id == PRO_TIER_ID
+
+    # ------------------------------------------------------------------
+    # REQ-QSI-11: Disabling is reversible
+    # ------------------------------------------------------------------
+
+    async def test_silencing_is_reversible_check_document_quota(self, monkeypatch):
+        """With _QUOTA_DISABLED overridden to False on the class, check_document_quota
+        raises QuotaExceededError when the tenant is over the monthly limit.
+
+        Verifies REQ-QSI-11 (SCEN-QSI-05).
+        """
+        monkeypatch.setattr(QuotaService, "_QUOTA_DISABLED", False)
+
+        tenant_id = uuid.uuid4()
+        usage_repo = FakeUsageRepository()
+        seed_usage(usage_repo, tenant_id, 50)  # at the Free limit
+
+        svc = make_service(usage_repo=usage_repo)
+        with pytest.raises(QuotaExceededError) as exc_info:
+            await svc.check_document_quota(
+                tenant_id=tenant_id, tier_id=FREE_TIER_ID, additional=1
+            )
+
+        err = exc_info.value
+        assert err.limit_type == "monthly_document_limit"
+        assert err.limit_value == 50
+        assert err.current_usage == 50

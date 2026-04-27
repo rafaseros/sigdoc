@@ -38,13 +38,13 @@
 
 ## Phase 2 — Backend QuotaService silencing
 
-### T-2-01: [RED] Write failing tests for _QUOTA_DISABLED default behavior
+### [x] T-2-01: [RED] Write failing tests for _QUOTA_DISABLED default behavior
 - **Files**: `backend/tests/unit/test_quota_service.py`
 - **REQs**: REQ-QSI-01 through REQ-QSI-07, REQ-QSI-11 / D-04
 - **Depends on**: —
 - **Description**: Add tests asserting: (a) with default `_QUOTA_DISABLED=True`, each of the 5 `check_*` methods returns without raising; (b) `get_usage_summary` returns a no-limits stub (limit=None); (c) `get_tier_for_tenant` is NOT affected (still queries DB); (d) overriding `_QUOTA_DISABLED=False` on the instance causes `check_document_quota` to raise `QuotaExceededError` when over limit (SCEN-QSI-05). Existing tests that test enforcement must set `_QUOTA_DISABLED=False` on the instance — add that override.
 
-### T-2-02: [GREEN] Implement _QUOTA_DISABLED flag in QuotaService
+### [x] T-2-02: [GREEN] Implement _QUOTA_DISABLED flag in QuotaService
 - **Files**: `backend/src/app/application/services/quota_service.py`
 - **REQs**: REQ-QSI-01 through REQ-QSI-08 / D-04
 - **Depends on**: T-2-01
