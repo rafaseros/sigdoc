@@ -65,8 +65,13 @@ class TestGetCurrentUserValid:
 
         assert result.role == "manager"
 
-    async def test_default_role_is_user(self):
-        """If 'role' claim missing from token, defaults to 'user'."""
+    async def test_default_role_is_document_generator(self):
+        """If 'role' claim missing from token, defaults to 'document_generator' (safe-deny).
+
+        Updated in T-INFRA-06: the middleware fallback changed from 'user' to
+        'document_generator' per ADR-ROLE-03 — stale tokens degrade to least
+        privilege (document_generator cannot manage templates).
+        """
         from app.config import get_settings
 
         settings = get_settings()
@@ -80,7 +85,7 @@ class TestGetCurrentUserValid:
         token = jwt.encode(payload, settings.secret_key, algorithm="HS256")
 
         result = await get_current_user(token=token)
-        assert result.role == "user"
+        assert result.role == "document_generator"
 
 
 # ---------------------------------------------------------------------------

@@ -74,9 +74,65 @@ Total new tests: **22** (verified: 495 - 473 = 22)
 
 ---
 
-## Phase 2 — Infrastructure (PENDING)
+## Phase 2 — Infrastructure (COMPLETE)
 
-T-INFRA-01 through T-INFRA-06 — not started.
+### Tasks
+
+| Task | Status | Notes |
+|------|--------|-------|
+| T-INFRA-01 | ✅ DONE | Verified: `010_pdf_export.py` is latest, `011` slot free. `down_revision="010"` confirmed. |
+| T-INFRA-02 | ✅ DONE | Created `test_role_migration.py` (9 tests): metadata, upgrade order, downgrade order — mocks `alembic.op` to verify SQL statement sequence |
+| T-INFRA-03 | ✅ DONE | Created `011_role_expansion.py`; upgrade/downgrade in correct ADR-ROLE-02 order; lossy downgrade documented in docstring |
+| T-INFRA-04 | ✅ DONE | Created `test_user_model_defaults.py` (2 tests): asserts `col.default.arg == "document_generator"` and `col.server_default.arg == "document_generator"` |
+| T-INFRA-05 | ✅ DONE | Changed `UserModel.role` column: `default="document_generator", server_default="document_generator"` |
+| T-INFRA-06 | ✅ DONE | Updated `test_middleware.py:83` (`test_default_role_is_user` → `test_default_role_is_document_generator`); updated `tenant.py:44` fallback `"user"` → `"document_generator"` |
+
+### TDD Evidence
+
+| Task | Group | RED | GREEN |
+|------|-------|-----|-------|
+| T-INFRA-01 | A | — (verification only) | `010` is latest, `011` slot free |
+| T-INFRA-04 | A | 2 FAIL (`col.default.arg == 'user'`) | 2 PASS after T-INFRA-05 |
+| T-INFRA-05 | A | — | Both defaults → `document_generator`, all GREEN |
+| T-INFRA-02 | B | 9 FAIL (`FileNotFoundError: 011_role_expansion.py`) | 9 PASS after T-INFRA-03 |
+| T-INFRA-03 | B | — | Migration created with correct ADR-ROLE-02 order; `alembic upgrade head` applied; DB at 011 head |
+| T-INFRA-06 | C | 1 FAIL (`'user' != 'document_generator'`) | 1 PASS + all 13 middleware tests GREEN |
+
+### Files Changed
+
+| File | Action | What |
+|------|--------|------|
+| `backend/src/app/infrastructure/persistence/models/user.py` | Modified | `default="user"` → `"document_generator"`, `server_default="user"` → `"document_generator"` (line 19) |
+| `backend/src/app/presentation/middleware/tenant.py` | Modified | `payload.get("role", "user")` → `payload.get("role", "document_generator")` (line 44) |
+| `backend/alembic/versions/011_role_expansion.py` | Created | Migration `revision="011"`, `down_revision="010"` — UPDATE before ALTER (ADR-ROLE-02); lossy downgrade documented |
+| `backend/tests/unit/infrastructure/test_user_model_defaults.py` | Created | 2 tests for `UserModel.role` `default` and `server_default` (T-INFRA-04) |
+| `backend/tests/integration/test_role_migration.py` | Created | 9 tests: metadata (revision/down_revision/docstring), upgrade order (execute→alter_column), downgrade order (alter_column→execute), SQL content |
+| `backend/tests/unit/test_middleware.py` | Modified | Renamed `test_default_role_is_user` → `test_default_role_is_document_generator`; updated assertion from `"user"` to `"document_generator"` (line 83, W-1 from Phase 1 verify) |
+| `openspec/changes/roles-expansion/tasks.md` | Modified | Marked T-INFRA-01..06 with ✅ |
+
+### Tests Added
+
+- `test_user_model_defaults.py`: **2 new test methods** (T-INFRA-04)
+- `test_role_migration.py`: **9 new test methods** (T-INFRA-02) — 3 metadata + 3 upgrade order + 3 downgrade order
+
+Total new tests in Phase 2: **11**
+
+### Tests Modified
+
+- `test_middleware.py`: renamed + updated 1 test (W-1 fix from Phase 1 verify report)
+
+### Migration Apply Evidence
+
+- **Alembic current**: `011 (head)` — confirmed via `alembic current`
+- **Column default**: `role character varying(20) NOT NULL DEFAULT 'document_generator'::character varying` — confirmed via `\d users`
+- **Row state**: 2 admin rows (`admin@sigdoc.local`, `devrafaseros@gmail.com`) — no `user` rows existed pre-migration, so no `template_creator` rows created (correct)
+- **New inserts**: will default to `document_generator`
+
+### Final Test Count
+
+**506 passing, 0 failing** (Phase 1 baseline: 495; Phase 2 net: +11 new, 0 regressions)
+
+---
 
 ## Phase 3 — Application Service / Auth Flow (PENDING)
 

@@ -52,37 +52,37 @@
 
 ## Phase 2 — Infrastructure (DB Migration + ORM Model)
 
-### T-INFRA-01: Verify migration slot — confirm `010` is latest and `011` is free
+### T-INFRA-01: Verify migration slot — confirm `010` is latest and `011` is free ✅
 - **Files**: `backend/alembic/versions/` (read-only verification)
 - **REQs/ADRs**: ADR-ROLE-02
 - **Depends on**: —
 - **Description**: Run `ls backend/alembic/versions/` and confirm `010_pdf_export.py` is the latest migration and no `011_*.py` file exists. This is a verification step; no file is created yet. Document `down_revision="010"` as the correct value.
 
-### T-INFRA-02: [TEST] Migration round-trip integration test — upgrade transforms `user` rows; downgrade reverses
+### T-INFRA-02: [TEST] Migration round-trip integration test — upgrade transforms `user` rows; downgrade reverses ✅
 - **Files**: `backend/tests/integration/test_role_migration.py` (NEW)
 - **REQs/ADRs**: REQ-ROLE-02, REQ-ROLE-03, SCEN-ROLE-01, SCEN-ROLE-02
 - **Depends on**: T-INFRA-01
 - **Description**: Create `test_role_migration.py`. Seed DB with roles `['admin', 'user', 'user']`. Call `upgrade()` function directly. Assert roles are `['admin', 'template_creator', 'template_creator']`. Then call `downgrade()`. Assert roles collapse to `['admin', 'user', 'user']` and server default reverts. Must FAIL (file missing) before T-INFRA-03 creates the migration.
 
-### T-INFRA-03: Implement Alembic migration `011_role_expansion.py`
+### T-INFRA-03: Implement Alembic migration `011_role_expansion.py` ✅
 - **Files**: `backend/alembic/versions/011_role_expansion.py` (NEW)
 - **REQs/ADRs**: REQ-ROLE-02, REQ-ROLE-03, ADR-ROLE-02
 - **Depends on**: T-INFRA-02
 - **Description**: Create migration with `revision="011"`, `down_revision="010"`. `upgrade()`: first `UPDATE users SET role='template_creator' WHERE role='user'`, then `ALTER COLUMN role SET DEFAULT 'document_generator'` (order is critical per ADR-ROLE-02). `downgrade()`: reverse default first, then collapse both new roles to `'user'` (lossy — document in docstring). Make T-INFRA-02 pass.
 
-### T-INFRA-04: [TEST] Verify `UserModel.role` defaults — Python-side `default` and DB-side `server_default` both equal `document_generator`
+### T-INFRA-04: [TEST] Verify `UserModel.role` defaults — Python-side `default` and DB-side `server_default` both equal `document_generator` ✅
 - **Files**: `backend/tests/unit/infrastructure/` (or extend an existing model test)
 - **REQs/ADRs**: REQ-ROLE-05, ADR-ROLE-03
 - **Depends on**: T-INFRA-01
 - **Description**: Add a unit test inspecting the `UserModel.role` column's `default` and `server_default` kwargs — assert both equal `"document_generator"`. Must FAIL before T-INFRA-05.
 
-### T-INFRA-05: Update `UserModel.role` column defaults in `user.py`
+### T-INFRA-05: Update `UserModel.role` column defaults in `user.py` ✅
 - **Files**: `backend/src/app/infrastructure/persistence/models/user.py` (line 19)
 - **REQs/ADRs**: REQ-ROLE-05, ADR-ROLE-03
 - **Depends on**: T-INFRA-04
 - **Description**: Set `default="document_generator"` and `server_default="document_generator"` on the `role` column. Make T-INFRA-04 pass.
 
-### T-INFRA-06: Update `tenant.py` middleware safe-default role from `"user"` to `"document_generator"`
+### T-INFRA-06: Update `tenant.py` middleware safe-default role from `"user"` to `"document_generator"` ✅
 - **Files**: `backend/src/app/presentation/middleware/tenant.py` (line 44)
 - **REQs/ADRs**: ADR-ROLE-03
 - **Depends on**: T-DOMAIN-02

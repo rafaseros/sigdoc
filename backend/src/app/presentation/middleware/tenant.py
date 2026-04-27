@@ -41,7 +41,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> CurrentUser:
         return CurrentUser(
             user_id=UUID(user_id),
             tenant_id=UUID(tenant_id),
-            role=payload.get("role", "user"),
+            role=payload.get("role", "document_generator"),
         )
     except JWTError:
         raise credentials_exception
