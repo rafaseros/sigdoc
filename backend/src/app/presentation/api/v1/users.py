@@ -16,6 +16,7 @@ from app.presentation.api.dependencies import require_user_manager
 from app.presentation.middleware.tenant import CurrentUser, get_tenant_session
 from app.presentation.schemas.user import (
     CreateUserRequest,
+    ResetPasswordByAdminRequest,
     UpdateUserRequest,
     UserListResponse,
     UserResponse,
@@ -218,3 +219,49 @@ async def deactivate_user(
         resource_type="user",
         resource_id=user_id,
     )
+
+
+@router.post("/{user_id}/reset-password")
+async def reset_user_password(
+    user_id: UUID,
+    request: ResetPasswordByAdminRequest,
+    admin: CurrentUser = Depends(require_admin),
+    session: AsyncSession = Depends(get_tenant_session),
+):
+    """Reset a user's password (admin only).
+
+    Hashes the new password, clears any stale password-reset tokens, and
+    emits an audit log event with USER_PASSWORD_RESET_BY_ADMIN action.
+    """
+    repo = SQLAlchemyUserRepository(session)
+
+    user = await repo.get_by_id(user_id)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Usuario no encontrado",
+        )
+
+    new_hashed = hash_password(request.new_password)
+    await repo.update(
+        user_id,
+        hashed_password=new_hashed,
+        password_reset_token=None,
+        password_reset_sent_at=None,
+    )
+
+    # Fire-and-forget audit
+    audit_svc = get_audit_service()
+    audit_svc.log(
+        actor_id=admin.user_id,
+        tenant_id=admin.tenant_id,
+        action=AuditAction.USER_PASSWORD_RESET_BY_ADMIN,
+        resource_type="user",
+        resource_id=user_id,
+        details={
+            "actor_id": str(admin.user_id),
+            "target_user_id": str(user_id),
+        },
+    )
+
+    return {"message": "Password reset successfully"}

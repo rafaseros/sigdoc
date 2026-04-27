@@ -67,3 +67,15 @@ export function useChangePassword() {
     },
   });
 }
+
+export function useResetUserPassword() {
+  return useMutation({
+    mutationFn: async (payload: { id: string; new_password: string }) => {
+      const { data } = await apiClient.post(
+        `/users/${payload.id}/reset-password`,
+        { new_password: payload.new_password },
+      );
+      return data;
+    },
+  });
+}

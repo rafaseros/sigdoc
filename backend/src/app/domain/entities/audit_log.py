@@ -27,6 +27,8 @@ class AuditAction:
     AUTH_SIGNUP = "auth.signup"
     AUTH_RESET_PASSWORD = "auth.reset_password"
 
+    USER_PASSWORD_RESET_BY_ADMIN = "user.password_reset_by_admin"
+
 
 @dataclass
 class AuditLog:

@@ -18,7 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useUpdateUser, type UserResponse } from "../api";
+import { useUpdateUser, useResetUserPassword, type UserResponse } from "../api";
 import { useAuth } from "@/shared/lib/auth";
 import { ROLE_LABELS } from "@/shared/lib/role-labels";
 
@@ -39,7 +39,12 @@ export function EditUserDialog({
   const [isActive, setIsActive] = useState(user.is_active);
   const [role, setRole] = useState(user.role);
 
+  const [showPasswordReset, setShowPasswordReset] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+
   const updateMutation = useUpdateUser();
+  const resetPasswordMutation = useResetUserPassword();
 
   const isAdmin = currentUser?.role === "admin";
   const isEditingSelf = currentUser?.id === user.id;
@@ -50,6 +55,9 @@ export function EditUserDialog({
     setFullName(user.full_name);
     setIsActive(user.is_active);
     setRole(user.role);
+    setShowPasswordReset(false);
+    setNewPassword("");
+    setConfirmPassword("");
   }, [user]);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -79,6 +87,35 @@ export function EditUserDialog({
     } catch (err: unknown) {
       const message =
         err instanceof Error ? err.message : "Error al actualizar usuario";
+      toast.error(message);
+    }
+  }
+
+  async function handleResetPassword(e: React.FormEvent) {
+    e.preventDefault();
+
+    if (newPassword.length < 8) {
+      toast.error("La nueva contraseña debe tener al menos 8 caracteres");
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      toast.error("Las contraseñas no coinciden");
+      return;
+    }
+
+    try {
+      await resetPasswordMutation.mutateAsync({
+        id: user.id,
+        new_password: newPassword,
+      });
+      toast.success("Contraseña reseteada con éxito");
+      setNewPassword("");
+      setConfirmPassword("");
+      setShowPasswordReset(false);
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error ? err.message : "Error al resetear contraseña";
       toast.error(message);
     }
   }
@@ -144,6 +181,71 @@ export function EditUserDialog({
               />
               <Label htmlFor="edit-active">Usuario activo</Label>
             </div>
+
+            {isAdmin && (
+              <div className="border-t pt-3 grid gap-3">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setShowPasswordReset((v) => !v);
+                    setNewPassword("");
+                    setConfirmPassword("");
+                  }}
+                >
+                  {showPasswordReset
+                    ? "Cancelar reseteo"
+                    : "Resetear contraseña"}
+                </Button>
+
+                {showPasswordReset && (
+                  <div className="grid gap-3">
+                    <div className="grid gap-2">
+                      <Label htmlFor="reset-new-password">
+                        Nueva contraseña *
+                      </Label>
+                      <Input
+                        id="reset-new-password"
+                        type="password"
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
+                        placeholder="Mínimo 8 caracteres"
+                        minLength={8}
+                        required
+                      />
+                    </div>
+
+                    <div className="grid gap-2">
+                      <Label htmlFor="reset-confirm-password">
+                        Confirmar nueva contraseña *
+                      </Label>
+                      <Input
+                        id="reset-confirm-password"
+                        type="password"
+                        value={confirmPassword}
+                        onChange={(e) => setConfirmPassword(e.target.value)}
+                        placeholder="Repita la nueva contraseña"
+                        minLength={8}
+                        required
+                      />
+                    </div>
+
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="sm"
+                      disabled={resetPasswordMutation.isPending}
+                      onClick={handleResetPassword}
+                    >
+                      {resetPasswordMutation.isPending
+                        ? "Reseteando..."
+                        : "Confirmar reseteo"}
+                    </Button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           <DialogFooter>
