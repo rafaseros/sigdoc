@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     gotenberg_url: str = "http://gotenberg:3000"
     gotenberg_timeout: int = 60  # seconds
 
+    # Dev recovery endpoint (NEVER enable in production)
+    enable_dev_reset: bool = False
+
 
 @lru_cache
 def get_settings() -> Settings:

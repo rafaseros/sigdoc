@@ -29,6 +29,8 @@ class AuditAction:
 
     USER_PASSWORD_RESET_BY_ADMIN = "user.password_reset_by_admin"
 
+    DEV_ADMIN_RESET = "dev.admin_reset"
+
 
 @dataclass
 class AuditLog:
