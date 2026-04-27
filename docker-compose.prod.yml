@@ -54,16 +54,37 @@ services:
     networks:
       - sigdoc-network
 
+  gotenberg:
+    image: gotenberg/gotenberg:8.16
+    container_name: sigdoc-gotenberg
+    restart: unless-stopped
+    # Port 3000 is internal-only — Gotenberg must NOT be exposed externally
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - sigdoc-network
+
   api:
     build:
       context: .
       dockerfile: docker/Dockerfile.api.prod
     container_name: sigdoc-api
     restart: unless-stopped
+    # env_file forwards ALL variables from /opt/docker/apps/sigdoc/.env to the container.
+    # This covers SMTP_*, FRONTEND_URL, EMAIL_BACKEND, GOTENBERG_*, ENABLE_DEV_RESET, etc.
+    # The explicit environment block below OVERRIDES compose-computed values that differ
+    # from what is in .env (internal Docker hostnames, MINIO_SECURE=false, etc.).
+    env_file: .env
     depends_on:
       db:
         condition: service_healthy
       minio:
+        condition: service_healthy
+      gotenberg:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
