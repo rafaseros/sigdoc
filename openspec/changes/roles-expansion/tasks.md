@@ -92,19 +92,19 @@
 
 ## Phase 3 — Application Service / Auth Flow
 
-### T-APP-01: [TEST] `/auth/refresh` re-fetches role from DB — promoted user gets updated role in new access token
+### T-APP-01: [TEST] `/auth/refresh` re-fetches role from DB — promoted user gets updated role in new access token ✅
 - **Files**: `backend/tests/integration/test_auth_refresh_role.py` (NEW)
 - **REQs/ADRs**: REQ-ROLE-09, SCEN-ROLE-06, ADR-ROLE-01
 - **Depends on**: T-INFRA-03, T-DOMAIN-06
 - **Description**: Create `test_auth_refresh_role.py`. Scenario: create `document_generator` user + refresh token; admin promotes to `template_creator`; user calls `POST /auth/refresh`; assert new access token decodes to `role="template_creator"`. Must FAIL before T-APP-02.
 
-### T-APP-02: [TEST] `/auth/refresh` returns 401 for deleted user
+### T-APP-02: [TEST] `/auth/refresh` returns 401 for deleted user ✅
 - **Files**: `backend/tests/integration/test_auth_refresh_role.py`
 - **REQs/ADRs**: REQ-ROLE-10, SCEN-ROLE-07, ADR-ROLE-01
 - **Depends on**: T-APP-01
 - **Description**: Add scenario: user holds valid refresh token; admin deletes user from DB; user calls `POST /auth/refresh`; assert HTTP 401 and no access token issued. Must FAIL before T-APP-03.
 
-### T-APP-03: Modify `/auth/refresh` handler to re-fetch user from DB
+### T-APP-03: Modify `/auth/refresh` handler to re-fetch user from DB ✅
 - **Files**: `backend/src/app/presentation/api/v1/auth.py` (near line 147)
 - **REQs/ADRs**: REQ-ROLE-09, REQ-ROLE-10, ADR-ROLE-01
 - **Depends on**: T-APP-01, T-APP-02

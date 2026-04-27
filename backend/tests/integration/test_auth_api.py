@@ -127,7 +127,28 @@ async def test_login_unknown_email_returns_401(async_client, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_refresh_with_valid_token_returns_200(async_client):
+async def test_refresh_with_valid_token_returns_200(async_client, monkeypatch):
+    """POST /auth/refresh with a valid token → 200 with new access + refresh tokens.
+
+    Updated for ADR-ROLE-01: the handler now does a DB lookup via
+    SQLAlchemyUserRepository.get_by_id, so we monkeypatch the class to return
+    a valid user (same pattern as login/me tests in this file).
+    """
+    user = User(
+        id=TEST_USER_ID,
+        tenant_id=TEST_TENANT_ID,
+        email=TEST_EMAIL,
+        hashed_password=hash_password(TEST_PASSWORD),
+        full_name="Test User",
+        role="user",
+        is_active=True,
+    )
+
+    monkeypatch.setattr(
+        "app.presentation.api.v1.auth.SQLAlchemyUserRepository",
+        _make_fake_repo_class(user),
+    )
+
     refresh_token = create_refresh_token(
         user_id=str(TEST_USER_ID),
         tenant_id=str(TEST_TENANT_ID),

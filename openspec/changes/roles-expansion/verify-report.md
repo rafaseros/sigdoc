@@ -299,3 +299,137 @@ None. W-1 from Phase 1 verify is fully resolved — `test_middleware.py:83` now 
 Phase 2 is complete, correct, and coherent. All 6 infrastructure tasks implemented following strict TDD. 506 tests pass, 0 failures, 0 regressions. Live DB confirmed at `011 (head)` with `role` server default `'document_generator'`. The W-1 WARNING from Phase 1 verify (test_middleware.py:83) is fully closed. The scope boundary (infra/migration/middleware only) was respected. One non-blocking suggestion about a loose test assertion logic in the migration test docstring check.
 
 Phase 3 (T-APP-01..03) may proceed.
+
+---
+
+## Phase 3 Verification
+
+**Change**: roles-expansion
+**Phase verified**: Phase 3 — Application Service / Auth Flow (T-APP-01..03)
+**Mode**: Strict TDD
+**Verdict**: APPROVED
+
+---
+
+### Completeness
+
+| Metric | Value |
+|--------|-------|
+| Tasks total (Phase 3) | 3 |
+| Tasks complete | 3 |
+| Tasks incomplete | 0 |
+
+All Phase 3 tasks checked off: T-APP-01, T-APP-02, T-APP-03.
+
+---
+
+### Build & Tests Execution
+
+**Build**: N/A (Python — no compile step)
+
+**Phase 3 targeted tests (run in isolation)**:
+```
+tests/integration/test_auth_refresh_role.py    2 items
+2 passed in 0.34s
+```
+
+**Full suite**:
+```
+508 passed, 37 warnings in 20.07s
+0 failed, 0 errors
+```
+
+Delta vs Phase 2 baseline (506): +2 new tests. Matches apply-progress claim exactly.
+
+**Coverage**: Not run (not required for Phase 3 scope)
+
+---
+
+### TDD Compliance
+
+| Task | RED evidence | GREEN |
+|------|-------------|-------|
+| T-APP-01 | FAIL — handler returned role='user' (fallback default) instead of 'template_creator' from DB | PASS after T-APP-03 |
+| T-APP-02 | FAIL — HTTP 200 instead of 401 (handler had no user-existence check) | PASS after T-APP-03 |
+| T-APP-03 | — | Handler fixed; both T-APP-01 and T-APP-02 GREEN |
+
+---
+
+### Spec Compliance Matrix
+
+| Requirement | Scenario | Test | Result |
+|-------------|----------|------|--------|
+| REQ-ROLE-09: refresh reads role from DB | SCEN-ROLE-06: promoted user gets updated role | `test_auth_refresh_role.py::test_refresh_returns_db_role_after_promotion` | ✅ COMPLIANT |
+| REQ-ROLE-10: refresh rejects deleted user | SCEN-ROLE-07: deleted user → 401 | `test_auth_refresh_role.py::test_refresh_returns_401_for_deleted_user` | ✅ COMPLIANT |
+| Regression: existing refresh test | valid token → 200 | `test_auth_api.py::test_refresh_with_valid_token_returns_200` | ✅ COMPLIANT |
+
+**Compliance summary**: 3/3 Phase 3 scenarios compliant.
+
+---
+
+### Correctness (Static — Structural Evidence)
+
+| Check | Status | Notes |
+|-------|--------|-------|
+| `payload.get("role", ...)` absent from `/auth/refresh` handler | ✅ Confirmed | `grep -n "payload.get.*role"` on auth.py → no output |
+| `repo.get_by_id(UUID(sub))` called in handler | ✅ Confirmed | Line 161: `user = await repo.get_by_id(_UUID(payload["sub"]))` |
+| `user is None or not user.is_active` guard raises HTTP 401 | ✅ Confirmed | Lines 163–167 |
+| `role=user.role` used when minting access token | ✅ Confirmed | Line 173: `role=user.role,  # always from DB, never from token payload` |
+| `AsyncSession = Depends(get_session)` injected into handler | ✅ Confirmed | Line 137 of handler signature |
+| `SQLAlchemyUserRepository` imported at module level | ✅ Confirmed | Line 19 of auth.py imports |
+| `test_refresh_with_valid_token_returns_200` updated with monkeypatch | ✅ Confirmed | Lines 130–165 of test_auth_api.py — monkeypatches repo, seeds user with is_active=True |
+| `test_auth_refresh_role.py` has SCEN-ROLE-06 test | ✅ Confirmed | `test_refresh_returns_db_role_after_promotion` — decodes new access token, asserts `payload["role"] == "template_creator"` |
+| `test_auth_refresh_role.py` has SCEN-ROLE-07 test | ✅ Confirmed | `test_refresh_returns_401_for_deleted_user` — asserts status 401 AND `"access_token" not in data` |
+| No domain layer changes (Phase 1 intact) | ✅ Confirmed | `permissions.py` and `user.py` entity unchanged |
+| No infrastructure changes (Phase 2 intact) | ✅ Confirmed | `UserModel.role` defaults, `011_role_expansion.py`, `tenant.py` all intact |
+| No presentation/schema changes | ✅ Confirmed | Only `auth.py` touched |
+| No frontend changes | ✅ Confirmed | git diff confirms zero frontend files modified in Phase 3 commits |
+
+---
+
+### Coherence (Design)
+
+| Decision | Followed? | Notes |
+|----------|-----------|-------|
+| ADR-ROLE-01: sequence — decode → validate type=refresh → fetch user → 401 if missing/inactive → mint token | ✅ Yes | Exact sequence at lines 146–179 |
+| ADR-ROLE-01: `payload.get("role", "user")` bug eliminated | ✅ Yes | Confirmed absent via static analysis |
+| ADR-ROLE-01: backward compatible (refresh tokens without role claim still work) | ✅ Yes | Refresh tokens never carry role in this codebase; the claim was never there to begin with |
+| ADR-TEST-01: new test file `tests/integration/test_auth_refresh_role.py` | ✅ Yes | File exists, 2 tests |
+| ADR-TEST-01: pattern matches existing auth tests (monkeypatch SQLAlchemyUserRepository) | ✅ Yes | Uses same `_make_repo_class` pattern as `test_auth_api.py` |
+| Phase 3 scope: auth.py only + 1 new test file + 1 updated test | ✅ Yes | Clean boundary maintained |
+
+---
+
+### Issues Found
+
+**CRITICAL** (must fix before archive):
+None.
+
+**WARNING** (should fix):
+None.
+
+**SUGGESTION**:
+- `test_refresh_with_valid_token_returns_200` (line 67) still constructs the user with `role="user"` (the legacy role value). Since the handler reads `user.role` from DB and returns it in the token, this means the test inadvertently verifies that a legacy `"user"` role value propagates through the refresh flow. It passes because the test only checks `status_code == 200` and `"access_token" in data` — it does not decode the token. This is non-blocking (the test remains valid), but adding a role assertion `assert payload["role"] == "user"` or updating the role to `"document_generator"` would make the test self-documenting. Non-blocking.
+
+---
+
+### Test Counts
+
+| Metric | Value |
+|--------|-------|
+| Phase 2 baseline | 506 |
+| After Phase 3 | 508 |
+| Net new (Phase 3) | +2 |
+| Breakdown | `test_auth_refresh_role.py`: 2 new tests (SCEN-ROLE-06, SCEN-ROLE-07); `test_auth_api.py`: 1 existing test updated (no new count) |
+| Failures | 0 |
+| Regressions | 0 |
+
+---
+
+### Verdict
+
+**APPROVED**
+
+Phase 3 is complete, correct, and coherent. Both auth flow tasks implemented following strict TDD. 508 tests pass, 0 failures, 0 regressions. The `/auth/refresh` handler correctly re-fetches the user from DB via `repo.get_by_id`, returns HTTP 401 for missing/inactive users, and derives `role` exclusively from the DB row — the `payload.get("role", ...)` bug is fully eliminated. REQ-ROLE-09 and REQ-ROLE-10 are satisfied with behavioral test evidence. Phase 1 and Phase 2 work is intact with zero regressions.
+
+Phase 4 (T-PRES-01..10) may proceed.

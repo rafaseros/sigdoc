@@ -131,8 +131,17 @@ async def login(request: Request, body: LoginRequest, session: AsyncSession = De
 
 @router.post("/refresh", response_model=TokenResponse)
 @limiter.limit(tier_limit_refresh)
-async def refresh_token(request: Request, body: RefreshRequest):
-    """Refresh access token using refresh token."""
+async def refresh_token(
+    request: Request,
+    body: RefreshRequest,
+    session: AsyncSession = Depends(get_session),
+):
+    """Refresh access token using refresh token.
+
+    ADR-ROLE-01: role is re-fetched from DB (never from the token payload).
+    REQ-ROLE-09: new access token carries the DB-current role.
+    REQ-ROLE-10: returns 401 if user no longer exists or is inactive.
+    """
     try:
         payload = decode_token(body.refresh_token)
         if payload.get("type") != "refresh":
@@ -140,22 +149,34 @@ async def refresh_token(request: Request, body: RefreshRequest):
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid token type",
             )
-        return TokenResponse(
-            access_token=create_access_token(
-                user_id=payload["sub"],
-                tenant_id=payload["tenant_id"],
-                role=payload.get("role", "user"),
-            ),
-            refresh_token=create_refresh_token(
-                user_id=payload["sub"],
-                tenant_id=payload["tenant_id"],
-            ),
-        )
     except Exception:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired refresh token",
         )
+
+    # Re-fetch user from DB — single source of truth for role (ADR-ROLE-01)
+    from uuid import UUID as _UUID
+    repo = SQLAlchemyUserRepository(session)
+    user = await repo.get_by_id(_UUID(payload["sub"]))
+
+    if user is None or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found or inactive",
+        )
+
+    return TokenResponse(
+        access_token=create_access_token(
+            user_id=payload["sub"],
+            tenant_id=payload["tenant_id"],
+            role=user.role,  # always from DB, never from token payload
+        ),
+        refresh_token=create_refresh_token(
+            user_id=payload["sub"],
+            tenant_id=payload["tenant_id"],
+        ),
+    )
 
 
 @router.get("/me", response_model=UserResponse)
