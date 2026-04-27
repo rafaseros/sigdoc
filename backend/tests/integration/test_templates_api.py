@@ -453,6 +453,116 @@ async def test_list_response_has_access_type_field(
 
 
 @pytest.mark.asyncio
+async def test_upload_response_returns_full_paragraph_contexts_for_multi_var_paragraphs(
+    async_client, app, auth_headers, fake_template_repo, fake_storage, fake_audit_repo
+):
+    """POSTing a real .docx with multi-variable paragraphs must produce variables_meta
+    where co-occurring variables share the IDENTICAL full paragraph context string,
+    with no truncation markers.  This locks the handler→service→engine→schema wiring."""
+    import io as _io
+
+    from docx import Document as _Document
+
+    from app.application.services.audit_service import AuditService
+    from app.application.services.template_service import TemplateService
+    from app.application.services import get_template_service
+    from app.infrastructure.templating.docxtpl_engine import DocxTemplateEngine
+
+    # Build a real .docx in memory with two paragraphs:
+    #  - Para 1: three variables in a single long sentence (tests shared-context invariant)
+    #  - Para 2: one isolated variable (ensures paragraphs are not conflated)
+    multi_var_para = (
+        "La empresa {{ nombre_empresa }} con NIT {{ numero }}, "
+        "en la ciudad de {{ ciudad }}."
+    )
+    solo_var_para = "Fecha de vigencia del contrato: {{ fecha_vigencia }}."
+
+    doc = _Document()
+    doc.add_paragraph().add_run(multi_var_para)
+    doc.add_paragraph().add_run(solo_var_para)
+    buf = _io.BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    docx_bytes = buf.read()
+
+    # Wire the real engine through both the validation call and the service
+    real_engine = DocxTemplateEngine()
+
+    async def _override_template_service() -> TemplateService:
+        _audit_svc = AuditService(audit_repo=fake_audit_repo)
+        return TemplateService(
+            repository=fake_template_repo,
+            storage=fake_storage,
+            engine=real_engine,
+            audit_service=_audit_svc,
+        )
+
+    original_override = app.dependency_overrides.get(get_template_service)
+    app.dependency_overrides[get_template_service] = _override_template_service
+
+    import app.presentation.api.v1.templates as _tpl_module
+    original_get_engine = _tpl_module.get_template_engine
+    _tpl_module.get_template_engine = lambda: real_engine
+
+    try:
+        response = await async_client.post(
+            "/api/v1/templates/upload",
+            headers=auth_headers,
+            data={"name": "Contrato multi-variable"},
+            files={
+                "file": (
+                    "contrato.docx",
+                    _io.BytesIO(docx_bytes),
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                )
+            },
+        )
+
+        assert response.status_code == 201, f"Upload failed: {response.text}"
+        template_id = response.json()["id"]
+
+        # Retrieve the full template detail (TemplateUploadResponse lacks versions)
+        detail_response = await async_client.get(
+            f"/api/v1/templates/{template_id}", headers=auth_headers
+        )
+        assert detail_response.status_code == 200
+        data = detail_response.json()
+
+        vm = data["versions"][0]["variables_meta"]
+        assert isinstance(vm, list) and len(vm) > 0, "variables_meta must be non-empty"
+
+        nombre_meta = next(m for m in vm if m["name"] == "nombre_empresa")
+        numero_meta  = next(m for m in vm if m["name"] == "numero")
+        ciudad_meta  = next(m for m in vm if m["name"] == "ciudad")
+
+        # All three co-occurring variables must share the exact same context string
+        assert (
+            nombre_meta["contexts"][0]
+            == numero_meta["contexts"][0]
+            == ciudad_meta["contexts"][0]
+        ), "Co-occurring variables must share the identical full paragraph context"
+
+        # No truncation markers in any context
+        for var_meta in [nombre_meta, numero_meta, ciudad_meta]:
+            for ctx in var_meta["contexts"]:
+                assert "..." not in ctx, (
+                    f"Context for '{var_meta['name']}' must not be truncated, got: {ctx!r}"
+                )
+
+        # Isolated variable in second paragraph must NOT share context with multi-var para
+        fecha_meta = next(m for m in vm if m["name"] == "fecha_vigencia")
+        assert fecha_meta["contexts"][0] != nombre_meta["contexts"][0], (
+            "Variables from different paragraphs must not share the same context string"
+        )
+    finally:
+        if original_override is not None:
+            app.dependency_overrides[get_template_service] = original_override
+        else:
+            app.dependency_overrides.pop(get_template_service, None)
+        _tpl_module.get_template_engine = original_get_engine
+
+
+@pytest.mark.asyncio
 async def test_admin_can_delete_any_template(
     async_client, app, auth_headers, fake_template_repo
 ):
