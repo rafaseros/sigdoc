@@ -1301,6 +1301,115 @@ class TestUploadTemplateWithQuota:
         assert len(fake_template_repo._templates) == 1
 
 
+# ---------------------------------------------------------------------------
+# Bug fix: upload_new_version must persist variables_meta
+# ---------------------------------------------------------------------------
+
+
+class TestUploadNewVersionVariablesMeta:
+    """variables_meta extracted from docx must survive the round-trip through
+    upload_new_version → TemplateVersion entity → repo storage."""
+
+    async def test_new_version_persists_variables_meta(
+        self,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        """variables_meta is stored on the new version, not silently discarded."""
+        service = make_service(fake_template_repo, fake_storage, fake_template_engine)
+
+        # Upload initial version (v1)
+        fake_template_engine.variables_to_return = ["alpha"]
+        result, tenant_id, _ = await upload_template_helper(service, variables=["alpha"])
+
+        template = list(fake_template_repo._templates.values())[0]
+        template_id = str(template.id)
+
+        # Upload v2 with richer variables
+        fake_template_engine.variables_to_return = ["foo", "bar"]
+        await service.upload_new_version(
+            template_id=template_id,
+            file_bytes=b"v2-bytes",
+            file_size=8,
+            tenant_id=tenant_id,
+        )
+
+        # Retrieve the v2 version entity from the fake repo
+        v2 = await fake_template_repo.get_version(template.id, 2)
+        assert v2 is not None, "Version 2 must exist in the repo"
+        assert v2.variables_meta is not None, "variables_meta must not be None on v2"
+        assert len(v2.variables_meta) == 2, (
+            f"Expected 2 variable entries, got {len(v2.variables_meta)}: {v2.variables_meta}"
+        )
+        names = {entry["name"] for entry in v2.variables_meta}
+        assert names == {"foo", "bar"}
+
+    async def test_new_version_variables_meta_matches_engine_output(
+        self,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        """The exact structure returned by engine.extract_variables is preserved."""
+        service = make_service(fake_template_repo, fake_storage, fake_template_engine)
+
+        fake_template_engine.variables_to_return = ["name"]
+        result, tenant_id, _ = await upload_template_helper(service, variables=["name"])
+        template = list(fake_template_repo._templates.values())[0]
+        template_id = str(template.id)
+
+        # v2 with a single known variable
+        fake_template_engine.variables_to_return = ["recipient"]
+        await service.upload_new_version(
+            template_id=template_id,
+            file_bytes=b"v2",
+            file_size=2,
+            tenant_id=tenant_id,
+        )
+
+        v2 = await fake_template_repo.get_version(template.id, 2)
+        assert v2 is not None
+        # FakeTemplateEngine produces: [{"name": "recipient", "contexts": ["context for recipient"]}]
+        expected = [{"name": "recipient", "contexts": ["context for recipient"]}]
+        assert v2.variables_meta == expected, (
+            f"variables_meta mismatch.\nExpected: {expected}\nGot:      {v2.variables_meta}"
+        )
+
+    async def test_initial_version_variables_meta_still_intact(
+        self,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        """Regression guard: v1 variables_meta is not disturbed by a v2 upload."""
+        service = make_service(fake_template_repo, fake_storage, fake_template_engine)
+
+        fake_template_engine.variables_to_return = ["original"]
+        result, tenant_id, _ = await upload_template_helper(service, variables=["original"])
+        template = list(fake_template_repo._templates.values())[0]
+        template_id = str(template.id)
+
+        v1 = await fake_template_repo.get_version(template.id, 1)
+        assert v1 is not None
+        assert v1.variables_meta is not None and len(v1.variables_meta) == 1
+
+        # Upload v2 with different variables
+        fake_template_engine.variables_to_return = ["new_var"]
+        await service.upload_new_version(
+            template_id=template_id,
+            file_bytes=b"v2",
+            file_size=2,
+            tenant_id=tenant_id,
+        )
+
+        # v1 must be unchanged
+        v1_after = await fake_template_repo.get_version(template.id, 1)
+        assert v1_after is not None
+        assert v1_after.variables_meta is not None
+        assert v1_after.variables_meta[0]["name"] == "original"
+
+
 class TestShareTemplateWithQuota:
     """share_template() propagates QuotaExceededError from quota_service."""
 

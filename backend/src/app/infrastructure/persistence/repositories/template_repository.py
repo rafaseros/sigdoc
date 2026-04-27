@@ -84,7 +84,7 @@ class SQLAlchemyTemplateRepository(TemplateRepositoryPort):
                 version=version.version,
                 minio_path=version.minio_path,
                 variables=version.variables,
-                variables_meta=[],
+                variables_meta=version.variables_meta or [],
                 file_size=version.file_size,
             )
         else:

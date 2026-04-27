@@ -222,6 +222,7 @@ class TemplateService:
             version=new_version,
             minio_path=minio_path,
             variables=variables,
+            variables_meta=variables_meta,
             file_size=file_size,
         )
         await self._repository.create_version(version_entity)
