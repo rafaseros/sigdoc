@@ -389,8 +389,27 @@ async def list_documents(
     current_user: CurrentUser = Depends(get_current_user),
     service: DocumentService = Depends(get_document_service),
 ):
-    """List generated documents with pagination."""
-    created_by = None if can_view_all_documents(current_user.role) else str(current_user.user_id)
+    """List generated documents with pagination.
+
+    REQ-OWN-DOCS: When template_id is provided, the template's owner sees all
+    documents from that template (bypasses created_by filter).  Admins always
+    see everything.  All other users see only their own documents.
+    """
+    if can_view_all_documents(current_user.role):
+        # Admin — no filter
+        created_by = None
+    elif template_id is not None:
+        # Check if the current user owns this template
+        owner_id = await service.get_template_owner_id(template_id)
+        if owner_id == current_user.user_id:
+            # Template owner — see all documents from this template
+            created_by = None
+        else:
+            # Not the owner — only their own documents
+            created_by = str(current_user.user_id)
+    else:
+        created_by = str(current_user.user_id)
+
     documents, total = await service.list_documents(page=page, size=size, template_id=template_id, created_by=created_by)
 
     items = [

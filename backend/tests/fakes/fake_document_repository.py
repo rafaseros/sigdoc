@@ -11,6 +11,16 @@ class FakeDocumentRepository(DocumentRepository):
     def __init__(self) -> None:
         self._documents: dict[UUID, Document] = {}
         self._update_pdf_fields_calls: list[dict] = []  # call recorder for assertions
+        # Maps template_version_id → template_id so list_paginated can filter by template_id
+        self._version_to_template: dict[UUID, UUID] = {}
+
+    def register_template_version(self, version_id: UUID, template_id: UUID) -> None:
+        """Register the template_id for a given version_id.
+
+        Call this in test setup after seeding a template version so that
+        list_paginated can correctly filter documents by template_id.
+        """
+        self._version_to_template[version_id] = template_id
 
     async def create(self, document: Document) -> Document:
         # Simulate DB-assigned created_at so API responses pass schema validation
@@ -70,12 +80,17 @@ class FakeDocumentRepository(DocumentRepository):
         items = list(self._documents.values())
 
         if template_id is not None:
-            # Filter by template_version_id is not directly possible without joining;
-            # the fake stores Documents directly so we match on template_version_id
-            # that was set on the document (tests must set this to the correct version id).
-            # For tests that need template_id filtering, the caller should use
-            # the version_id from the template version.
-            items = [d for d in items if d.template_version_id == template_id]
+            # Resolve template_id → set of version_ids using the registered mapping.
+            # If no mapping is registered for a version, fall back to direct comparison
+            # (legacy behaviour for tests that set template_version_id to the template UUID).
+            def _matches_template(doc: Document) -> bool:
+                mapped = self._version_to_template.get(doc.template_version_id)
+                if mapped is not None:
+                    return mapped == template_id
+                # Fallback: direct comparison (backwards-compat with old tests)
+                return doc.template_version_id == template_id
+
+            items = [d for d in items if _matches_template(d)]
 
         if created_by is not None:
             items = [d for d in items if d.created_by == created_by]

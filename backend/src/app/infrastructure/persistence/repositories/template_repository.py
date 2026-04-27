@@ -361,3 +361,10 @@ class SQLAlchemyTemplateRepository(TemplateRepositoryPort):
         )
         result = await self._session.execute(stmt)
         return int(result.scalar_one())
+
+    async def get_owner_id(self, template_id: UUID) -> UUID | None:
+        """Return the created_by (owner) UUID for the given template, or None if not found."""
+        stmt = select(TemplateModel.created_by).where(TemplateModel.id == template_id)
+        result = await self._session.execute(stmt)
+        row = result.scalar_one_or_none()
+        return row

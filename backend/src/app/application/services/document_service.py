@@ -260,6 +260,15 @@ class DocumentService:
                 ip_address=self._ip_address,
             )
 
+    async def get_template_owner_id(self, template_id: str) -> uuid.UUID | None:
+        """Return the owner (created_by) UUID for the given template_id string.
+
+        Returns None if the template does not exist.
+        Used by the documents list endpoint to bypass the created_by filter
+        for the template's owner (REQ-OWN-DOCS).
+        """
+        return await self._tpl_repo.get_owner_id(uuid.UUID(template_id))
+
     async def list_documents(
         self,
         page: int = 1,

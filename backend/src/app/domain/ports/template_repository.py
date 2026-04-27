@@ -106,3 +106,8 @@ class TemplateRepository(ABC):
     async def count_shares(self, template_id: UUID) -> int:
         """Return the number of active share records for the given template."""
         ...
+
+    @abstractmethod
+    async def get_owner_id(self, template_id: UUID) -> UUID | None:
+        """Return the created_by (owner) UUID for the given template, or None if not found."""
+        ...

@@ -219,3 +219,10 @@ class FakeTemplateRepository(TemplateRepository):
     async def count_shares(self, template_id: UUID) -> int:
         """Return number of share records for the given template."""
         return sum(1 for (tid, _) in self._shares if tid == template_id)
+
+    async def get_owner_id(self, template_id: UUID) -> UUID | None:
+        """Return the owner (created_by) UUID for the given template, or None."""
+        template = self._templates.get(template_id)
+        if template is None:
+            return None
+        return template.created_by
