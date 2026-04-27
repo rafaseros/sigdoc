@@ -218,19 +218,19 @@
 
 ## Phase 6 — Integration Tests + Regression Gate
 
-### T-REG-01: [TEST] Document permissions truth table extended for `template_creator` and `document_generator`
+### T-REG-01: [TEST] Document permissions truth table extended for `template_creator` and `document_generator` ✅
 - **Files**: `backend/tests/unit/domain/test_document_permissions.py`
 - **REQs/ADRs**: REQ-ROLE-01
 - **Depends on**: T-DOMAIN-02
 - **Description**: Extend the `DOWNLOAD_FORMAT_PERMISSIONS` truth table tests to include rows for both new roles. Also update `document_permissions.py` if any `"user"` key exists in `DOWNLOAD_FORMAT_PERMISSIONS` that must be renamed (verify in source). Must pass after T-DOMAIN-02.
 
-### T-REG-02: Run full backend test suite — 473 baseline + N new tests, 0 failures
+### T-REG-02: Run full backend test suite — 473 baseline + N new tests, 0 failures ✅
 - **Files**: `backend/` (all test files)
 - **REQs/ADRs**: All REQs, D-10
 - **Depends on**: T-PRES-10, T-APP-03, T-INFRA-03, T-REG-01
 - **Description**: Execute `docker compose -f docker/docker-compose.yml exec -T api pytest -q`. Verify 0 failures, 0 errors. New test count is 473 + N (N = total new test functions added across all new/extended test files). Document the final count.
 
-### T-REG-03: Frontend typecheck + lint — 0 errors
+### T-REG-03: Frontend typecheck + lint — 0 errors ✅
 - **Files**: `frontend/` (all .ts/.tsx)
 - **REQs/ADRs**: ADR-FE-01, ADR-FE-02, ADR-FE-03
 - **Depends on**: T-FE-06
@@ -240,13 +240,13 @@
 
 ## Phase 7 — Operational / Docs
 
-### T-OPS-01: Verify no new production dependencies added; flag if otherwise
+### T-OPS-01: Verify no new production dependencies added; flag if otherwise ✅
 - **Files**: `backend/pyproject.toml`, `frontend/package.json` (read-only)
 - **REQs/ADRs**: —
 - **Depends on**: T-REG-02
 - **Description**: Confirm neither `pyproject.toml` nor `package.json` gained new runtime deps for this change. If any were added, document them here and flag that `docker compose build api` is required. Expected result: no new deps.
 
-### T-OPS-02: Update `backend/README.md` role taxonomy note — 3 roles, migration ordering caveat
+### T-OPS-02: Update `backend/README.md` role taxonomy note — 3 roles, migration ordering caveat ✅
 - **Files**: `backend/README.md`
 - **REQs/ADRs**: —
 - **Depends on**: T-REG-02

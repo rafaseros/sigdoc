@@ -134,22 +134,242 @@ Total new tests in Phase 2: **11**
 
 ---
 
-## Phase 3 — Application Service / Auth Flow (PENDING)
+## Phase 3 — Application Service / Auth Flow (COMPLETE)
 
-T-APP-01 through T-APP-03 — not started.
+### Tasks
 
-## Phase 4 — Presentation (PENDING)
+| Task | Status | Notes |
+|------|--------|-------|
+| T-APP-01 | ✅ DONE | Created `test_auth_refresh_role.py` — SCEN-ROLE-06: promoted user gets updated role in new access token |
+| T-APP-02 | ✅ DONE | Added SCEN-ROLE-07 to `test_auth_refresh_role.py` — deleted user → 401 |
+| T-APP-03 | ✅ DONE | Modified `/auth/refresh` handler: DB re-fetch for user, `role=user.role` from DB, 401 for missing/inactive |
 
-T-PRES-01 through T-PRES-10 — not started.
+### TDD Evidence
 
-## Phase 5 — Frontend (PENDING)
+| Task | RED | GREEN |
+|------|-----|-------|
+| T-APP-01 | FAIL — handler returned role='user' (fallback default) not 'template_creator' from DB | PASS after T-APP-03 |
+| T-APP-02 | FAIL — HTTP 200 not 401 (no user-existence check) | PASS after T-APP-03 |
+| T-APP-03 | — | Both T-APP-01 and T-APP-02 GREEN |
 
-T-FE-01 through T-FE-06 — not started.
+### Files Changed
 
-## Phase 6 — Regression Gate (PENDING)
+| File | Action | What |
+|------|--------|------|
+| `backend/src/app/presentation/api/v1/auth.py` | Modified | `/auth/refresh` handler: DB user re-fetch, `role=user.role`, HTTP 401 for missing/inactive |
+| `backend/tests/integration/test_auth_refresh_role.py` | Created | 2 integration tests: SCEN-ROLE-06 (promoted user role), SCEN-ROLE-07 (deleted user 401) |
+| `backend/tests/integration/test_auth_api.py` | Modified | `test_refresh_with_valid_token_returns_200` updated to monkeypatch SQLAlchemyUserRepository |
 
-T-REG-01 through T-REG-03 — not started.
+### Tests Added
 
-## Phase 7 — Operational (PENDING)
+- `test_auth_refresh_role.py`: **2 new test methods**
 
-T-OPS-01 through T-OPS-02 — not started.
+### Final Test Count
+
+**508 passing, 0 failing** (Phase 2 baseline: 506; Phase 3 net: +2 new, 0 regressions)
+
+---
+
+## Phase 4 — Presentation (COMPLETE)
+
+### Tasks
+
+| Task | Status | Notes |
+|------|--------|-------|
+| T-PRES-01 | ✅ DONE | Created `test_role_validation.py` — 7 unit tests for UpdateUserRequest schema |
+| T-PRES-02 | ✅ DONE | Updated `UpdateUserRequest.validate_role` allow-list to 3-role set |
+| T-PRES-03 | ✅ DONE | Extended `test_users_api.py` — `POST /users` without role → `document_generator` |
+| T-PRES-04 | ✅ DONE | Updated `users.py:65` — explicit `role="document_generator"` |
+| T-PRES-05 | ✅ DONE | Added `require_template_manager = require_capability(can_manage_own_templates)` to `dependencies.py` |
+| T-PRES-06 | ✅ DONE | Created `test_template_endpoint_gates.py` — `document_generator` → upload → 403 |
+| T-PRES-07 | ✅ DONE | `template_creator` → upload → 201 |
+| T-PRES-08 | ✅ DONE | `admin` → upload → 201; `document_generator` → versions → 403; `template_creator` → versions → 201 |
+| T-PRES-09 | ✅ DONE | Wired `Depends(require_template_manager)` on `POST /templates/upload` and `POST /templates/{id}/versions` |
+| T-PRES-10 | ✅ DONE | `document_generator` + shared → 201; + non-shared → 403 (service layer) |
+
+### TDD Evidence
+
+| Task | RED | GREEN |
+|------|-----|-------|
+| T-PRES-01 | 4 FAIL (new roles not accepted; user not rejected) | 7 PASS after T-PRES-02 |
+| T-PRES-02 | — | 3-role allow-list set; all 7 unit tests GREEN |
+| T-PRES-03 | 1 FAIL (role was 'user') | 1 PASS after T-PRES-04 |
+| T-PRES-04 | — | `users.py:65` → `document_generator`; 8 users tests GREEN |
+| T-PRES-05 | — | `require_template_manager` added; behavior covered by T-PRES-06..10 |
+| T-PRES-06 | 1 FAIL (got 201, expected 403 — no gate) | PASS after T-PRES-09 |
+| T-PRES-07..10 | Some gates via service layer already; some needed T-PRES-09 | All 7 gate tests GREEN after T-PRES-09 |
+
+### Files Changed
+
+| File | Action | What |
+|------|--------|------|
+| `backend/src/app/presentation/schemas/user.py` | Modified | `validate_role` allow-list → `("admin", "template_creator", "document_generator")` |
+| `backend/src/app/presentation/api/v1/users.py` | Modified | `role="user"` → `role="document_generator"` (line 65) |
+| `backend/src/app/presentation/api/dependencies.py` | Modified | Added `require_template_manager = require_capability(can_manage_own_templates)` |
+| `backend/src/app/presentation/api/v1/templates.py` | Modified | `POST /templates/upload` and `POST /templates/{id}/versions` → `Depends(require_template_manager)` |
+| `backend/tests/unit/presentation/test_role_validation.py` | Created | 7 unit tests for UpdateUserRequest role validation |
+| `backend/tests/integration/test_users_api.py` | Modified | +1 test (SCEN-ROLE-05) + 8 fixture role migrations (`user` → `document_generator`) |
+| `backend/tests/integration/test_templates_api.py` | Modified | 5 fixture role migrations |
+| `backend/tests/integration/test_template_endpoint_gates.py` | Created | 7 integration tests: SCEN-TMP-02..08 |
+
+### Tests Added
+
+- `test_role_validation.py` (NEW): **7 new unit tests** (T-PRES-01)
+- `test_users_api.py`: **1 new integration test** (T-PRES-03)
+- `test_template_endpoint_gates.py` (NEW): **7 new integration tests** (T-PRES-06..10)
+
+Total new tests in Phase 4: **15**
+
+### Final Test Count
+
+**523 passing, 0 failing** (Phase 3 baseline: 508; Phase 4 net: +15 new, 0 regressions)
+
+---
+
+## Phase 5 — Frontend (COMPLETE)
+
+### Tasks
+
+| Task | Status | Notes |
+|------|--------|-------|
+| T-FE-01 | ✅ DONE | Created `permissions.ts` with `Role` type and 4 capability helpers |
+| T-FE-02 | ✅ DONE | Created `role-labels.ts` with `ROLE_LABELS` + `getRoleLabel` (name deviates from ADR `roleLabel` — cosmetic) |
+| T-FE-03 | ✅ DONE | Wrapped `<UploadTemplateDialog />` with `{canUploadTemplates(user?.role) && ...}` |
+| T-FE-04 | ✅ DONE | `EditUserDialog` expanded to 3 role options via `ROLE_LABELS`; legacy `"user"` removed |
+| T-FE-05 | ✅ DONE | Added `<Badge variant="secondary" className="text-xs">{getRoleLabel(user?.role)}</Badge>` to authenticated header |
+| T-FE-06 | ✅ DONE | Read-only verification — `/users` and `/audit` guarded by `{isAdmin && ...}`; `/usage` open to all (intentional) |
+
+### Files Changed
+
+| File | Action | What |
+|------|--------|------|
+| `frontend/src/shared/lib/permissions.ts` | Created | `Role` type + `canUploadTemplates`, `canManageUsers`, `canViewAudit`, `canViewTenantUsage` |
+| `frontend/src/shared/lib/role-labels.ts` | Created | `ROLE_LABELS: Record<Role, string>` + `getRoleLabel` helper with `"Usuario"` fallback |
+| `frontend/src/routes/_authenticated/templates/index.tsx` | Modified | `UploadTemplateDialog` gated with `canUploadTemplates(user?.role)` (line 42) |
+| `frontend/src/features/users/components/EditUserDialog.tsx` | Modified | 3 `SelectItem` options via `ROLE_LABELS`; `"user"` removed; fallback `?? "document_generator"` |
+| `frontend/src/routes/_authenticated.tsx` | Modified | Role badge `<Badge variant="secondary" className="text-xs">{getRoleLabel(user?.role)}</Badge>` in header |
+
+### Tests Added
+
+None (no frontend test runner — typecheck + lint only per ADR-TEST-01)
+
+### Frontend Check Results
+
+- `npx tsc --noEmit -p tsconfig.app.json`: **0 errors**
+- `npm run lint`: **0 errors, 4 warnings** (pre-existing baseline)
+
+### Final Test Count
+
+**523 passing, 0 failing** (Phase 4 baseline: 523; Phase 5 net: 0 new backend tests, 0 regressions)
+
+---
+
+## Phase 6 — Regression Gate (COMPLETE)
+
+### Tasks
+
+| Task | Status | Notes |
+|------|--------|-------|
+| T-REG-01 | ✅ DONE | Extended truth table (8 cases → 10) + 2 new standalone tests; updated `DOWNLOAD_FORMAT_PERMISSIONS`: `"user"` removed, `"template_creator"` + `"document_generator"` added explicitly |
+| T-REG-02 | ✅ DONE | Full suite: 527 passing, 0 failing — 3 consecutive stable runs |
+| T-REG-03 | ✅ DONE | TypeScript: 0 errors; Lint: 0 errors, 4 warnings (pre-existing baseline) |
+
+### TDD Evidence (T-REG-01)
+
+| Task | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|------|-------|------------|-----|-------|-------------|----------|
+| T-REG-01 | Unit | ✅ 6/6 | ✅ `test_download_format_permissions_dict_contains_new_roles` FAILED (`template_creator` not in dict; `"user"` still present) | ✅ All 10 PASS after removing `"user"` and adding `template_creator`/`document_generator` to dict | ✅ 3 test functions (truth table, legacy-user PDF-only, dict membership) | ✅ Docstring updated with roles-expansion note |
+
+### DOWNLOAD_FORMAT_PERMISSIONS Audit (T-REG-01)
+
+**Finding**: The `"user"` key was present in `DOWNLOAD_FORMAT_PERMISSIONS` — a stale legacy entry from before the roles-expansion migration. The `can_download_format` function already handled unknown roles via the safe-default `frozenset({"pdf"})`, so the `"user"` entry was effectively redundant but misleading.
+
+**Action taken**:
+- Removed `"user": frozenset({"pdf"})` from the dict
+- Added explicit `"template_creator": frozenset({"pdf"})` and `"document_generator": frozenset({"pdf"})`
+- Updated module docstring to explain the absence of `"user"` and the safe-default behavior
+
+**Behavior preserved**: `can_download_format("user", "pdf")` still returns `True` (via safe-default); `can_download_format("user", "docx")` still returns `False`. The behavioral contract is unchanged — only the implementation clarity improved.
+
+**Truth table (final)**:
+
+| Role | docx | pdf |
+|------|------|-----|
+| `admin` | True | True |
+| `template_creator` | False | True |
+| `document_generator` | False | True |
+| `"user"` (legacy/unknown) | False | True (safe-default) |
+| any unknown | False | True (safe-default) |
+
+### Files Changed
+
+| File | Action | What |
+|------|--------|------|
+| `backend/src/app/domain/services/document_permissions.py` | Modified | Removed `"user"` key; added `template_creator` + `document_generator` entries; updated docstring |
+| `backend/tests/unit/domain/test_document_permissions.py` | Modified | Expanded truth table (6 → 8 parametrized cases); added `test_legacy_user_role_resolves_to_pdf_only` and `test_download_format_permissions_dict_contains_new_roles` |
+| `openspec/changes/roles-expansion/tasks.md` | Modified | Marked T-REG-01, T-REG-02, T-REG-03 with ✅ |
+
+### Tests Added
+
+- `test_document_permissions.py`: +4 new (2 new parametrized rows for `template_creator` and `document_generator` → 2 new; 2 new standalone test functions)
+  - Net: **+4 new test cases** (6 parametrized → 8 parametrized = +2 instances; +2 standalone = +4 total)
+
+### Final Test Count
+
+**527 passing, 0 failing** (Phase 5 baseline: 523; Phase 6 net: +4 new, 0 regressions)
+3 consecutive runs: 527 / 527 / 527 — deterministic.
+
+---
+
+## Phase 7 — Operational (COMPLETE)
+
+### Tasks
+
+| Task | Status | Notes |
+|------|--------|-------|
+| T-OPS-01 | ✅ DONE | No new production deps: `pyproject.toml` and `package.json` unchanged; `backend/.env.example` unchanged |
+| T-OPS-02 | ✅ DONE | Added "Role model" section to `backend/README.md` (inserted before "Architecture" section) |
+
+### T-OPS-01 — Dependency Audit
+
+- `backend/pyproject.toml`: **unchanged** — `git diff HEAD` shows no modifications. No new prod or dev deps added.
+- `frontend/package.json`: **unchanged** — `git diff HEAD` shows no modifications.
+- `backend/.env.example`: **unchanged** — `git diff HEAD` shows no modifications. No new env vars required (`GOTENBERG_URL`, `GOTENBERG_TIMEOUT`, `ADMIN_PASSWORD` remain the same set).
+
+**Result**: No `docker compose build api` required. No new env var documentation needed.
+
+### T-OPS-02 — README Update
+
+Added a new "Role model" section to `backend/README.md` between the existing content and the "Architecture" section:
+
+- Table of 3 roles with capabilities and download format columns
+- Default role documentation (`document_generator`)
+- Key helpers in `domain/services/permissions.py` and `presentation/api/dependencies.py`
+- Migration `011_role_expansion.py` ordering caveat (UPDATE before ALTER DEFAULT in upgrade; reverse in downgrade; lossy downgrade warning)
+- Download format permissions note (legacy `"user"` key absent; safe-default behavior)
+
+### Files Changed
+
+| File | Action | What |
+|------|--------|-------|
+| `backend/README.md` | Modified | Added "Role model" section (~30 lines) before "Architecture" |
+| `openspec/changes/roles-expansion/tasks.md` | Modified | Marked T-OPS-01, T-OPS-02 with ✅ |
+
+---
+
+## OVERALL COMPLETION SUMMARY
+
+| Phase | Tasks | Status | Tests added | Final count |
+|-------|-------|--------|-------------|-------------|
+| Phase 1 — Domain | 6 | ✅ COMPLETE | +22 | 495 |
+| Phase 2 — Infrastructure | 6 | ✅ COMPLETE | +11 | 506 |
+| Phase 3 — Auth Flow | 3 | ✅ COMPLETE | +2 | 508 |
+| Phase 4 — Presentation | 10 | ✅ COMPLETE | +15 | 523 |
+| Phase 5 — Frontend | 6 | ✅ COMPLETE | 0 (no runner) | 523 |
+| Phase 6 — Regression Gate | 3 | ✅ COMPLETE | +4 | 527 |
+| Phase 7 — Operational | 2 | ✅ COMPLETE | 0 | 527 |
+| **Total** | **36** | **✅ ALL COMPLETE** | **+54** | **527** |
+
+**Frontend**: TypeScript 0 errors, Lint 0 errors / 4 warnings (pre-existing).
+**Backend**: 527/527 passing, 0 failing, deterministic (3-run stability confirmed).
+**All 36 tasks marked ✅.**
