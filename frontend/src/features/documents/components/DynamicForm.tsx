@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useGenerateDocument } from "../api/mutations";
 import { DownloadButton } from "./DownloadButton";
+import { InlineDocumentEditor } from "./InlineDocumentEditor";
 
 interface VariableMeta {
   name: string;
@@ -30,11 +31,50 @@ function buildSchema(variables: string[]) {
   return z.object(shape);
 }
 
+/**
+ * Routing wrapper:
+ * - variablesMeta.length >= 4  → InlineDocumentEditor (document-like inline editing)
+ * - variablesMeta.length < 4   → DynamicFormFlat (original flat form, kept as fallback)
+ *
+ * Threshold of 4 balances UX: fewer variables don't benefit from the
+ * document metaphor and are faster to fill with a plain form.
+ */
 export function DynamicForm({
   templateVersionId,
   variables,
   variablesMeta = [],
+  templateName,
 }: DynamicFormProps) {
+  const effectiveMeta =
+    variablesMeta.length > 0
+      ? variablesMeta
+      : variables.map((name) => ({ name, contexts: [] }));
+
+  if (effectiveMeta.length >= 4) {
+    return (
+      <InlineDocumentEditor
+        templateVersionId={templateVersionId}
+        variablesMeta={effectiveMeta}
+        templateName={templateName}
+      />
+    );
+  }
+
+  return (
+    <DynamicFormFlat
+      templateVersionId={templateVersionId}
+      variables={variables}
+      variablesMeta={variablesMeta}
+    />
+  );
+}
+
+/** Original flat form — fallback for templates with fewer than 4 variables. */
+function DynamicFormFlat({
+  templateVersionId,
+  variables,
+  variablesMeta = [],
+}: Omit<DynamicFormProps, "templateName">) {
   const schema = buildSchema(variables);
   type FormData = z.infer<typeof schema>;
 
