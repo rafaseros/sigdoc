@@ -777,13 +777,13 @@ class TestShareTemplate:
         )
         assert has_after is False
 
-    async def test_admin_can_share_any_template(
+    async def test_admin_cannot_share_template_they_do_not_own(
         self,
         fake_template_repo: FakeTemplateRepository,
         fake_storage: FakeStorageService,
         fake_template_engine: FakeTemplateEngine,
     ):
-        """Admin can share a template they don't own."""
+        """Admin attempting to share a template they don't own gets TemplateAccessDeniedError."""
         service = make_service(fake_template_repo, fake_storage, fake_template_engine)
         tenant_id = str(uuid.uuid4())
         owner_id = str(uuid.uuid4())
@@ -795,24 +795,22 @@ class TestShareTemplate:
             service, fake_template_repo, fake_template_engine, tenant_id, owner_id
         )
 
-        share = await service.share_template(
-            template_id=tpl.id,
-            user_id=target_user_id,
-            current_user_id=admin_id,
-            role="admin",
-            tenant_id=tenant_uuid,
-        )
+        with pytest.raises(TemplateAccessDeniedError):
+            await service.share_template(
+                template_id=tpl.id,
+                user_id=target_user_id,
+                current_user_id=admin_id,
+                role="admin",
+                tenant_id=tenant_uuid,
+            )
 
-        assert share.template_id == tpl.id
-        assert share.user_id == target_user_id
-
-    async def test_admin_can_unshare_any_template(
+    async def test_admin_cannot_unshare_template_they_do_not_own(
         self,
         fake_template_repo: FakeTemplateRepository,
         fake_storage: FakeStorageService,
         fake_template_engine: FakeTemplateEngine,
     ):
-        """Admin can unshare a template they don't own."""
+        """Admin attempting to unshare a template they don't own gets TemplateAccessDeniedError."""
         service = make_service(fake_template_repo, fake_storage, fake_template_engine)
         tenant_id = str(uuid.uuid4())
         owner_id = str(uuid.uuid4())
@@ -823,7 +821,7 @@ class TestShareTemplate:
         tpl = await seed_owned_template(
             service, fake_template_repo, fake_template_engine, tenant_id, owner_id
         )
-        # Owner shares first
+        # Owner shares first (owner still can share)
         await service.share_template(
             template_id=tpl.id,
             user_id=shared_user_id,
@@ -832,12 +830,73 @@ class TestShareTemplate:
             tenant_id=tenant_uuid,
         )
 
-        # Admin unshares — should not raise
+        # Admin unshares — must now raise
+        with pytest.raises(TemplateAccessDeniedError):
+            await service.unshare_template(
+                template_id=tpl.id,
+                user_id=shared_user_id,
+                current_user_id=admin_id,
+                role="admin",
+            )
+
+    async def test_owner_can_share_their_own_template(
+        self,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        """Regression: owner can still share their template after the permission tightening."""
+        service = make_service(fake_template_repo, fake_storage, fake_template_engine)
+        tenant_id = str(uuid.uuid4())
+        owner_id = str(uuid.uuid4())
+        target_user_id = uuid.uuid4()
+        tenant_uuid = uuid.UUID(tenant_id)
+
+        tpl = await seed_owned_template(
+            service, fake_template_repo, fake_template_engine, tenant_id, owner_id
+        )
+
+        share = await service.share_template(
+            template_id=tpl.id,
+            user_id=target_user_id,
+            current_user_id=tpl.created_by,
+            role="user",
+            tenant_id=tenant_uuid,
+        )
+
+        assert share.template_id == tpl.id
+        assert share.user_id == target_user_id
+
+    async def test_owner_can_unshare_their_own_template(
+        self,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        """Regression: owner can still unshare their template after the permission tightening."""
+        service = make_service(fake_template_repo, fake_storage, fake_template_engine)
+        tenant_id = str(uuid.uuid4())
+        owner_id = str(uuid.uuid4())
+        shared_user_id = uuid.uuid4()
+        tenant_uuid = uuid.UUID(tenant_id)
+
+        tpl = await seed_owned_template(
+            service, fake_template_repo, fake_template_engine, tenant_id, owner_id
+        )
+        await service.share_template(
+            template_id=tpl.id,
+            user_id=shared_user_id,
+            current_user_id=tpl.created_by,
+            role="user",
+            tenant_id=tenant_uuid,
+        )
+
+        # Owner unshares — must succeed
         await service.unshare_template(
             template_id=tpl.id,
             user_id=shared_user_id,
-            current_user_id=admin_id,
-            role="admin",
+            current_user_id=tpl.created_by,
+            role="user",
         )
 
         has_access = await fake_template_repo.has_access(

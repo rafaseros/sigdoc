@@ -337,14 +337,18 @@ class TemplateService:
         role: str,
         tenant_id: UUID,
     ) -> TemplateShare:
-        """Share a template with another user. Only owner or admin can share."""
-        await self._check_access(template_id, current_user_id, role, require_owner=True)
-
-        # Cross-tenant guard: the target user must belong to the same tenant.
-        # We validate indirectly — the template's tenant_id must match.
+        """Share a template with another user. Only the template owner can share."""
+        # Strict ownership check — admin bypass intentionally removed for share/unshare.
         template = await self._repository.get_by_id(template_id)
         if template is None:
             raise TemplateNotFoundError(f"Template {template_id} not found")
+        if str(template.created_by) != str(current_user_id):
+            raise TemplateAccessDeniedError(
+                "Only the template owner can share or unshare it"
+            )
+
+        # Cross-tenant guard: the target user must belong to the same tenant.
+        # We validate indirectly — the template's tenant_id must match.
 
         if template.tenant_id != tenant_id:
             raise TemplateSharingError(
@@ -388,11 +392,15 @@ class TemplateService:
         current_user_id: UUID,
         role: str,
     ) -> None:
-        """Revoke a user's access to a template. Only owner or admin can unshare."""
-        await self._check_access(template_id, current_user_id, role, require_owner=True)
-
-        # Need tenant_id for audit — fetch the template first
+        """Revoke a user's access to a template. Only the template owner can unshare."""
+        # Strict ownership check — admin bypass intentionally removed for share/unshare.
         template = await self._repository.get_by_id(template_id)
+        if template is None:
+            raise TemplateNotFoundError(f"Template {template_id} not found")
+        if str(template.created_by) != str(current_user_id):
+            raise TemplateAccessDeniedError(
+                "Only the template owner can share or unshare it"
+            )
 
         await self._repository.remove_share(template_id, user_id)
 
