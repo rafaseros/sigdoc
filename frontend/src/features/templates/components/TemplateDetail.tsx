@@ -11,6 +11,7 @@ import {
   Info,
   Clock,
   Upload,
+  Share2,
 } from "lucide-react";
 
 import {
@@ -36,6 +37,7 @@ import {
 import { TemplateDetailSkeleton } from "./TemplateDetailSkeleton";
 import { DocumentsTab } from "./DocumentsTab";
 import { ShareTemplateDialog } from "./ShareTemplateDialog";
+import { SharesTab } from "./SharesTab";
 
 function formatFileSize(bytes: number): string {
   if (bytes === 0) return "0 B";
@@ -139,6 +141,9 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
 
   const accessBadgeLabel =
     template.access_type === "shared" ? "Compartido contigo" : null;
+
+  const isOwnerOrAdmin =
+    template.is_owner || template.access_type === "admin";
 
   return (
     <div className="space-y-6">
@@ -260,6 +265,12 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
             <Clock className="size-3.5" />
             Versiones
           </TabsTrigger>
+          {isOwnerOrAdmin && (
+            <TabsTrigger value="shares">
+              <Share2 className="size-3.5" />
+              Compartido con
+            </TabsTrigger>
+          )}
           <TabsTrigger value="documents">
             <Files className="size-3.5" />
             Documentos
@@ -428,6 +439,13 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
               ))}
           </div>
         </TabsContent>
+
+        {/* Shares Tab — visible to owner and admin only */}
+        {isOwnerOrAdmin && (
+          <TabsContent value="shares">
+            <SharesTab templateId={templateId} templateName={template.name} />
+          </TabsContent>
+        )}
 
         {/* Documents Tab */}
         <TabsContent value="documents">
