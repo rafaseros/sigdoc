@@ -30,8 +30,10 @@ class UpdateUserRequest(BaseModel):
     def validate_role(cls, v: str | None) -> str | None:
         if v is None:
             return v
-        if v not in ("admin", "user"):
-            raise ValueError("El rol debe ser 'admin' o 'user'")
+        if v not in ("admin", "template_creator", "document_generator"):
+            raise ValueError(
+                "El rol debe ser 'admin', 'template_creator' o 'document_generator'"
+            )
         return v
 
     @field_validator("email")

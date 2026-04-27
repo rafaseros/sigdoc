@@ -84,7 +84,7 @@ async def test_admin_sets_user_bulk_limit_and_me_reflects_it(
         email="target@test.com",
         hashed_password=hash_password("secret"),
         full_name="Target User",
-        role="user",
+        role="document_generator",
         is_active=True,
         bulk_generation_limit=None,
         created_at=datetime.now(timezone.utc),
@@ -99,7 +99,7 @@ async def test_admin_sets_user_bulk_limit_and_me_reflects_it(
         email="me_user@test.com",
         hashed_password=hash_password("any"),
         full_name="Me User",
-        role="user",
+        role="document_generator",
         is_active=True,
         bulk_generation_limit=None,
         created_at=datetime.now(timezone.utc),
@@ -150,7 +150,7 @@ async def test_admin_clears_user_bulk_limit_and_me_shows_global_default(
         email="me_clear@test.com",
         hashed_password=hash_password("any"),
         full_name="Me Clear User",
-        role="user",
+        role="document_generator",
         is_active=True,
         bulk_generation_limit=None,  # cleared / null
         created_at=datetime.now(timezone.utc),
@@ -191,7 +191,7 @@ def _make_admin_user(user_id, tenant_id, role="admin") -> User:
 async def test_promote_user_to_admin(async_client, auth_headers, monkeypatch):
     """SCEN-ADMIN-01: Admin promotes a user to admin role."""
     fake_repo = FakeUserRepository()
-    target = _make_admin_user(TARGET_USER_ID, ADMIN_TENANT_ID, role="user")
+    target = _make_admin_user(TARGET_USER_ID, ADMIN_TENANT_ID, role="document_generator")
     admin = _make_admin_user(ADMIN_USER_ID, ADMIN_TENANT_ID, role="admin")
     _seed_user(fake_repo, target)
     _seed_user(fake_repo, admin)
@@ -210,7 +210,7 @@ async def test_promote_user_to_admin(async_client, auth_headers, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_demote_admin_to_user_when_multiple_admins(async_client, auth_headers, monkeypatch):
-    """SCEN-ADMIN-02: Can demote admin to user when at least 2 admins exist."""
+    """SCEN-ADMIN-02: Can demote admin to document_generator when at least 2 admins exist."""
     second_admin_id = uuid.UUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee")
     fake_repo = FakeUserRepository()
     admin1 = _make_admin_user(ADMIN_USER_ID, ADMIN_TENANT_ID, role="admin")
@@ -224,10 +224,10 @@ async def test_demote_admin_to_user_when_multiple_admins(async_client, auth_head
     response = await async_client.put(
         f"/api/v1/users/{second_admin_id}",
         headers=auth_headers,
-        json={"role": "user"},
+        json={"role": "document_generator"},
     )
     assert response.status_code == 200, response.text
-    assert response.json()["role"] == "user"
+    assert response.json()["role"] == "document_generator"
 
 
 @pytest.mark.asyncio
@@ -255,7 +255,7 @@ async def test_demote_last_admin_returns_409(async_client, auth_headers, monkeyp
     response = await async_client.put(
         f"/api/v1/users/{TARGET_USER_ID}",
         headers=auth_headers,
-        json={"role": "user"},
+        json={"role": "document_generator"},
     )
     assert response.status_code == 409, response.text
     assert "último administrador" in response.json()["detail"]
@@ -265,7 +265,7 @@ async def test_demote_last_admin_returns_409(async_client, auth_headers, monkeyp
 async def test_invalid_role_returns_422(async_client, auth_headers, monkeypatch):
     """SCEN-ADMIN-05: Invalid role value returns 422."""
     fake_repo = FakeUserRepository()
-    target = _make_admin_user(TARGET_USER_ID, ADMIN_TENANT_ID, role="user")
+    target = _make_admin_user(TARGET_USER_ID, ADMIN_TENANT_ID, role="document_generator")
     _seed_user(fake_repo, target)
 
     repo_class = _make_users_repo_class(fake_repo)
@@ -295,3 +295,60 @@ async def test_deactivate_last_admin_returns_409(async_client, auth_headers, mon
     )
     assert response.status_code == 409, response.text
     assert "último administrador" in response.json()["detail"]
+
+
+# ── T-PRES-03: POST /users without role → role="document_generator" ──────────
+
+
+def _make_users_repo_class_with_create(fake_repo: FakeUserRepository):
+    """Extend _make_users_repo_class with a create() that returns a proper User entity.
+
+    The real SQLAlchemy flushes defaults (is_active, created_at, etc.) on insert.
+    In tests we simulate this by constructing a User domain entity from the UserModel.
+    """
+    from app.domain.entities import User
+    from datetime import datetime, timezone
+
+    base_class = _make_users_repo_class(fake_repo)
+
+    class _RepoWithCreate(base_class):
+        async def create(self, user_model):  # user_model is a UserModel from the endpoint
+            # Build a proper User domain entity with all required fields
+            user_entity = User(
+                id=user_model.id,
+                tenant_id=user_model.tenant_id,
+                email=user_model.email,
+                full_name=user_model.full_name,
+                hashed_password=user_model.hashed_password,
+                role=user_model.role,
+                is_active=True,
+                created_at=datetime.now(timezone.utc),
+            )
+            return await self._fake.create(user_entity)
+
+    return _RepoWithCreate
+
+
+@pytest.mark.asyncio
+async def test_create_user_without_role_defaults_to_document_generator(
+    async_client, auth_headers, monkeypatch
+):
+    """SCEN-ROLE-05: admin POSTs /users without role → 201, role=document_generator."""
+    fake_repo = FakeUserRepository()
+
+    repo_class = _make_users_repo_class_with_create(fake_repo)
+    monkeypatch.setattr("app.presentation.api.v1.users.SQLAlchemyUserRepository", repo_class)
+
+    response = await async_client.post(
+        "/api/v1/users",
+        headers=auth_headers,
+        json={
+            "email": "newuser@test.com",
+            "full_name": "New User",
+            "password": "securepassword123",
+            # NOTE: no 'role' field — should default to document_generator
+        },
+    )
+    assert response.status_code == 201, response.text
+    data = response.json()
+    assert data["role"] == "document_generator"

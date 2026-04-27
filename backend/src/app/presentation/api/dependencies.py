@@ -15,6 +15,7 @@ from collections.abc import Callable
 from fastapi import Depends, HTTPException, status
 
 from app.domain.services.permissions import (
+    can_manage_own_templates,
     can_manage_users,
     can_view_audit,
     can_view_tenant_usage,
@@ -57,3 +58,4 @@ def require_capability(
 require_user_manager = require_capability(can_manage_users)
 require_audit_viewer = require_capability(can_view_audit)
 require_tenant_usage_viewer = require_capability(can_view_tenant_usage)
+require_template_manager = require_capability(can_manage_own_templates)

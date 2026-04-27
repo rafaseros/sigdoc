@@ -62,7 +62,7 @@ async def create_user(
         full_name=request.full_name,
         hashed_password=hash_password(request.password),
         tenant_id=admin.tenant_id,
-        role="user",
+        role="document_generator",
     )
     created = await repo.create(user)
 

@@ -251,7 +251,7 @@ async def test_private_by_default_user_b_cannot_list(
     user_b = CurrentUser(
         user_id=USER_B_ID,
         tenant_id=CONFTEST_TENANT_ID,
-        role="user",
+        role="document_generator",
     )
 
     async def override_as_user_b():
@@ -283,7 +283,7 @@ async def test_private_by_default_user_b_gets_403_on_get(
     user_b = CurrentUser(
         user_id=USER_B_ID,
         tenant_id=CONFTEST_TENANT_ID,
-        role="user",
+        role="document_generator",
     )
 
     async def override_as_user_b():
@@ -323,7 +323,7 @@ async def test_after_sharing_user_b_sees_in_list(
     user_b = CurrentUser(
         user_id=USER_B_ID,
         tenant_id=CONFTEST_TENANT_ID,
-        role="user",
+        role="document_generator",
     )
 
     async def override_as_user_b():
@@ -367,7 +367,7 @@ async def test_shared_user_cannot_upload_new_version(
     user_b = CurrentUser(
         user_id=USER_B_ID,
         tenant_id=CONFTEST_TENANT_ID,
-        role="user",
+        role="document_generator",
     )
 
     async def override_as_user_b():
@@ -413,7 +413,7 @@ async def test_shared_user_cannot_delete_template(
     user_b = CurrentUser(
         user_id=USER_B_ID,
         tenant_id=CONFTEST_TENANT_ID,
-        role="user",
+        role="document_generator",
     )
 
     async def override_as_user_b():

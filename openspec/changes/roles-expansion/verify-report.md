@@ -433,3 +433,177 @@ None.
 Phase 3 is complete, correct, and coherent. Both auth flow tasks implemented following strict TDD. 508 tests pass, 0 failures, 0 regressions. The `/auth/refresh` handler correctly re-fetches the user from DB via `repo.get_by_id`, returns HTTP 401 for missing/inactive users, and derives `role` exclusively from the DB row — the `payload.get("role", ...)` bug is fully eliminated. REQ-ROLE-09 and REQ-ROLE-10 are satisfied with behavioral test evidence. Phase 1 and Phase 2 work is intact with zero regressions.
 
 Phase 4 (T-PRES-01..10) may proceed.
+
+---
+
+## Phase 4 Verification
+
+**Change**: roles-expansion
+**Phase verified**: Phase 4 — Presentation (T-PRES-01..10)
+**Mode**: Strict TDD
+**Verdict**: APPROVED
+
+---
+
+### Completeness
+
+| Metric | Value |
+|--------|-------|
+| Tasks total (Phase 4) | 10 |
+| Tasks complete | 10 |
+| Tasks incomplete | 0 |
+
+All Phase 4 tasks checked off: T-PRES-01, T-PRES-02, T-PRES-03, T-PRES-04, T-PRES-05, T-PRES-06, T-PRES-07, T-PRES-08, T-PRES-09, T-PRES-10.
+
+---
+
+### Build & Tests Execution
+
+**Build**: N/A (Python — no compile step)
+
+**Phase 4 targeted tests (run in isolation)**:
+```
+tests/unit/presentation/test_role_validation.py   7 items  → 7 passed in 0.12s
+tests/integration/test_template_endpoint_gates.py 7 items  → 7 passed in 0.34s
+tests/integration/test_users_api.py::test_create_user_without_role_defaults_to_document_generator
+                                                  1 item   → 1 passed in 0.44s
+```
+
+**Full suite**:
+```
+523 passed, 37 warnings in 20.92s
+0 failed, 0 errors
+```
+
+Delta vs Phase 3 baseline (508): +15 new tests. Matches apply-progress claim exactly.
+
+**Coverage**: Not run (not required for Phase 4 presentation scope)
+
+---
+
+### TDD Compliance
+
+| Task | RED evidence | GREEN |
+|------|-------------|-------|
+| T-PRES-01 | 4 FAIL (`template_creator`/`document_generator` not accepted; `user` not rejected) | 7 PASS after T-PRES-02 |
+| T-PRES-02 | — | Schema allow-list updated to 3-role set; all 7 unit tests GREEN |
+| T-PRES-03 | 1 FAIL (`role` was `"user"` instead of `"document_generator"`) | 1 PASS after T-PRES-04 |
+| T-PRES-04 | — | `users.py:65` updated to `role="document_generator"`; all 8 users tests GREEN |
+| T-PRES-05 | — | `require_template_manager` added; behavior coverage via T-PRES-06..10 |
+| T-PRES-06 | 1 FAIL (got 201, expected 403 — no gate yet) | PASS after T-PRES-09 |
+| T-PRES-07..08 | Some gates already worked via service layer (correct 403/201) | All 7 gate tests GREEN after T-PRES-09 |
+| T-PRES-09 | — | Gates wired; all 7 template gate tests GREEN |
+| T-PRES-10 | — | Generate tests SCEN-TMP-07/08 PASS (no new gate; service layer enforces) |
+
+---
+
+### Spec Compliance Matrix
+
+| Requirement | Scenario | Test | Result |
+|-------------|----------|------|--------|
+| REQ-ROLE-06: UpdateUserRequest 3-role validator | SCEN-ROLE-03: `document_generator` accepted | `test_role_validation.py::test_valid_roles_are_accepted[document_generator]` | ✅ COMPLIANT |
+| REQ-ROLE-06: UpdateUserRequest 3-role validator | SCEN-ROLE-03: `template_creator` accepted | `test_role_validation.py::test_valid_roles_are_accepted[template_creator]` | ✅ COMPLIANT |
+| REQ-ROLE-06: UpdateUserRequest 3-role validator | SCEN-ROLE-04: legacy `"user"` rejected with 422 | `test_role_validation.py::test_legacy_user_role_is_rejected` | ✅ COMPLIANT |
+| REQ-ROLE-06: UpdateUserRequest 3-role validator | SCEN-ROLE-10: invalid value → error names 3 allowed values | `test_role_validation.py::test_invalid_role_value_rejected_with_allowed_values_in_message` | ✅ COMPLIANT |
+| REQ-ROLE-08: POST /users default role | SCEN-ROLE-05: no role → 201, role=document_generator | `test_users_api.py::test_create_user_without_role_defaults_to_document_generator` | ✅ COMPLIANT |
+| REQ-TMP-02: require_template_manager dependency | ADR-TMP-02: pre-bound via require_capability | `dependencies.py` static — `require_template_manager = require_capability(can_manage_own_templates)` | ✅ COMPLIANT |
+| REQ-TMP-03: upload endpoint gated | SCEN-TMP-02: document_generator → 403 | `test_template_endpoint_gates.py::test_document_generator_cannot_upload_template` | ✅ COMPLIANT |
+| REQ-TMP-03: upload endpoint gated | SCEN-TMP-03: template_creator → 201 | `test_template_endpoint_gates.py::test_template_creator_can_upload_template` | ✅ COMPLIANT |
+| REQ-TMP-03: upload endpoint gated | SCEN-TMP-04: admin → 201 | `test_template_endpoint_gates.py::test_admin_can_upload_template` | ✅ COMPLIANT |
+| REQ-TMP-04: versions endpoint gated | SCEN-TMP-05: document_generator → 403 | `test_template_endpoint_gates.py::test_document_generator_cannot_upload_new_version` | ✅ COMPLIANT |
+| REQ-TMP-04: versions endpoint gated | SCEN-TMP-06: template_creator (owner) → 201 | `test_template_endpoint_gates.py::test_template_creator_can_upload_new_version_on_own_template` | ✅ COMPLIANT |
+| REQ-TMP-05: generate endpoints ungated | SCEN-TMP-07: document_generator + shared template → 201 | `test_template_endpoint_gates.py::test_document_generator_generates_from_shared_template` | ✅ COMPLIANT |
+| REQ-TMP-05: generate endpoints ungated | SCEN-TMP-08: document_generator + non-shared → 403 | `test_template_endpoint_gates.py::test_document_generator_blocked_from_non_shared_template` | ✅ COMPLIANT |
+
+**Compliance summary**: 13/13 Phase 4 scenarios compliant.
+
+---
+
+### Correctness (Static — Structural Evidence)
+
+| Check | Status | Notes |
+|-------|--------|-------|
+| `require_template_manager` in `dependencies.py` | ✅ Implemented | Line 61: `require_template_manager = require_capability(can_manage_own_templates)` |
+| `can_manage_own_templates` imported in `dependencies.py` | ✅ Implemented | Line 19 imports it from `app.domain.services.permissions` |
+| Pattern matches `require_user_manager`, `require_audit_viewer`, `require_tenant_usage_viewer` | ✅ Confirmed | All four are `require_capability(...)` pre-bound; consistent pattern |
+| `POST /templates/upload` uses `Depends(require_template_manager)` | ✅ Implemented | `templates.py:100` — `current_user: CurrentUser = Depends(require_template_manager)` |
+| `POST /templates/{template_id}/versions` uses `Depends(require_template_manager)` | ✅ Implemented | `templates.py:161` — same pattern |
+| DELETE/UPDATE/GET template endpoints NOT gated with `require_template_manager` | ✅ Confirmed | DELETE (line 340), GET (line 280), shares (lines 369, 413, 434) all use `Depends(get_current_user)` |
+| `UpdateUserRequest.validate_role` allow-list = 3-role set | ✅ Implemented | `schemas/user.py:33` — `if v not in ("admin", "template_creator", "document_generator")` |
+| Error message names all 3 allowed values (Spanish) | ✅ Implemented | `"El rol debe ser 'admin', 'template_creator' o 'document_generator'"` |
+| `CreateUserRequest` has no `role` field | ✅ Confirmed | Only `email`, `full_name`, `password` fields; no role field added |
+| `POST /users` handler: `role="document_generator"` explicit assignment | ✅ Implemented | `users.py:65` — `role="document_generator"` in `UserModel(...)` constructor |
+| `POST /documents/generate` has no `require_template_manager` | ✅ Confirmed | `documents.py:76` — only `Depends(get_current_user)` |
+| `POST /documents/generate-bulk` has no `require_template_manager` | ✅ Confirmed | `documents.py:150` — only `Depends(get_current_user)` |
+| Pre-flight fixture migration: 13 `role="user"` fixtures updated | ✅ Confirmed | `test_users_api.py` (8 changes) + `test_templates_api.py` (5 changes) |
+| `test_pdf_export.py` `_make_non_admin_user()` `role="user"` intentionally NOT migrated | ✅ Confirmed | Creates `CurrentUser` directly; bypasses schema; tests download RBAC, not role taxonomy |
+| Phase 1-3 work intact (no regressions) | ✅ Confirmed | Full suite 523 passing, 0 failing |
+| No migration changes in Phase 4 | ✅ Confirmed | Still at `011 (head)` — no new migration files |
+| No frontend changes in Phase 4 | ✅ Confirmed | Phase 4 is backend-only; frontend deferred to Phase 5 |
+
+---
+
+### Coherence (Design)
+
+| Decision | Followed? | Notes |
+|----------|-----------|-------|
+| ADR-TMP-02: `require_template_manager = require_capability(can_manage_own_templates)` | ✅ Yes | Exact pattern; mirrors other pre-bound deps |
+| ADR-TMP-03: gate `POST /upload` and `POST /{id}/versions` only | ✅ Yes | DELETE/GET/shares left with `get_current_user` |
+| ADR-TMP-03: DELETE/UPDATE excluded — ownership check in service already excludes document_generator | ✅ Yes | Confirmed — service raises `TemplateAccessDeniedError` for non-owners |
+| ADR-ROLE-04: `UpdateUserRequest.validate_role` → 3-role set | ✅ Yes | `("admin", "template_creator", "document_generator")` |
+| ADR-ROLE-04: `CreateUserRequest` NOT modified | ✅ Yes | No `role` field in `CreateUserRequest` |
+| ADR-ROLE-05: `users.py:65` → explicit `role="document_generator"` assignment | ✅ Yes | Explicit assignment visible in handler |
+| ADR-TMP-01: 13 pre-flight fixture migrations | ✅ Yes | Both flagged test files updated; `test_pdf_export.py` intentionally excluded |
+
+---
+
+### Outstanding Fixture Drift (INFO — not blocking)
+
+The following test files still contain `role="user"` in `User(...)` or `CurrentUser(...)` direct constructions. These bypass schema validation and test non-role-related behavior (auth flows, document generation, quota, rate limits, template service unit tests). They are **not incorrect** — the `User` domain entity accepts any string for `role`. However, they represent accumulated technical debt that a follow-up change should address:
+
+- `test_auth_api.py` — 9 occurrences (User domain entity, login/refresh flows)
+- `test_template_shares_api.py` — 4 occurrences (CurrentUser overrides)
+- `test_document_service.py` — 3 occurrences (service unit tests)
+- `test_documents_api.py` — 4 occurrences (CurrentUser overrides)
+- `test_template_service.py` — 7 occurrences (service unit tests)
+- Others: `test_quota_service.py`, `test_audit_api.py`, `test_tiers_api.py`, `test_rate_limit.py`, etc.
+
+None of these affect passing behavior (full suite: 523/523). They are classified as SUGGESTION only.
+
+---
+
+### Issues Found
+
+**CRITICAL** (must fix before archive):
+None.
+
+**WARNING** (should fix):
+None.
+
+**SUGGESTION**:
+- 31 remaining `role="user"` references across non-Phase-4 test files (`test_auth_api.py`, `test_template_service.py`, `test_documents_api.py`, etc.) are all direct `User(...)` or `CurrentUser(...)` constructions that bypass schema validation. They do not cause failures today but represent fixture drift. A clean-up pass in a follow-up change would improve test self-documentation. Non-blocking.
+- The `_FORBIDDEN_DETAIL` constant in `dependencies.py` is `"Solo administradores pueden realizar esta acción"` — also used for `require_template_manager` denials, which are not strictly admin-only. Noted in design (ADR-TMP-02 open question); cosmetic only. Non-blocking.
+
+---
+
+### Test Counts
+
+| Metric | Value |
+|--------|-------|
+| Phase 3 baseline | 508 |
+| After Phase 4 | 523 |
+| Net new (Phase 4) | +15 |
+| Breakdown | `test_role_validation.py` (NEW): +7 unit tests; `test_users_api.py`: +1 integration test (SCEN-ROLE-05); `test_template_endpoint_gates.py` (NEW): +7 integration tests (SCEN-TMP-02..08) |
+| Fixture migrations (not new tests) | 13 (8 in `test_users_api.py` + 5 in `test_templates_api.py`) |
+| Failures | 0 |
+| Regressions | 0 |
+
+---
+
+### Verdict
+
+**APPROVED**
+
+Phase 4 is complete, correct, and coherent. All 10 presentation tasks implemented following strict TDD. 523 tests pass, 0 failures, 0 regressions. REQ-ROLE-06 (Literal schema validator), REQ-ROLE-08 (default-on-create), REQ-TMP-02 (require_template_manager helper), REQ-TMP-03 (upload gate), REQ-TMP-04 (versions gate), and REQ-TMP-05 (generate ungated) are all satisfied with behavioral test evidence. Phase 1–3 work is fully intact. No migration, no frontend changes.
+
+Phase 5 (T-FE-01..06) may proceed.

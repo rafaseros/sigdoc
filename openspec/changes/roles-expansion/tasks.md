@@ -114,61 +114,61 @@
 
 ## Phase 4 — Presentation (Gates, Schemas, Default-on-Create)
 
-### T-PRES-01: [TEST] Schema validation — `UpdateUserRequest` rejects `role="user"` with 422
+### T-PRES-01: [TEST] Schema validation — `UpdateUserRequest` rejects `role="user"` with 422 ✅
 - **Files**: `backend/tests/unit/presentation/test_role_validation.py` (NEW)
 - **REQs/ADRs**: REQ-ROLE-06, SCEN-ROLE-04, ADR-ROLE-04
 - **Depends on**: T-DOMAIN-02
 - **Description**: Create `test_role_validation.py`. Add parametrized test: `role="user"` → `ValidationError`; `role="invalid"` → `ValidationError` with message naming the 3 allowed values (SCEN-ROLE-10); `role="document_generator"` → valid (SCEN-ROLE-03). Must FAIL before T-PRES-02.
 
-### T-PRES-02: Update `UpdateUserRequest.validate_role` to accept 3-role set only
+### T-PRES-02: Update `UpdateUserRequest.validate_role` to accept 3-role set only ✅
 - **Files**: `backend/src/app/presentation/schemas/user.py` (line 33)
 - **REQs/ADRs**: REQ-ROLE-06, ADR-ROLE-04
 - **Depends on**: T-PRES-01
 - **Description**: Replace `("admin", "user")` allow-list with `("admin", "template_creator", "document_generator")`. Update the 422 error message to name all three. Do NOT add a `role` field to `CreateUserRequest`. Make T-PRES-01 pass.
 
-### T-PRES-03: [TEST] `POST /users` without `role` field → 201 with `role="document_generator"`
+### T-PRES-03: [TEST] `POST /users` without `role` field → 201 with `role="document_generator"` ✅
 - **Files**: `backend/tests/integration/test_users_api.py`
 - **REQs/ADRs**: REQ-ROLE-08, SCEN-ROLE-05, ADR-ROLE-05
 - **Depends on**: T-PRES-02, T-INFRA-05
 - **Description**: Extend `test_users_api.py` with a test: admin POSTs `/users` with no `role` field; assert 201 and `response["role"] == "document_generator"`. Must FAIL before T-PRES-04.
 
-### T-PRES-04: Update `POST /users` handler — set default role to `document_generator` explicitly
+### T-PRES-04: Update `POST /users` handler — set default role to `document_generator` explicitly ✅
 - **Files**: `backend/src/app/presentation/api/v1/users.py` (line 65)
 - **REQs/ADRs**: REQ-ROLE-08, ADR-ROLE-05
 - **Depends on**: T-PRES-03
 - **Description**: Change literal `role="user"` in the User construction to `role="document_generator"`. Explicit assignment (not Pydantic default) keeps policy visible. Make T-PRES-03 pass.
 
-### T-PRES-05: Add `require_template_manager` dependency to `dependencies.py`
+### T-PRES-05: Add `require_template_manager` dependency to `dependencies.py` ✅
 - **Files**: `backend/src/app/presentation/api/dependencies.py`
 - **REQs/ADRs**: REQ-TMP-02, ADR-TMP-02
 - **Depends on**: T-DOMAIN-04
 - **Description**: Add `require_template_manager = require_capability(can_manage_own_templates)`, mirroring `require_user_manager` and `require_audit_viewer`. Import `can_manage_own_templates` from `domain/services/permissions.py`. No separate test needed — behavior covered by T-PRES-06 through T-PRES-10.
 
-### T-PRES-06: [TEST] `document_generator` → `POST /templates/upload` returns 403
+### T-PRES-06: [TEST] `document_generator` → `POST /templates/upload` returns 403 ✅
 - **Files**: `backend/tests/integration/test_template_endpoint_gates.py` (NEW)
 - **REQs/ADRs**: REQ-TMP-03, SCEN-TMP-02, ADR-TMP-03
 - **Depends on**: T-PRES-05
 - **Description**: Create `test_template_endpoint_gates.py`. Test: authenticate as `document_generator`; call `POST /templates/upload` with a valid `.docx`; assert 403. Must FAIL before T-PRES-09 wires the gate.
 
-### T-PRES-07: [TEST] `template_creator` → `POST /templates/upload` returns 201
+### T-PRES-07: [TEST] `template_creator` → `POST /templates/upload` returns 201 ✅
 - **Files**: `backend/tests/integration/test_template_endpoint_gates.py`
 - **REQs/ADRs**: REQ-TMP-03, SCEN-TMP-03, ADR-TMP-03
 - **Depends on**: T-PRES-06
 - **Description**: Add test: authenticate as `template_creator`; call `POST /templates/upload`; assert 201. Must FAIL before T-PRES-09.
 
-### T-PRES-08: [TEST] `admin` → `POST /templates/upload` returns 201; `document_generator` → `POST /templates/{id}/versions` returns 403; `template_creator` → `POST /templates/{id}/versions` on owned template returns 201
+### T-PRES-08: [TEST] `admin` → `POST /templates/upload` returns 201; `document_generator` → `POST /templates/{id}/versions` returns 403; `template_creator` → `POST /templates/{id}/versions` on owned template returns 201 ✅
 - **Files**: `backend/tests/integration/test_template_endpoint_gates.py`
 - **REQs/ADRs**: REQ-TMP-03, REQ-TMP-04, SCEN-TMP-04, SCEN-TMP-05, SCEN-TMP-06, ADR-TMP-03
 - **Depends on**: T-PRES-07
 - **Description**: Add three scenarios: admin upload (201), document_generator version (403), template_creator version own template (201). Must FAIL before T-PRES-09.
 
-### T-PRES-09: Wire `Depends(require_template_manager)` to `POST /templates/upload` and `POST /templates/{id}/versions`
+### T-PRES-09: Wire `Depends(require_template_manager)` to `POST /templates/upload` and `POST /templates/{id}/versions` ✅
 - **Files**: `backend/src/app/presentation/api/v1/templates.py` (lines 94, 156)
 - **REQs/ADRs**: REQ-TMP-03, REQ-TMP-04, ADR-TMP-03
 - **Depends on**: T-PRES-05, T-PRES-08
 - **Description**: Replace `get_current_user` dep with `require_template_manager` on both `POST /templates/upload` (line 94) and `POST /templates/{template_id}/versions` (line 156). The handler still receives `CurrentUser` — `require_template_manager` returns it. Make T-PRES-06, T-PRES-07, T-PRES-08 pass.
 
-### T-PRES-10: [TEST] `document_generator` generates from shared template → 201; from non-shared → 403
+### T-PRES-10: [TEST] `document_generator` generates from shared template → 201; from non-shared → 403 ✅
 - **Files**: `backend/tests/integration/test_template_endpoint_gates.py`
 - **REQs/ADRs**: REQ-TMP-05, SCEN-TMP-07, SCEN-TMP-08
 - **Depends on**: T-PRES-09

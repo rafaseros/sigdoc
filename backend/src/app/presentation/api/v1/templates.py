@@ -15,6 +15,7 @@ from app.domain.exceptions import (
 from app.domain.ports.user_repository import UserRepository
 from app.domain.services.permissions import can_view_all_templates
 from app.infrastructure.templating import get_template_engine
+from app.presentation.api.dependencies import require_template_manager
 from app.presentation.middleware.tenant import CurrentUser, get_current_user
 from app.presentation.schemas.template import (
     ShareTemplateRequest,
@@ -96,7 +97,7 @@ async def upload_template(
     file: UploadFile = File(...),
     name: str = Form(...),
     description: str | None = Form(None),
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_template_manager),
     service: TemplateService = Depends(get_template_service),
 ):
     """Upload a new .docx template."""
@@ -157,7 +158,7 @@ async def upload_template(
 async def upload_new_version(
     template_id: UUID,
     file: UploadFile = File(...),
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_template_manager),
     service: TemplateService = Depends(get_template_service),
 ):
     """Upload a new version of an existing template."""

@@ -59,6 +59,9 @@ class FakeTemplateRepository(TemplateRepository):
             del self._versions[vid]
 
     async def create_version(self, version: TemplateVersion) -> TemplateVersion:
+        # Mirror create_template_with_version: populate created_at if missing
+        if version.created_at is None:
+            version.created_at = datetime.now(timezone.utc)
         self._versions[version.id] = version
         # Update parent template's current_version if template exists
         template = self._templates.get(version.template_id)
