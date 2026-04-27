@@ -368,3 +368,24 @@ class SQLAlchemyTemplateRepository(TemplateRepositoryPort):
         result = await self._session.execute(stmt)
         row = result.scalar_one_or_none()
         return row
+
+    async def get_share_for_user(
+        self, template_id: UUID, user_id: UUID
+    ) -> TemplateShare | None:
+        """Return the share row for (template_id, user_id), or None if absent."""
+        stmt = select(TemplateShareModel).where(
+            TemplateShareModel.template_id == template_id,
+            TemplateShareModel.user_id == user_id,
+        )
+        result = await self._session.execute(stmt)
+        model = result.scalar_one_or_none()
+        if model is None:
+            return None
+        return TemplateShare(
+            id=model.id,
+            template_id=model.template_id,
+            user_id=model.user_id,
+            tenant_id=model.tenant_id,
+            shared_by=model.shared_by,
+            shared_at=model.shared_at,
+        )

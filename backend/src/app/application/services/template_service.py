@@ -43,6 +43,11 @@ class TemplateService:
         self._quota_service = quota_service
         self._tier_id = tier_id
 
+    @property
+    def repository(self) -> TemplateRepository:
+        """Expose the underlying repository for endpoint-level lookups."""
+        return self._repository
+
     async def upload_template(
         self,
         name: str,

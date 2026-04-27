@@ -16,8 +16,9 @@ import uuid
 
 import pytest
 
+from app.domain.entities import User
 from app.presentation.middleware.tenant import CurrentUser, get_current_user
-from tests.fakes import FakeTemplateRepository
+from tests.fakes import FakeTemplateRepository, FakeUserRepository
 
 # Stable IDs from integration conftest
 CONFTEST_USER_ID = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
@@ -583,3 +584,116 @@ async def test_admin_can_delete_any_template(
     assert list_response.status_code == 200
     ids = [item["id"] for item in list_response.json()["items"]]
     assert str(tpl_id) not in ids
+
+
+# ── shared_by_email in GET /templates/{id} ────────────────────────────────────
+
+# A dedicated owner for these tests to avoid collisions with the admin test user
+OWNER_FOR_SHARE_EMAIL_TESTS_ID = uuid.UUID("77777777-7777-7777-7777-777777777777")
+SHARED_RECIPIENT_ID = uuid.UUID("88888888-8888-8888-8888-888888888888")
+
+
+async def _ensure_user(
+    fake_user_repo: FakeUserRepository,
+    user_id: uuid.UUID,
+    email: str,
+    role: str = "user",
+) -> User:
+    """Upsert a user in the fake repo. Returns the user."""
+    existing = await fake_user_repo.get_by_id(user_id)
+    if existing is not None:
+        return existing
+    user = User(
+        id=user_id,
+        tenant_id=CONFTEST_TENANT_ID,
+        email=email,
+        hashed_password="hashed",
+        full_name="Test User",
+        role=role,
+        is_active=True,
+    )
+    await fake_user_repo.create(user)
+    return user
+
+
+@pytest.mark.asyncio
+async def test_get_template_includes_shared_by_email_when_access_type_is_shared(
+    async_client,
+    app,
+    auth_headers,
+    fake_template_repo: FakeTemplateRepository,
+    fake_user_repo: FakeUserRepository,
+):
+    """GET /templates/{id} as the share recipient returns shared_by_email == owner's email."""
+    # Seed owner (User A) and recipient (User B) in the user repo
+    owner = await _ensure_user(
+        fake_user_repo,
+        OWNER_FOR_SHARE_EMAIL_TESTS_ID,
+        "owner-shared-by@example.com",
+        role="user",
+    )
+    recipient = await _ensure_user(
+        fake_user_repo,
+        SHARED_RECIPIENT_ID,
+        "recipient-shared@example.com",
+        role="user",
+    )
+
+    # Seed a template owned by User A
+    tpl_id = _upload_template_as_user("SharedEmailTemplate", owner.id, fake_template_repo)
+
+    # Share it with User B (recipient)
+    await fake_template_repo.add_share(
+        template_id=tpl_id,
+        user_id=recipient.id,
+        tenant_id=CONFTEST_TENANT_ID,
+        shared_by=owner.id,
+    )
+
+    # Override current user → User B (recipient) calls GET /templates/{id}
+    recipient_current_user = CurrentUser(
+        user_id=recipient.id,
+        tenant_id=CONFTEST_TENANT_ID,
+        role="user",
+    )
+
+    async def override_as_recipient():
+        return recipient_current_user
+
+    original = app.dependency_overrides.get(get_current_user)
+    app.dependency_overrides[get_current_user] = override_as_recipient
+    try:
+        response = await async_client.get(
+            f"/api/v1/templates/{tpl_id}", headers=auth_headers
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["access_type"] == "shared"
+        assert data["shared_by_email"] == owner.email
+    finally:
+        if original is not None:
+            app.dependency_overrides[get_current_user] = original
+        else:
+            app.dependency_overrides.pop(get_current_user, None)
+
+
+@pytest.mark.asyncio
+async def test_get_template_shared_by_email_is_none_for_owner(
+    async_client,
+    auth_headers,
+    fake_template_repo: FakeTemplateRepository,
+    fake_user_repo: FakeUserRepository,
+):
+    """GET /templates/{id} as the owner returns shared_by_email == null."""
+    # The default test user (CONFTEST_USER_ID, admin) owns this template
+    tpl_id = _upload_template_as_user(
+        "OwnedNoSharedByEmail", CONFTEST_USER_ID, fake_template_repo
+    )
+
+    response = await async_client.get(
+        f"/api/v1/templates/{tpl_id}", headers=auth_headers
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["access_type"] in ("owned", "admin")
+    assert data["shared_by_email"] is None

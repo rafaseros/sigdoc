@@ -31,6 +31,7 @@ class TemplateResponse(BaseModel):
     updated_at: datetime
     access_type: str = "owned"  # "owned" | "shared" | "admin"
     is_owner: bool = True
+    shared_by_email: str | None = None  # populated only when access_type == "shared"
 
     model_config = {"from_attributes": True}
 

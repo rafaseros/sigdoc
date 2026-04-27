@@ -282,6 +282,7 @@ async def get_template(
     template_id: UUID,
     current_user: CurrentUser = Depends(get_current_user),
     service: TemplateService = Depends(get_template_service),
+    user_repo: UserRepository = Depends(get_user_repository),
 ):
     """Get template detail with all versions."""
     try:
@@ -312,6 +313,16 @@ async def get_template(
     is_owner = str(getattr(t, "created_by", "")) == str(current_user.user_id)
     access_type = "owned" if is_owner else ("admin" if can_view_all_templates(current_user.role) else "shared")
 
+    shared_by_email: str | None = None
+    if access_type == "shared":
+        share = await service.repository.get_share_for_user(
+            template_id, current_user.user_id
+        )
+        if share is not None:
+            sharer = await user_repo.get_by_id(share.shared_by)
+            if sharer is not None:
+                shared_by_email = sharer.email
+
     return TemplateResponse(
         id=str(t.id),
         name=t.name,
@@ -333,6 +344,7 @@ async def get_template(
         updated_at=t.updated_at,
         access_type=access_type,
         is_owner=is_owner,
+        shared_by_email=shared_by_email,
     )
 
 

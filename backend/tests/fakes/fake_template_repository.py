@@ -226,3 +226,9 @@ class FakeTemplateRepository(TemplateRepository):
         if template is None:
             return None
         return template.created_by
+
+    async def get_share_for_user(
+        self, template_id: UUID, user_id: UUID
+    ) -> TemplateShare | None:
+        """Return the share row for (template_id, user_id), or None if absent."""
+        return self._shares.get((template_id, user_id))

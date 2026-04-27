@@ -111,3 +111,10 @@ class TemplateRepository(ABC):
     async def get_owner_id(self, template_id: UUID) -> UUID | None:
         """Return the created_by (owner) UUID for the given template, or None if not found."""
         ...
+
+    @abstractmethod
+    async def get_share_for_user(
+        self, template_id: UUID, user_id: UUID
+    ) -> TemplateShare | None:
+        """Return the share row for (template_id, user_id), or None if absent."""
+        ...

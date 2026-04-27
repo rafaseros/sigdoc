@@ -304,6 +304,12 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
                 <dt className="text-[#434655]">Total de Versiones</dt>
                 <dd>{template.versions.length}</dd>
               </dl>
+              {template.shared_by_email && (
+                <p className="mt-4 text-sm text-muted-foreground">
+                  <span className="font-medium">Compartido por:</span>{" "}
+                  {template.shared_by_email}
+                </p>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
