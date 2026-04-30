@@ -11,6 +11,7 @@ class AuditAction:
     TEMPLATE_VERSION = "template.version"
     TEMPLATE_SHARE = "template.share"
     TEMPLATE_UNSHARE = "template.unshare"
+    TEMPLATE_VARIABLE_TYPES_UPDATED = "template.variable_types_updated"
 
     DOCUMENT_GENERATE = "document.generate"
     DOCUMENT_GENERATE_BULK = "document.generate_bulk"

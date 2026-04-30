@@ -11,11 +11,12 @@
 
 import { Fragment, useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { Popover } from "@base-ui/react/popover";
+import { Select as BaseSelect } from "@base-ui/react/select";
+import { CheckIcon, ChevronDownIcon } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { DownloadButton } from "./DownloadButton";
@@ -23,6 +24,7 @@ import { useGenerateDocument } from "../api/mutations";
 import {
   assembleDocument,
   type VariableMeta,
+  type VariableType,
   type DocumentParagraph,
   type DocumentSegment,
 } from "@/lib/assemble-document";
@@ -54,14 +56,6 @@ function humanLabel(name: string): string {
   return name.replace(/_/g, " ");
 }
 
-/**
- * Heuristic: use a Textarea for variables whose name suggests multi-line content.
- * Single-line Input is the default.
- */
-function isMultiline(name: string): boolean {
-  return /literal|descripcion|descripci[oó]n|direccion|direcci[oó]n|detalle|nota/i.test(name);
-}
-
 // ---------------------------------------------------------------------------
 // PlaceholderWidget
 // ---------------------------------------------------------------------------
@@ -76,6 +70,12 @@ interface PlaceholderWidgetProps {
   onCommit: (val: string) => void;
   /** Ref callback so the parent can track DOM nodes for keyboard navigation */
   pillRef?: (el: HTMLButtonElement | null) => void;
+  /** Variable type — controls which input is rendered in the popover */
+  varType?: VariableType;
+  /** Predefined options for type="select" */
+  varOptions?: string[] | null;
+  /** Optional hint shown to the user filling the document */
+  varHelpText?: string | null;
 }
 
 function PlaceholderWidget({
@@ -87,13 +87,14 @@ function PlaceholderWidget({
   onClose,
   onCommit,
   pillRef,
+  varType = "text",
+  varOptions,
+  varHelpText,
 }: PlaceholderWidgetProps) {
   const [draft, setDraft] = useState(value);
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   // Stable ref for the pill button — used as anchor for the positioner
   const pillButtonRef = useRef<HTMLButtonElement | null>(null);
-  const multiline = isMultiline(varName);
   const label = humanLabel(varName);
   const isFilled = value.trim().length > 0;
 
@@ -101,12 +102,13 @@ function PlaceholderWidget({
   useEffect(() => {
     if (isEditing) {
       setDraft(value);
-      requestAnimationFrame(() => {
-        inputRef.current?.focus();
-        textareaRef.current?.focus();
-      });
+      if (varType !== "select") {
+        requestAnimationFrame(() => {
+          inputRef.current?.focus();
+        });
+      }
     }
-  }, [isEditing, value]);
+  }, [isEditing, value, varType]);
 
   function handleCommit() {
     const trimmed = draft.trim();
@@ -117,7 +119,7 @@ function PlaceholderWidget({
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
-    if (e.key === "Enter" && !multiline) {
+    if (e.key === "Enter") {
       e.preventDefault();
       handleCommit();
     }
@@ -126,9 +128,19 @@ function PlaceholderWidget({
     }
   }
 
+  /** When the user picks a select option, commit immediately and close. */
+  function handleSelectCommit(val: string) {
+    if (val) {
+      onCommit(val);
+    }
+    onClose();
+  }
+
   // instanceKey is used by the parent for identity — not needed in JSX directly,
   // but we keep it in props so TypeScript enforces the caller passes it.
   void instanceKey;
+
+  const inputId = `popover-input-${varName}`;
 
   return (
     <>
@@ -155,24 +167,15 @@ function PlaceholderWidget({
         <span>{isFilled ? value : label}</span>
       </button>
 
-      {/* Controlled popover anchored to the pill */}
+      {/* Controlled popover anchored to the pill — no Popover.Trigger needed
+          because we provide an explicit anchor on Popover.Positioner and drive
+          open state from props. */}
       <Popover.Root
         open={isEditing}
         onOpenChange={(open) => {
           if (!open) onClose();
         }}
       >
-        {/*
-          Popover.Trigger is required by Popover.Root for positioning context.
-          We hide it visually and position it over the pill using absolute CSS so
-          the positioner anchors correctly, then the actual visible pill is above.
-        */}
-        <Popover.Trigger
-          aria-hidden="true"
-          tabIndex={-1}
-          className="sr-only"
-        />
-
         <Popover.Portal>
           <Popover.Positioner
             anchor={pillButtonRef}
@@ -188,27 +191,107 @@ function PlaceholderWidget({
               )}
             >
               <Label
-                htmlFor={`popover-input-${varName}`}
+                htmlFor={inputId}
                 className="block text-xs font-semibold text-muted-foreground mb-2 capitalize"
               >
                 {label}
               </Label>
 
-              {multiline ? (
-                <Textarea
-                  id={`popover-input-${varName}`}
-                  ref={textareaRef}
-                  value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  placeholder={`Ingrese ${label}`}
-                  className="bg-[#e6e8ea] border-transparent focus:border-[#2563eb] focus:ring-[#2563eb]/20 text-sm resize-none min-h-20"
-                />
+              {varHelpText && (
+                <p className="text-xs text-muted-foreground italic mb-2">
+                  {varHelpText}
+                </p>
+              )}
+
+              {/* ── Select input ── */}
+              {varType === "select" && varOptions && varOptions.length > 0 ? (
+                <BaseSelect.Root
+                  // Pass `null` (Base UI's "no selection" sentinel) when draft
+                  // is empty. Using `undefined` here would flip the component
+                  // from uncontrolled → controlled on first selection and
+                  // trigger Base UI's controlled-state warning.
+                  value={draft || null}
+                  onValueChange={(val) => {
+                    if (!val) return;
+                    setDraft(val);
+                    // Auto-commit on selection for a friction-free flow
+                    handleSelectCommit(val);
+                  }}
+                >
+                  <BaseSelect.Trigger
+                    id={inputId}
+                    className={cn(
+                      "flex w-full items-center justify-between gap-2 rounded-lg border border-input bg-[#e6e8ea] px-3 py-2 text-sm",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563eb]/50",
+                      "data-placeholder:text-muted-foreground",
+                    )}
+                  >
+                    <BaseSelect.Value placeholder={`Seleccione ${label}`} />
+                    <BaseSelect.Icon
+                      render={
+                        <ChevronDownIcon className="size-4 text-muted-foreground shrink-0" />
+                      }
+                    />
+                  </BaseSelect.Trigger>
+                  <BaseSelect.Portal>
+                    <BaseSelect.Positioner
+                      side="bottom"
+                      sideOffset={4}
+                      className="isolate z-[60]"
+                    >
+                      <BaseSelect.Popup
+                        className={cn(
+                          "max-h-56 w-(--anchor-width) min-w-32 overflow-y-auto rounded-lg",
+                          "bg-popover text-popover-foreground shadow-md ring-1 ring-foreground/10",
+                          "origin-(--transform-origin)",
+                          "data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95",
+                          "data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+                        )}
+                      >
+                        <BaseSelect.List className="p-1">
+                          {varOptions.map((opt) => (
+                            <BaseSelect.Item
+                              key={opt}
+                              value={opt}
+                              className={cn(
+                                "relative flex w-full cursor-default items-center gap-1.5 rounded-md py-1 pr-8 pl-1.5",
+                                "text-sm outline-hidden select-none",
+                                "focus:bg-accent focus:text-accent-foreground",
+                                "data-disabled:pointer-events-none data-disabled:opacity-50",
+                              )}
+                            >
+                              <BaseSelect.ItemText className="flex-1">
+                                {opt}
+                              </BaseSelect.ItemText>
+                              <BaseSelect.ItemIndicator
+                                render={
+                                  <span className="pointer-events-none absolute right-2 flex size-4 items-center justify-center" />
+                                }
+                              >
+                                <CheckIcon className="size-3.5" />
+                              </BaseSelect.ItemIndicator>
+                            </BaseSelect.Item>
+                          ))}
+                        </BaseSelect.List>
+                      </BaseSelect.Popup>
+                    </BaseSelect.Positioner>
+                  </BaseSelect.Portal>
+                </BaseSelect.Root>
               ) : (
+                /* ── Text / integer / decimal input ── */
                 <div className="relative">
                   <Input
-                    id={`popover-input-${varName}`}
+                    id={inputId}
                     ref={inputRef}
+                    type={varType === "integer" || varType === "decimal" ? "number" : "text"}
+                    step={varType === "decimal" ? "any" : varType === "integer" ? "1" : undefined}
+                    inputMode={
+                      varType === "integer"
+                        ? "numeric"
+                        : varType === "decimal"
+                        ? "decimal"
+                        : undefined
+                    }
                     value={draft}
                     onChange={(e) => setDraft(e.target.value)}
                     onKeyDown={handleKeyDown}
@@ -222,25 +305,28 @@ function PlaceholderWidget({
                 </div>
               )}
 
-              <div className="mt-3 flex justify-end gap-2">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={onClose}
-                  className="text-xs"
-                >
-                  Cancelar
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  onClick={handleCommit}
-                  className="text-xs bg-gradient-to-br from-[#004ac6] to-[#2563eb] text-white shadow-[0_2px_8px_rgba(0,74,198,0.3)]"
-                >
-                  Confirmar
-                </Button>
-              </div>
+              {/* Footer buttons — hidden for select (auto-commits on pick) */}
+              {varType !== "select" && (
+                <div className="mt-3 flex justify-end gap-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={onClose}
+                    className="text-xs"
+                  >
+                    Cancelar
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={handleCommit}
+                    className="text-xs bg-gradient-to-br from-[#004ac6] to-[#2563eb] text-white shadow-[0_2px_8px_rgba(0,74,198,0.3)]"
+                  >
+                    Confirmar
+                  </Button>
+                </div>
+              )}
             </Popover.Popup>
           </Popover.Positioner>
         </Popover.Portal>
@@ -261,6 +347,8 @@ interface ParagraphRendererProps {
   onSegmentClose: () => void;
   onCommit: (varName: string, val: string) => void;
   registerPill: (instanceKey: InstanceKey, el: HTMLButtonElement | null) => void;
+  /** Map from variable name → VariableMeta for type/options lookup */
+  metaByName: Record<string, VariableMeta>;
 }
 
 function ParagraphRenderer({
@@ -271,6 +359,7 @@ function ParagraphRenderer({
   onSegmentClose,
   onCommit,
   registerPill,
+  metaByName,
 }: ParagraphRendererProps) {
   return (
     <p className="text-[15px] leading-8 text-[#191c1e] font-serif">
@@ -280,6 +369,7 @@ function ParagraphRenderer({
         }
         const varName = seg.content;
         const instanceKey: InstanceKey = `${paragraph.id}::${i}`;
+        const meta = metaByName[varName];
         return (
           <PlaceholderWidget
             key={instanceKey}
@@ -291,6 +381,9 @@ function ParagraphRenderer({
             onClose={onSegmentClose}
             onCommit={(val) => onCommit(varName, val)}
             pillRef={(el) => registerPill(instanceKey, el)}
+            varType={meta?.type ?? "text"}
+            varOptions={meta?.options}
+            varHelpText={meta?.help_text}
           />
         );
       })}
@@ -319,6 +412,12 @@ export function InlineDocumentEditor({
 
   // Assemble the document once — variablesMeta is stable after the query resolves
   const paragraphs = useMemo(() => assembleDocument(variablesMeta), [variablesMeta]);
+
+  // Map from variable name → VariableMeta for O(1) type/options lookup in renderers
+  const metaByName = useMemo(
+    () => Object.fromEntries(variablesMeta.map((m) => [m.name, m])),
+    [variablesMeta]
+  );
 
   // Ordered list of unique variable names across the document (for progress counting)
   const allVarNames = useMemo(() => {
@@ -482,6 +581,7 @@ export function InlineDocumentEditor({
               onSegmentClose={handleClose}
               onCommit={handleCommit}
               registerPill={registerPill}
+              metaByName={metaByName}
             />
           </Fragment>
         ))}

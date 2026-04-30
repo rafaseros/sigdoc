@@ -697,3 +697,346 @@ async def test_get_template_shared_by_email_is_none_for_owner(
     data = response.json()
     assert data["access_type"] in ("owned", "admin")
     assert data["shared_by_email"] is None
+
+
+# ── variable types PATCH endpoint ────────────────────────────────────────────
+
+
+def _seed_template_with_variables(
+    variables: list[str],
+    owner_id: uuid.UUID,
+    fake_template_repo: FakeTemplateRepository,
+    template_name: str = "VarTypeTemplate",
+) -> tuple[uuid.UUID, uuid.UUID]:
+    """Seed a template with the given variable names. Returns (template_id, version_id)."""
+    from datetime import datetime, timezone
+    from app.domain.entities import Template, TemplateVersion
+
+    template_id = uuid.uuid4()
+    version_id = uuid.uuid4()
+    now = datetime.now(timezone.utc)
+
+    version = TemplateVersion(
+        id=version_id,
+        tenant_id=CONFTEST_TENANT_ID,
+        template_id=template_id,
+        version=1,
+        minio_path=f"{CONFTEST_TENANT_ID}/{template_id}/v1/template.docx",
+        variables=variables,
+        variables_meta=[{"name": v, "contexts": [f"context for {v}"]} for v in variables],
+        created_at=now,
+    )
+    template = Template(
+        id=template_id,
+        tenant_id=CONFTEST_TENANT_ID,
+        name=template_name,
+        description=None,
+        current_version=1,
+        created_by=owner_id,
+        versions=[version],
+        created_at=now,
+        updated_at=now,
+    )
+    fake_template_repo._templates[template_id] = template
+    fake_template_repo._versions[version_id] = version
+    return template_id, version_id
+
+
+@pytest.mark.asyncio
+async def test_owner_can_update_variable_types(
+    async_client, auth_headers, fake_template_repo: FakeTemplateRepository
+):
+    """Owner can PATCH variable types and get the updated version back."""
+    tpl_id, ver_id = _seed_template_with_variables(
+        ["monto_total", "moneda"], CONFTEST_USER_ID, fake_template_repo, "VarTypeOwner"
+    )
+
+    response = await async_client.patch(
+        f"/api/v1/templates/{tpl_id}/versions/{ver_id}/variables-meta",
+        headers=auth_headers,
+        json={"overrides": [{"name": "monto_total", "type": "decimal"}]},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    meta_by_name = {m["name"]: m for m in data["variables_meta"]}
+    assert meta_by_name["monto_total"]["type"] == "decimal"
+    # moneda was not in overrides — should default to "text"
+    assert meta_by_name["moneda"]["type"] == "text"
+
+
+@pytest.mark.asyncio
+async def test_admin_cannot_update_types_of_template_they_do_not_own(
+    async_client, app, auth_headers, fake_template_repo: FakeTemplateRepository
+):
+    """Admin calling PATCH on someone else's template gets 403."""
+    other_owner = uuid.UUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
+    tpl_id, ver_id = _seed_template_with_variables(
+        ["campo"], other_owner, fake_template_repo, "VarTypeAdminDenied"
+    )
+
+    # Conftest user is admin but NOT the owner — must get 403
+    response = await async_client.patch(
+        f"/api/v1/templates/{tpl_id}/versions/{ver_id}/variables-meta",
+        headers=auth_headers,
+        json={"overrides": [{"name": "campo", "type": "integer"}]},
+    )
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_recipient_cannot_update_types(
+    async_client, app, auth_headers, fake_template_repo: FakeTemplateRepository
+):
+    """A user with only shared access gets 403 when trying to PATCH variable types."""
+    tpl_id, ver_id = _seed_template_with_variables(
+        ["campo"], CONFTEST_USER_ID, fake_template_repo, "VarTypeRecipientDenied"
+    )
+    await fake_template_repo.add_share(
+        template_id=tpl_id,
+        user_id=USER_B_ID,
+        tenant_id=CONFTEST_TENANT_ID,
+        shared_by=CONFTEST_USER_ID,
+    )
+
+    user_b = CurrentUser(
+        user_id=USER_B_ID,
+        tenant_id=CONFTEST_TENANT_ID,
+        role="document_generator",
+    )
+
+    async def override_as_user_b():
+        return user_b
+
+    original = app.dependency_overrides.get(get_current_user)
+    app.dependency_overrides[get_current_user] = override_as_user_b
+    try:
+        response = await async_client.patch(
+            f"/api/v1/templates/{tpl_id}/versions/{ver_id}/variables-meta",
+            headers=auth_headers,
+            json={"overrides": [{"name": "campo", "type": "integer"}]},
+        )
+        assert response.status_code == 403
+    finally:
+        if original is not None:
+            app.dependency_overrides[get_current_user] = original
+        else:
+            app.dependency_overrides.pop(get_current_user, None)
+
+
+@pytest.mark.asyncio
+async def test_select_without_options_returns_422(
+    async_client, auth_headers, fake_template_repo: FakeTemplateRepository
+):
+    """PATCH with type=select but no options returns 422."""
+    tpl_id, ver_id = _seed_template_with_variables(
+        ["moneda"], CONFTEST_USER_ID, fake_template_repo, "VarTypeSelectNoOpts"
+    )
+
+    response = await async_client.patch(
+        f"/api/v1/templates/{tpl_id}/versions/{ver_id}/variables-meta",
+        headers=auth_headers,
+        json={"overrides": [{"name": "moneda", "type": "select"}]},
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_invalid_type_returns_422(
+    async_client, auth_headers, fake_template_repo: FakeTemplateRepository
+):
+    """PATCH with an invalid type value returns 422."""
+    tpl_id, ver_id = _seed_template_with_variables(
+        ["campo"], CONFTEST_USER_ID, fake_template_repo, "VarTypeInvalidType"
+    )
+
+    response = await async_client.patch(
+        f"/api/v1/templates/{tpl_id}/versions/{ver_id}/variables-meta",
+        headers=auth_headers,
+        json={"overrides": [{"name": "campo", "type": "boolean"}]},
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_unknown_variable_name_in_overrides_is_ignored(
+    async_client, auth_headers, fake_template_repo: FakeTemplateRepository
+):
+    """Overrides for unknown variable names are silently ignored (no error)."""
+    tpl_id, ver_id = _seed_template_with_variables(
+        ["conocido"], CONFTEST_USER_ID, fake_template_repo, "VarTypeUnknownIgnored"
+    )
+
+    response = await async_client.patch(
+        f"/api/v1/templates/{tpl_id}/versions/{ver_id}/variables-meta",
+        headers=auth_headers,
+        json={"overrides": [{"name": "no_existe", "type": "integer"}]},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    meta_by_name = {m["name"]: m for m in data["variables_meta"]}
+    assert "no_existe" not in meta_by_name
+    assert "conocido" in meta_by_name
+
+
+@pytest.mark.asyncio
+async def test_existing_meta_without_type_field_defaults_to_text(
+    async_client, auth_headers, fake_template_repo: FakeTemplateRepository
+):
+    """Legacy variables_meta rows without a 'type' field serialize as type='text'."""
+    tpl_id, ver_id = _seed_template_with_variables(
+        ["legacy_var"], CONFTEST_USER_ID, fake_template_repo, "VarTypeLegacy"
+    )
+
+    # The seeded meta has no 'type' key — call PATCH with empty overrides
+    response = await async_client.patch(
+        f"/api/v1/templates/{tpl_id}/versions/{ver_id}/variables-meta",
+        headers=auth_headers,
+        json={"overrides": []},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    meta_by_name = {m["name"]: m for m in data["variables_meta"]}
+    assert meta_by_name["legacy_var"]["type"] == "text"
+
+
+@pytest.mark.asyncio
+async def test_partial_override_preserves_other_variables(
+    async_client, auth_headers, fake_template_repo: FakeTemplateRepository
+):
+    """Only overridden variables change; others keep their existing data."""
+    tpl_id, ver_id = _seed_template_with_variables(
+        ["nombre", "monto", "fecha"], CONFTEST_USER_ID, fake_template_repo, "VarTypePartial"
+    )
+
+    response = await async_client.patch(
+        f"/api/v1/templates/{tpl_id}/versions/{ver_id}/variables-meta",
+        headers=auth_headers,
+        json={"overrides": [{"name": "monto", "type": "decimal"}]},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    meta_by_name = {m["name"]: m for m in data["variables_meta"]}
+
+    assert meta_by_name["monto"]["type"] == "decimal"
+    assert meta_by_name["nombre"]["type"] == "text"
+    assert meta_by_name["fecha"]["type"] == "text"
+
+
+# ── help_text tests ──────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_owner_can_set_help_text(
+    async_client, auth_headers, fake_template_repo: FakeTemplateRepository
+):
+    """Owner can PATCH help_text and receive the updated value in the response."""
+    tpl_id, ver_id = _seed_template_with_variables(
+        ["fecha_inicio"], CONFTEST_USER_ID, fake_template_repo, "HelpTextSet"
+    )
+
+    response = await async_client.patch(
+        f"/api/v1/templates/{tpl_id}/versions/{ver_id}/variables-meta",
+        headers=auth_headers,
+        json={
+            "overrides": [
+                {
+                    "name": "fecha_inicio",
+                    "type": "text",
+                    "help_text": "Usar formato DD/MM/YYYY",
+                }
+            ]
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    meta_by_name = {m["name"]: m for m in data["variables_meta"]}
+    assert meta_by_name["fecha_inicio"]["help_text"] == "Usar formato DD/MM/YYYY"
+
+
+@pytest.mark.asyncio
+async def test_help_text_persists_across_round_trip(
+    async_client, auth_headers, fake_template_repo: FakeTemplateRepository
+):
+    """Write help_text, then GET the template — the value is preserved."""
+    tpl_id, ver_id = _seed_template_with_variables(
+        ["campo"], CONFTEST_USER_ID, fake_template_repo, "HelpTextRoundTrip"
+    )
+
+    # Write
+    await async_client.patch(
+        f"/api/v1/templates/{tpl_id}/versions/{ver_id}/variables-meta",
+        headers=auth_headers,
+        json={
+            "overrides": [
+                {"name": "campo", "type": "text", "help_text": "Texto de ayuda"}
+            ]
+        },
+    )
+
+    # Read back via GET
+    get_response = await async_client.get(
+        f"/api/v1/templates/{tpl_id}",
+        headers=auth_headers,
+    )
+    assert get_response.status_code == 200
+    get_data = get_response.json()
+    version_data = next(v for v in get_data["versions"] if v["id"] == str(ver_id))
+    meta_by_name = {m["name"]: m for m in version_data["variables_meta"]}
+    assert meta_by_name["campo"]["help_text"] == "Texto de ayuda"
+
+
+@pytest.mark.asyncio
+async def test_help_text_can_be_cleared_with_null(
+    async_client, auth_headers, fake_template_repo: FakeTemplateRepository
+):
+    """Setting help_text to null clears a previously set value."""
+    tpl_id, ver_id = _seed_template_with_variables(
+        ["campo"], CONFTEST_USER_ID, fake_template_repo, "HelpTextClear"
+    )
+
+    # First set a non-null value
+    await async_client.patch(
+        f"/api/v1/templates/{tpl_id}/versions/{ver_id}/variables-meta",
+        headers=auth_headers,
+        json={
+            "overrides": [
+                {"name": "campo", "type": "text", "help_text": "Valor inicial"}
+            ]
+        },
+    )
+
+    # Now clear it with null
+    response = await async_client.patch(
+        f"/api/v1/templates/{tpl_id}/versions/{ver_id}/variables-meta",
+        headers=auth_headers,
+        json={
+            "overrides": [
+                {"name": "campo", "type": "text", "help_text": None}
+            ]
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    meta_by_name = {m["name"]: m for m in data["variables_meta"]}
+    assert meta_by_name["campo"]["help_text"] is None
+
+
+@pytest.mark.asyncio
+async def test_existing_meta_without_help_text_field_returns_null(
+    async_client, auth_headers, fake_template_repo: FakeTemplateRepository
+):
+    """Backward compat: variables seeded without help_text serialize help_text=null."""
+    tpl_id, ver_id = _seed_template_with_variables(
+        ["legacy"], CONFTEST_USER_ID, fake_template_repo, "HelpTextLegacy"
+    )
+
+    # Call PATCH with empty overrides to trigger serialization
+    response = await async_client.patch(
+        f"/api/v1/templates/{tpl_id}/versions/{ver_id}/variables-meta",
+        headers=auth_headers,
+        json={"overrides": []},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    meta_by_name = {m["name"]: m for m in data["variables_meta"]}
+    assert meta_by_name["legacy"]["help_text"] is None

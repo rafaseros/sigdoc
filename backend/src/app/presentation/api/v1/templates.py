@@ -24,6 +24,7 @@ from app.presentation.schemas.template import (
     TemplateShareResponse,
     TemplateUploadResponse,
     TemplateVersionResponse,
+    UpdateVariableTypesRequest,
 )
 
 router = APIRouter()
@@ -441,6 +442,40 @@ async def unshare_template(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
     except TemplateNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template not found")
+
+
+@router.patch(
+    "/{template_id}/versions/{version_id}/variables-meta",
+    response_model=TemplateVersionResponse,
+)
+async def update_variable_types(
+    template_id: UUID,
+    version_id: UUID,
+    body: UpdateVariableTypesRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    service: TemplateService = Depends(get_template_service),
+):
+    """Update the type/options for variables in a template version. Owner-only."""
+    try:
+        updated_version = await service.update_variable_types(
+            template_id=template_id,
+            version_id=version_id,
+            overrides=body.overrides,
+            current_user_id=current_user.user_id,
+        )
+    except TemplateAccessDeniedError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except TemplateNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template or version not found")
+
+    return TemplateVersionResponse(
+        id=str(updated_version.id),
+        version=updated_version.version,
+        variables=updated_version.variables,
+        variables_meta=updated_version.variables_meta or [],
+        file_size=updated_version.file_size,
+        created_at=updated_version.created_at,
+    )
 
 
 @router.get("/{template_id}/shares", response_model=list[TemplateShareResponse])

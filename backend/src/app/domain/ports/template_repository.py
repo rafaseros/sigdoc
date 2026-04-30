@@ -118,3 +118,10 @@ class TemplateRepository(ABC):
     ) -> TemplateShare | None:
         """Return the share row for (template_id, user_id), or None if absent."""
         ...
+
+    @abstractmethod
+    async def update_variables_meta(
+        self, version_id: UUID, variables_meta: list[dict]
+    ) -> TemplateVersion:
+        """Replace variables_meta for the given version and return the updated entity."""
+        ...

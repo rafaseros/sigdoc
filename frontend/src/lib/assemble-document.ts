@@ -7,9 +7,14 @@
  * No React, no side-effects — 100% pure and easily unit-testable.
  */
 
+export type VariableType = "text" | "integer" | "decimal" | "select";
+
 export interface VariableMeta {
   name: string;
   contexts: string[];
+  type?: VariableType;
+  options?: string[] | null;
+  help_text?: string | null;
 }
 
 export interface DocumentSegment {

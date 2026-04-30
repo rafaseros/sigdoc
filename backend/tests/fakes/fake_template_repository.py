@@ -232,3 +232,13 @@ class FakeTemplateRepository(TemplateRepository):
     ) -> TemplateShare | None:
         """Return the share row for (template_id, user_id), or None if absent."""
         return self._shares.get((template_id, user_id))
+
+    async def update_variables_meta(
+        self, version_id: UUID, variables_meta: list[dict]
+    ) -> TemplateVersion:
+        """Replace variables_meta for the given version and return the updated entity."""
+        version = self._versions.get(version_id)
+        if version is None:
+            raise KeyError(f"Version {version_id} not found")
+        version.variables_meta = variables_meta
+        return version

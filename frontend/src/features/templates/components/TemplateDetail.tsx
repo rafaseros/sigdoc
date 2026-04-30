@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { Fragment, useState, useCallback } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { useDropzone } from "react-dropzone";
@@ -19,6 +19,11 @@ import {
   useDeleteTemplate,
   useUploadNewVersion,
 } from "@/features/templates/api";
+import type { VariableMeta, VariableType } from "@/features/templates/api/queries";
+import {
+  useUpdateVariableTypes,
+  type VariableTypeOverrideInput,
+} from "@/features/templates/api/mutations";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -33,6 +38,15 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 
 import { TemplateDetailSkeleton } from "./TemplateDetailSkeleton";
 import { DocumentsTab } from "./DocumentsTab";
@@ -55,6 +69,274 @@ function formatDate(dateStr: string): string {
     minute: "2-digit",
   });
 }
+
+// ---------------------------------------------------------------------------
+// Variables Tab
+// ---------------------------------------------------------------------------
+
+const TYPE_LABELS: Record<VariableType, string> = {
+  text: "Texto",
+  integer: "Número entero",
+  decimal: "Número decimal",
+  select: "Selección",
+};
+
+interface VariableRowState {
+  type: VariableType;
+  optionsText: string;
+  helpText: string;
+}
+
+function initRow(meta: VariableMeta): VariableRowState {
+  return {
+    type: meta.type ?? "text",
+    optionsText: meta.options ? meta.options.join("\n") : "",
+    helpText: meta.help_text ?? "",
+  };
+}
+
+function optionsTextToList(raw: string): string[] {
+  return raw
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+}
+
+interface VariablesTabProps {
+  templateId: string;
+  versionId: string;
+  variablesMeta: VariableMeta[];
+  isOwner: boolean;
+}
+
+/**
+ * Render a paragraph context with all `{{ varName }}` occurrences highlighted —
+ * helps the owner spot exactly where a given variable shows up in the document.
+ * Other placeholders in the same paragraph stay as plain text.
+ */
+function HighlightedContext({ ctx, varName }: { ctx: string; varName: string }) {
+  // Variable names are \w-only (Jinja2 constraint), so no regex escaping needed,
+  // but we escape defensively in case future names break that assumption.
+  const escaped = varName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`\\{\\{\\s*${escaped}\\s*\\}\\}`, "g");
+  const parts = ctx.split(pattern);
+  const matches = ctx.match(pattern) ?? [];
+  return (
+    <>
+      {parts.map((part, i) => (
+        <Fragment key={i}>
+          {part}
+          {i < matches.length && (
+            <span className="bg-yellow-200 text-yellow-900 px-1 rounded font-semibold not-italic mx-0.5">
+              {matches[i]}
+            </span>
+          )}
+        </Fragment>
+      ))}
+    </>
+  );
+}
+
+function VariablesTab({ templateId, versionId, variablesMeta, isOwner }: VariablesTabProps) {
+  const [rows, setRows] = useState<Record<string, VariableRowState>>(() =>
+    Object.fromEntries(variablesMeta.map((m) => [m.name, initRow(m)]))
+  );
+  const [isDirty, setIsDirty] = useState(false);
+
+  const updateMutation = useUpdateVariableTypes(templateId, versionId);
+
+  function setRowType(name: string, type: VariableType) {
+    setRows((prev) => ({ ...prev, [name]: { ...prev[name], type } }));
+    setIsDirty(true);
+  }
+
+  function setRowOptions(name: string, optionsText: string) {
+    setRows((prev) => ({ ...prev, [name]: { ...prev[name], optionsText } }));
+    setIsDirty(true);
+  }
+
+  function setRowHelpText(name: string, helpText: string) {
+    setRows((prev) => ({ ...prev, [name]: { ...prev[name], helpText } }));
+    setIsDirty(true);
+  }
+
+  function handleDiscard() {
+    setRows(Object.fromEntries(variablesMeta.map((m) => [m.name, initRow(m)])));
+    setIsDirty(false);
+  }
+
+  function handleSave() {
+    const overrides: VariableTypeOverrideInput[] = variablesMeta.map((m) => {
+      const row = rows[m.name] ?? initRow(m);
+      const options = row.type === "select" ? optionsTextToList(row.optionsText) : null;
+      return {
+        name: m.name,
+        type: row.type,
+        options,
+        help_text: row.helpText.trim() !== "" ? row.helpText.trim() : null,
+      };
+    });
+
+    for (const o of overrides) {
+      if (o.type === "select" && (!o.options || o.options.length === 0)) {
+        toast.error(
+          `La variable "${o.name}" es de tipo Selección pero no tiene opciones. Ingrese al menos una opción.`
+        );
+        return;
+      }
+    }
+
+    updateMutation.mutate(overrides, {
+      onSuccess: () => {
+        toast.success("Cambios guardados");
+        setIsDirty(false);
+      },
+      onError: () => {
+        toast.error("Error al guardar los cambios");
+      },
+    });
+  }
+
+  if (variablesMeta.length === 0) {
+    return (
+      <Card className="border-0 bg-white shadow-[0_12px_32px_rgba(25,28,30,0.06)]">
+        <CardContent className="pt-6">
+          <p className="text-[#434655]">No se encontraron variables en esta plantilla.</p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      {variablesMeta.map((m) => {
+        const row = rows[m.name] ?? initRow(m);
+        return (
+          <Card
+            key={m.name}
+            className="border-0 bg-white shadow-[0_2px_8px_rgba(25,28,30,0.04)] hover:shadow-[0_4px_16px_rgba(25,28,30,0.06)] transition-shadow"
+          >
+            <CardContent className="p-3 space-y-2">
+              {/* Header: name + type + help text on a single row when owner */}
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-sm font-semibold text-[#191c1e] shrink-0 min-w-0 truncate max-w-[180px]">
+                  {m.name}
+                </span>
+                {isOwner ? (
+                  <>
+                    <Select
+                      value={row.type}
+                      onValueChange={(v) => setRowType(m.name, v as VariableType)}
+                    >
+                      <SelectTrigger size="sm" className="w-36 shrink-0">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {(Object.entries(TYPE_LABELS) as [VariableType, string][]).map(
+                          ([val, label]) => (
+                            <SelectItem key={val} value={val}>
+                              {label}
+                            </SelectItem>
+                          )
+                        )}
+                      </SelectContent>
+                    </Select>
+                    <Input
+                      value={row.helpText}
+                      onChange={(e) => setRowHelpText(m.name, e.target.value)}
+                      placeholder="Mensaje de ayuda (ej. formato DD/MM/YYYY)"
+                      className="text-sm h-9 flex-1 min-w-0"
+                    />
+                  </>
+                ) : (
+                  <>
+                    <Badge className="bg-[#e8f0fe] text-[#1a56db] border-0 rounded-full text-xs font-semibold shrink-0">
+                      {TYPE_LABELS[m.type ?? "text"]}
+                    </Badge>
+                    {m.help_text ? (
+                      <p className="text-xs text-[#434655] italic flex-1 min-w-0 truncate">
+                        {m.help_text}
+                      </p>
+                    ) : null}
+                  </>
+                )}
+              </div>
+
+              {/* Options (select type only) — full row when present */}
+              {isOwner && row.type === "select" && (
+                <Textarea
+                  value={row.optionsText}
+                  onChange={(e) => setRowOptions(m.name, e.target.value)}
+                  placeholder="Opciones, una por línea (Bs. / USD / EUR)"
+                  className="text-xs min-h-16 resize-none"
+                />
+              )}
+              {!isOwner && m.type === "select" && m.options && m.options.length > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  {m.options.map((opt) => (
+                    <Badge key={opt} variant="outline" className="text-xs rounded-full">
+                      {opt}
+                    </Badge>
+                  ))}
+                </div>
+              )}
+
+              {/* Contexts collapsible — paragraph contains the variable name highlighted */}
+              {m.contexts.length > 0 ? (
+                <details className="group">
+                  <summary className="cursor-pointer list-none flex items-center gap-1 text-xs text-muted-foreground select-none hover:text-[#004ac6] transition-colors">
+                    <span className="group-open:rotate-90 transition-transform inline-block">▶</span>
+                    <span>
+                      Aparece en {m.contexts.length} párrafo{m.contexts.length !== 1 ? "s" : ""}
+                    </span>
+                  </summary>
+                  <div className="mt-2 space-y-1.5 max-h-48 overflow-y-auto pl-2">
+                    {m.contexts.map((ctx, i) => (
+                      <blockquote
+                        key={i}
+                        className="border-l-2 border-[#b4c5ff] pl-3 text-xs text-[#434655] italic leading-relaxed"
+                      >
+                        <HighlightedContext ctx={ctx} varName={m.name} />
+                      </blockquote>
+                    ))}
+                  </div>
+                </details>
+              ) : (
+                <p className="text-xs text-muted-foreground italic">
+                  No aparece en ningún párrafo
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        );
+      })}
+
+      {/* Sticky save/discard bar — owner only */}
+      {isOwner && (
+        <div className="sticky bottom-0 bg-white/90 backdrop-blur-sm border-t border-border/40 pt-3 pb-1 flex justify-end gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            disabled={!isDirty || updateMutation.isPending}
+            onClick={handleDiscard}
+          >
+            Descartar cambios
+          </Button>
+          <Button
+            type="button"
+            disabled={!isDirty || updateMutation.isPending}
+            onClick={handleSave}
+            className="bg-gradient-to-br from-[#004ac6] to-[#2563eb] text-white shadow-[0_2px_8px_rgba(0,74,198,0.3)]"
+          >
+            {updateMutation.isPending ? "Guardando..." : "Guardar cambios"}
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 
 interface TemplateDetailProps {
   templateId: string;
@@ -316,26 +598,20 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
 
         {/* Variables Tab */}
         <TabsContent value="variables">
-          <Card className="border-0 bg-white shadow-[0_12px_32px_rgba(25,28,30,0.06)]">
-            <CardHeader>
-              <CardTitle>Variables de la Plantilla</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {template.variables.length > 0 ? (
-                <div className="flex flex-wrap gap-2">
-                  {template.variables.map((variable) => (
-                    <Badge key={variable} className="bg-[#b4c5ff] text-[#004ac6] border-0 rounded-full font-semibold text-xs px-3 py-1 hover:bg-[#dbe1ff]">
-                      {variable}
-                    </Badge>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-[#434655]">
-                  No se encontraron variables en esta plantilla.
-                </p>
-              )}
-            </CardContent>
-          </Card>
+          {currentVersion ? (
+            <VariablesTab
+              templateId={templateId}
+              versionId={currentVersion.id}
+              variablesMeta={currentVersion.variables_meta}
+              isOwner={template.is_owner}
+            />
+          ) : (
+            <Card className="border-0 bg-white shadow-[0_12px_32px_rgba(25,28,30,0.06)]">
+              <CardContent className="pt-6">
+                <p className="text-[#434655]">No se encontraron variables en esta plantilla.</p>
+              </CardContent>
+            </Card>
+          )}
         </TabsContent>
 
         {/* Versions Tab */}

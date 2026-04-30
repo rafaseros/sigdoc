@@ -1469,6 +1469,242 @@ class TestUploadNewVersionVariablesMeta:
         assert v1_after.variables_meta[0]["name"] == "original"
 
 
+# ---------------------------------------------------------------------------
+# update_variable_types
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateVariableTypes:
+    """update_variable_types enforces strict ownership and merges type overrides."""
+
+    async def test_owner_can_update_variable_types(
+        self,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        """Owner can update the type of a variable in variables_meta."""
+        service = make_service(fake_template_repo, fake_storage, fake_template_engine)
+        tenant_id = str(uuid.uuid4())
+        owner_id = str(uuid.uuid4())
+
+        fake_template_engine.variables_to_return = ["monto_total", "moneda"]
+        tpl = await service.upload_template(
+            name="Contrato",
+            file_bytes=b"fake-docx",
+            file_size=9,
+            tenant_id=tenant_id,
+            created_by=owner_id,
+        )
+
+        # Get the version
+        version = tpl.versions[0]
+
+        from app.presentation.schemas.template import VariableTypeOverride
+        overrides = [
+            VariableTypeOverride(name="monto_total", type="decimal"),
+        ]
+        updated = await service.update_variable_types(
+            template_id=tpl.id,
+            version_id=version.id,
+            overrides=overrides,
+            current_user_id=tpl.created_by,
+        )
+        # Find the updated variable
+        meta_by_name = {m["name"]: m for m in updated.variables_meta}
+        assert meta_by_name["monto_total"]["type"] == "decimal"
+
+    async def test_admin_cannot_update_types_of_template_they_do_not_own(
+        self,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        """Admin cannot update variable types on a template they don't own."""
+        service = make_service(fake_template_repo, fake_storage, fake_template_engine)
+        tenant_id = str(uuid.uuid4())
+        owner_id = str(uuid.uuid4())
+        admin_id = uuid.uuid4()
+
+        fake_template_engine.variables_to_return = ["campo"]
+        tpl = await service.upload_template(
+            name="Plantilla Admin Test",
+            file_bytes=b"fake-docx",
+            file_size=9,
+            tenant_id=tenant_id,
+            created_by=owner_id,
+        )
+        version = tpl.versions[0]
+
+        from app.presentation.schemas.template import VariableTypeOverride
+        overrides = [VariableTypeOverride(name="campo", type="integer")]
+
+        with pytest.raises(TemplateAccessDeniedError):
+            await service.update_variable_types(
+                template_id=tpl.id,
+                version_id=version.id,
+                overrides=overrides,
+                current_user_id=admin_id,
+            )
+
+    async def test_recipient_cannot_update_types(
+        self,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        """A user with shared access cannot update variable types."""
+        service = make_service(fake_template_repo, fake_storage, fake_template_engine)
+        tenant_id = str(uuid.uuid4())
+        owner_id = str(uuid.uuid4())
+        recipient_id = uuid.uuid4()
+        tenant_uuid = uuid.UUID(tenant_id)
+
+        fake_template_engine.variables_to_return = ["campo"]
+        tpl = await service.upload_template(
+            name="Plantilla Recipiente",
+            file_bytes=b"fake-docx",
+            file_size=9,
+            tenant_id=tenant_id,
+            created_by=owner_id,
+        )
+        await fake_template_repo.add_share(
+            template_id=tpl.id,
+            user_id=recipient_id,
+            tenant_id=tenant_uuid,
+            shared_by=tpl.created_by,
+        )
+        version = tpl.versions[0]
+
+        from app.presentation.schemas.template import VariableTypeOverride
+        overrides = [VariableTypeOverride(name="campo", type="integer")]
+
+        with pytest.raises(TemplateAccessDeniedError):
+            await service.update_variable_types(
+                template_id=tpl.id,
+                version_id=version.id,
+                overrides=overrides,
+                current_user_id=recipient_id,
+            )
+
+    async def test_unknown_variable_name_in_overrides_is_ignored(
+        self,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        """An override for a variable name that doesn't exist in meta is a no-op."""
+        service = make_service(fake_template_repo, fake_storage, fake_template_engine)
+        tenant_id = str(uuid.uuid4())
+        owner_id = str(uuid.uuid4())
+
+        fake_template_engine.variables_to_return = ["campo"]
+        tpl = await service.upload_template(
+            name="Plantilla Ignora",
+            file_bytes=b"fake-docx",
+            file_size=9,
+            tenant_id=tenant_id,
+            created_by=owner_id,
+        )
+        version = tpl.versions[0]
+
+        from app.presentation.schemas.template import VariableTypeOverride
+        overrides = [VariableTypeOverride(name="no_existe", type="integer")]
+
+        updated = await service.update_variable_types(
+            template_id=tpl.id,
+            version_id=version.id,
+            overrides=overrides,
+            current_user_id=tpl.created_by,
+        )
+        # Should have returned without error; original meta unchanged
+        meta_by_name = {m["name"]: m for m in updated.variables_meta}
+        assert "no_existe" not in meta_by_name
+        assert "campo" in meta_by_name
+
+    async def test_existing_meta_without_type_field_defaults_to_text(
+        self,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        """Variables without a type field in stored meta default to 'text' on read."""
+        service = make_service(fake_template_repo, fake_storage, fake_template_engine)
+        tenant_id = str(uuid.uuid4())
+        owner_id = str(uuid.uuid4())
+
+        # Upload a template — FakeTemplateEngine produces {"name": ..., "contexts": [...]}
+        # without a 'type' field, simulating legacy data.
+        fake_template_engine.variables_to_return = ["campo_legado"]
+        tpl = await service.upload_template(
+            name="Plantilla Legado",
+            file_bytes=b"fake-docx",
+            file_size=9,
+            tenant_id=tenant_id,
+            created_by=owner_id,
+        )
+        version = tpl.versions[0]
+
+        # Verify no 'type' key in raw stored meta (simulates legacy row)
+        raw_meta = version.variables_meta
+        assert raw_meta is not None
+        for entry in raw_meta:
+            assert "type" not in entry, "FakeEngine should not inject 'type'"
+
+        # After update_variable_types with an empty override list, the response
+        # should serialize 'campo_legado' with type='text' via the schema default.
+        updated = await service.update_variable_types(
+            template_id=tpl.id,
+            version_id=version.id,
+            overrides=[],
+            current_user_id=tpl.created_by,
+        )
+        from app.presentation.schemas.template import VariableMeta as VMSchema
+        for entry in updated.variables_meta:
+            vm = VMSchema(**entry)
+            assert vm.type == "text", f"Expected default 'text' for {entry['name']}, got {vm.type}"
+
+    async def test_partial_override_preserves_other_variables(
+        self,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        """Only overridden variables change; others remain untouched."""
+        service = make_service(fake_template_repo, fake_storage, fake_template_engine)
+        tenant_id = str(uuid.uuid4())
+        owner_id = str(uuid.uuid4())
+
+        fake_template_engine.variables_to_return = ["nombre", "monto", "fecha"]
+        tpl = await service.upload_template(
+            name="Plantilla Parcial",
+            file_bytes=b"fake-docx",
+            file_size=9,
+            tenant_id=tenant_id,
+            created_by=owner_id,
+        )
+        version = tpl.versions[0]
+
+        from app.presentation.schemas.template import VariableTypeOverride
+        overrides = [VariableTypeOverride(name="monto", type="decimal")]
+
+        updated = await service.update_variable_types(
+            template_id=tpl.id,
+            version_id=version.id,
+            overrides=overrides,
+            current_user_id=tpl.created_by,
+        )
+        meta_by_name = {m["name"]: m for m in updated.variables_meta}
+
+        # monto should be updated
+        assert meta_by_name["monto"].get("type") == "decimal"
+
+        # nombre and fecha should be untouched (no 'type' key in raw, defaults to 'text')
+        from app.presentation.schemas.template import VariableMeta as VMSchema
+        assert VMSchema(**meta_by_name["nombre"]).type == "text"
+        assert VMSchema(**meta_by_name["fecha"]).type == "text"
+
+
 class TestShareTemplateWithQuota:
     """share_template() propagates QuotaExceededError from quota_service."""
 

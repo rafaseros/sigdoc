@@ -2,12 +2,17 @@ import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "@/shared/lib/api-client";
 import { templateKeys } from "./keys";
 
-interface VariableMeta {
+export type VariableType = "text" | "integer" | "decimal" | "select";
+
+export interface VariableMeta {
   name: string;
   contexts: string[];
+  type?: VariableType;
+  options?: string[] | null;
+  help_text?: string | null;
 }
 
-interface TemplateVersion {
+export interface TemplateVersion {
   id: string;
   version: number;
   variables: string[];
@@ -15,6 +20,7 @@ interface TemplateVersion {
   file_size: number;
   created_at: string;
 }
+
 
 export interface Template {
   id: string;

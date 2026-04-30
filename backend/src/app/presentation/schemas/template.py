@@ -1,12 +1,36 @@
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
+
+
+VariableType = Literal["text", "integer", "decimal", "select"]
 
 
 class VariableMeta(BaseModel):
     name: str
     contexts: list[str] = []
+    type: VariableType = "text"
+    options: list[str] | None = None
+    help_text: str | None = None
+
+
+class VariableTypeOverride(BaseModel):
+    name: str
+    type: VariableType
+    options: list[str] | None = None
+    help_text: str | None = None
+
+    @model_validator(mode="after")
+    def validate_select_has_options(self) -> "VariableTypeOverride":
+        if self.type == "select" and not (self.options and len(self.options) > 0):
+            raise ValueError("options is required and must be non-empty when type is 'select'")
+        return self
+
+
+class UpdateVariableTypesRequest(BaseModel):
+    overrides: list[VariableTypeOverride]
 
 
 class TemplateVersionResponse(BaseModel):

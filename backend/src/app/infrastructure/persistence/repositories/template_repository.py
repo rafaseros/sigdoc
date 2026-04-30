@@ -389,3 +389,22 @@ class SQLAlchemyTemplateRepository(TemplateRepositoryPort):
             shared_by=model.shared_by,
             shared_at=model.shared_at,
         )
+
+    async def update_variables_meta(
+        self, version_id: UUID, variables_meta: list[dict]
+    ) -> TemplateVersionModel:
+        """Replace variables_meta for the given version and return the updated model."""
+        from sqlalchemy import update as sa_update
+
+        stmt = (
+            sa_update(TemplateVersionModel)
+            .where(TemplateVersionModel.id == version_id)
+            .values(variables_meta=variables_meta)
+        )
+        await self._session.execute(stmt)
+        await self._session.flush()
+
+        # Re-fetch to return the updated state
+        fetch_stmt = select(TemplateVersionModel).where(TemplateVersionModel.id == version_id)
+        result = await self._session.execute(fetch_stmt)
+        return result.scalar_one()

@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/shared/lib/api-client";
 import { templateKeys } from "./keys";
+import type { VariableType } from "./queries";
 
 export interface ValidationError {
   type: string;
@@ -177,6 +178,32 @@ export function useUnshareTemplate() {
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({
         queryKey: templateKeys.shares(variables.templateId),
+      });
+    },
+  });
+}
+
+export interface VariableTypeOverrideInput {
+  name: string;
+  type: VariableType;
+  options?: string[] | null;
+  help_text?: string | null;
+}
+
+export function useUpdateVariableTypes(templateId: string, versionId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (overrides: VariableTypeOverrideInput[]) => {
+      const { data } = await apiClient.patch(
+        `/templates/${templateId}/versions/${versionId}/variables-meta`,
+        { overrides }
+      );
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: templateKeys.detail(templateId),
       });
     },
   });

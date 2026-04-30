@@ -426,3 +426,65 @@ class TemplateService:
         """List all shares for a template. Accessible to owner, shared users, or admin."""
         await self._check_access(template_id, current_user_id, role, require_owner=False)
         return await self._repository.list_shares(template_id)
+
+    async def update_variable_types(
+        self,
+        template_id: UUID,
+        version_id: UUID,
+        overrides: list,
+        current_user_id: UUID,
+    ) -> TemplateVersion:
+        """Update type and options for variables in a template version.
+
+        Strict owner-only: only the template creator can update variable types.
+        Admin bypass is intentionally absent (matching share/unshare pattern).
+        Overrides for unknown variable names are silently ignored.
+        """
+        template = await self._repository.get_by_id(template_id)
+        if template is None:
+            raise TemplateNotFoundError(f"Template {template_id} not found")
+
+        # Strict ownership check — no admin bypass
+        if str(template.created_by) != str(current_user_id):
+            raise TemplateAccessDeniedError(
+                "Only the template owner can update variable types"
+            )
+
+        # Find the version
+        version = await self._repository.get_version_by_id(version_id)
+        if version is None:
+            raise TemplateNotFoundError(f"Version {version_id} not found")
+
+        # Merge overrides into a copy of the existing variables_meta
+        existing_meta = list(version.variables_meta or [])
+        override_map = {o.name: o for o in overrides}
+
+        updated_meta = []
+        for entry in existing_meta:
+            name = entry.get("name") if isinstance(entry, dict) else entry.name
+            if name in override_map:
+                override = override_map[name]
+                new_entry = dict(entry) if isinstance(entry, dict) else {"name": entry.name, "contexts": entry.contexts}
+                new_entry["type"] = override.type
+                new_entry["options"] = override.options
+                new_entry["help_text"] = override.help_text
+                updated_meta.append(new_entry)
+            else:
+                updated_meta.append(dict(entry) if isinstance(entry, dict) else {"name": entry.name, "contexts": entry.contexts})
+
+        updated_version = await self._repository.update_variables_meta(version_id, updated_meta)
+
+        # Audit
+        if self._audit_service is not None:
+            from app.domain.entities import AuditAction
+            self._audit_service.log(
+                actor_id=current_user_id,
+                tenant_id=template.tenant_id,
+                action=AuditAction.TEMPLATE_VARIABLE_TYPES_UPDATED,
+                resource_type="template_version",
+                resource_id=version_id,
+                details={"overrides": len(overrides)},
+                ip_address=self._ip_address,
+            )
+
+        return updated_version
