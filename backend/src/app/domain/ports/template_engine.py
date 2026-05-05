@@ -26,3 +26,27 @@ class TemplateEngine(ABC):
     async def auto_fix(self, file_bytes: bytes) -> bytes:
         """Auto-fix fixable issues in a template file. Returns the corrected file bytes."""
         ...
+
+    @abstractmethod
+    async def extract_structure(self, file_bytes: bytes) -> dict:
+        """
+        Extract the full document structure (body + headers + footers) for preview.
+
+        Returns a dict with three lists of nodes — each node is a paragraph
+        containing spans (plain text or placeholder references):
+
+        {
+            "headers": [{"kind": "paragraph", "level": 0, "spans": [...]}, ...],
+            "body":    [{"kind": "heading",   "level": 1, "spans": [...]}, ...],
+            "footers": [{"kind": "paragraph", "level": 0, "spans": [...]}, ...],
+        }
+
+        Each span is a dict with the shape {"text": str, "variable": str | None}.
+        When `variable` is non-null the span represents a `{{ variable }}` placeholder
+        and `text` holds the original placeholder string (e.g. "{{ nombre }}").
+
+        Tables, images and other non-paragraph content are skipped in this
+        first iteration — placeholders inside tables still appear in
+        `extract_variables` so generation keeps working.
+        """
+        ...

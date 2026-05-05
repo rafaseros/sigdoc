@@ -88,3 +88,35 @@ class TemplateShareResponse(BaseModel):
     tenant_id: str
     shared_by: str
     shared_at: datetime | None = None
+
+
+# ---------------------------------------------------------------------------
+# Document structure preview — used by the generation UI to show the full
+# document context (body + headers + footers) with placeholders inline.
+# ---------------------------------------------------------------------------
+
+NodeKind = Literal["paragraph", "heading"]
+
+
+class StructureSpan(BaseModel):
+    """A run of text inside a paragraph. When `variable` is non-null the span
+    represents a `{{ variable }}` placeholder — `text` keeps the original
+    placeholder string for display.
+    """
+
+    text: str
+    variable: str | None = None
+
+
+class StructureNode(BaseModel):
+    """A paragraph from the document. `level` is 1-6 for headings, 0 otherwise."""
+
+    kind: NodeKind = "paragraph"
+    level: int = 0
+    spans: list[StructureSpan] = []
+
+
+class TemplateStructureResponse(BaseModel):
+    headers: list[StructureNode] = []
+    body: list[StructureNode] = []
+    footers: list[StructureNode] = []

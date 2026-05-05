@@ -82,6 +82,37 @@ export function useTemplate(id: string) {
   });
 }
 
+export interface StructureSpan {
+  text: string;
+  variable: string | null;
+}
+
+export interface StructureNode {
+  kind: "paragraph" | "heading";
+  level: number;
+  spans: StructureSpan[];
+}
+
+export interface TemplateStructure {
+  headers: StructureNode[];
+  body: StructureNode[];
+  footers: StructureNode[];
+}
+
+export function useTemplateStructure(templateId: string, versionId: string) {
+  return useQuery({
+    queryKey: templateKeys.structure(templateId, versionId),
+    queryFn: async () => {
+      const { data } = await apiClient.get<TemplateStructure>(
+        `/templates/${templateId}/versions/${versionId}/structure`
+      );
+      return data;
+    },
+    enabled: !!templateId && !!versionId,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
 export function useTemplateShares(templateId: string) {
   return useQuery({
     queryKey: templateKeys.shares(templateId),

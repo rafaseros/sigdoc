@@ -15,10 +15,16 @@ class FakeTemplateEngine(TemplateEngine):
         variables_to_return: list[str] | None = None,
         render_result: bytes = b"rendered-document",
         should_fail: bool = False,
+        structure_to_return: dict | None = None,
     ) -> None:
         self.variables_to_return: list[str] = variables_to_return or []
         self.render_result: bytes = render_result
         self.should_fail: bool = should_fail
+        self.structure_to_return: dict = structure_to_return or {
+            "headers": [],
+            "body": [],
+            "footers": [],
+        }
 
     async def extract_variables(self, file_bytes: bytes) -> list[dict]:
         """Return variables_to_return formatted as the real engine would."""
@@ -37,3 +43,6 @@ class FakeTemplateEngine(TemplateEngine):
 
     async def auto_fix(self, file_bytes: bytes) -> bytes:
         return file_bytes
+
+    async def extract_structure(self, file_bytes: bytes) -> dict:
+        return self.structure_to_return

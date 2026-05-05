@@ -1,8 +1,9 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { z } from "zod";
 
-import { useTemplate } from "@/features/templates/api/queries";
+import { useTemplate, useTemplateStructure } from "@/features/templates/api/queries";
 import { DynamicForm } from "@/features/documents/components/DynamicForm";
+import { FullDocumentEditor } from "@/features/documents/components/FullDocumentEditor";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -32,6 +33,8 @@ function GeneratePage() {
   const navigate = useNavigate();
 
   const { data: template, isLoading } = useTemplate(templateId);
+  const { data: structure, isLoading: structureLoading, isError: structureError } =
+    useTemplateStructure(templateId, versionId);
 
   if (isLoading) {
     return (
@@ -149,7 +152,18 @@ function GeneratePage() {
             templateName={template.name}
           />
         </div>
+      ) : structureLoading ? (
+        <Skeleton className="h-96 w-full rounded-xl" />
+      ) : structure && !structureError ? (
+        <FullDocumentEditor
+          templateVersionId={versionId}
+          templateName={template.name}
+          variablesMeta={variablesMeta}
+          structure={structure}
+        />
       ) : (
+        // Structure failed to load — fall back to the legacy variable-form
+        // editor so the user can still generate the document.
         <DynamicForm
           templateVersionId={versionId}
           variables={variables}

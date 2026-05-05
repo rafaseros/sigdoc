@@ -11,6 +11,7 @@ from app.domain.exceptions import (
     TemplateAccessDeniedError,
     TemplateNotFoundError,
     TemplateSharingError,
+    TemplateVersionNotFoundError,
 )
 from app.domain.ports.user_repository import UserRepository
 from app.domain.services.permissions import can_view_all_templates
@@ -22,6 +23,7 @@ from app.presentation.schemas.template import (
     TemplateListResponse,
     TemplateResponse,
     TemplateShareResponse,
+    TemplateStructureResponse,
     TemplateUploadResponse,
     TemplateVersionResponse,
     UpdateVariableTypesRequest,
@@ -347,6 +349,43 @@ async def get_template(
         is_owner=is_owner,
         shared_by_email=shared_by_email,
     )
+
+
+@router.get(
+    "/{template_id}/versions/{version_id}/structure",
+    response_model=TemplateStructureResponse,
+)
+async def get_version_structure(
+    template_id: UUID,
+    version_id: UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+    service: TemplateService = Depends(get_template_service),
+):
+    """
+    Return the full document structure (headers / body / footers) for a
+    specific template version. Powers the generation preview UI: the user
+    sees the entire document with placeholders inline instead of just the
+    paragraphs that contain a given variable.
+    """
+    try:
+        structure = await service.get_version_structure(
+            template_id,
+            version_id,
+            user_id=current_user.user_id,
+            role=current_user.role,
+        )
+    except TemplateAccessDeniedError as e:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(e),
+        )
+    except TemplateVersionNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Template version not found",
+        )
+
+    return TemplateStructureResponse(**structure)
 
 
 @router.delete("/{template_id}", status_code=status.HTTP_204_NO_CONTENT)

@@ -1040,3 +1040,114 @@ async def test_existing_meta_without_help_text_field_returns_null(
     data = response.json()
     meta_by_name = {m["name"]: m for m in data["variables_meta"]}
     assert meta_by_name["legacy"]["help_text"] is None
+
+
+# ── GET /templates/{tid}/versions/{vid}/structure ────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_get_version_structure_without_auth_returns_401(async_client, app):
+    from app.presentation.middleware.tenant import get_current_user
+
+    original = app.dependency_overrides.pop(get_current_user, None)
+    try:
+        fake_id = uuid.uuid4()
+        response = await async_client.get(
+            f"/api/v1/templates/{fake_id}/versions/{fake_id}/structure"
+        )
+        assert response.status_code == 401
+    finally:
+        if original is not None:
+            app.dependency_overrides[get_current_user] = original
+
+
+@pytest.mark.asyncio
+async def test_get_version_structure_returns_200_for_owner(
+    async_client,
+    auth_headers,
+    fake_template_repo: FakeTemplateRepository,
+    fake_template_engine,
+    fake_storage,
+):
+    """Owner gets the structure dict back as TemplateStructureResponse."""
+    # Seed a template + version owned by the test user
+    template_id, version_id = _seed_template_with_variables(
+        ["nombre"], CONFTEST_USER_ID, fake_template_repo, "StructureTpl"
+    )
+    # The endpoint downloads bytes from MinIO before passing to the engine —
+    # the FakeStorageService raises if the path was never seeded.
+    version = fake_template_repo._versions[version_id]
+    fake_storage.files[("templates", version.minio_path)] = b"fake-docx-bytes"
+
+    # Configure the engine response
+    fake_template_engine.structure_to_return = {
+        "headers": [],
+        "body": [
+            {
+                "kind": "paragraph",
+                "level": 0,
+                "spans": [
+                    {"text": "Estimado ", "variable": None},
+                    {"text": "{{ nombre }}", "variable": "nombre"},
+                    {"text": ", gracias.", "variable": None},
+                ],
+            }
+        ],
+        "footers": [],
+    }
+
+    response = await async_client.get(
+        f"/api/v1/templates/{template_id}/versions/{version_id}/structure",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["headers"] == []
+    assert data["footers"] == []
+    assert len(data["body"]) == 1
+    assert data["body"][0]["kind"] == "paragraph"
+    assert data["body"][0]["spans"][1] == {
+        "text": "{{ nombre }}",
+        "variable": "nombre",
+    }
+
+    # Reset shared fixture so subsequent tests aren't surprised
+    fake_template_engine.structure_to_return = {"headers": [], "body": [], "footers": []}
+
+
+@pytest.mark.asyncio
+async def test_get_version_structure_returns_404_when_version_does_not_exist(
+    async_client, auth_headers, fake_template_repo: FakeTemplateRepository
+):
+    template_id, _ = _seed_template_with_variables(
+        ["x"], CONFTEST_USER_ID, fake_template_repo, "StructureTpl404"
+    )
+    nonexistent_version = uuid.uuid4()
+
+    response = await async_client.get(
+        f"/api/v1/templates/{template_id}/versions/{nonexistent_version}/structure",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_get_version_structure_returns_404_on_path_mismatch(
+    async_client, auth_headers, fake_template_repo: FakeTemplateRepository
+):
+    """Version belongs to template A but URL says template B → 404 (prevents oracle leakage)."""
+    _, version_a = _seed_template_with_variables(
+        ["a"], CONFTEST_USER_ID, fake_template_repo, "StructureTplA"
+    )
+    template_b, _ = _seed_template_with_variables(
+        ["b"], CONFTEST_USER_ID, fake_template_repo, "StructureTplB"
+    )
+
+    response = await async_client.get(
+        f"/api/v1/templates/{template_b}/versions/{version_a}/structure",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 404

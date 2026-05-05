@@ -11,6 +11,7 @@ from app.domain.exceptions import (
     TemplateAccessDeniedError,
     TemplateNotFoundError,
     TemplateSharingError,
+    TemplateVersionNotFoundError,
 )
 from app.domain.ports.storage_service import StorageService
 from app.domain.ports.template_engine import TemplateEngine
@@ -47,6 +48,44 @@ class TemplateService:
     def repository(self) -> TemplateRepository:
         """Expose the underlying repository for endpoint-level lookups."""
         return self._repository
+
+    async def get_version_structure(
+        self,
+        template_id: UUID,
+        version_id: UUID,
+        *,
+        user_id: str,
+        role: str | None,
+    ) -> dict:
+        """
+        Return the document structure (headers / body / footers) for a specific
+        template version, used by the generation preview UI.
+
+        Raises:
+            TemplateVersionNotFoundError: version doesn't exist OR belongs to
+                a different template than the URL path indicates.
+            TemplateAccessDeniedError: user can't read this template.
+        """
+        version = await self._repository.get_version_by_id(version_id)
+        if version is None or version.template_id != template_id:
+            raise TemplateVersionNotFoundError(
+                f"Template version {version_id} not found"
+            )
+
+        # CurrentUser.user_id can be a UUID instance (test fixture) or a string
+        # (real auth flow); normalise so has_access always sees a UUID.
+        user_uuid = user_id if isinstance(user_id, uuid.UUID) else uuid.UUID(str(user_id))
+        has_access = await self._repository.has_access(
+            version.template_id, user_uuid, role
+        )
+        if not has_access:
+            raise TemplateAccessDeniedError("No tenés acceso a esta plantilla")
+
+        template_bytes = await self._storage.download_file(
+            bucket=self.TEMPLATES_BUCKET,
+            path=version.minio_path,
+        )
+        return await self._engine.extract_structure(template_bytes)
 
     async def upload_template(
         self,

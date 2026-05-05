@@ -353,6 +353,108 @@ class DocxTemplateEngine(TemplateEngine):
 
         return await asyncio.to_thread(_validate_sync, file_bytes)
 
+    async def extract_structure(self, file_bytes: bytes) -> dict:
+        """
+        Extract document structure (headers, body, footers) as a list of nodes
+        for the generation preview UI.
+
+        Each node is a paragraph with its kind (paragraph | heading), heading
+        level (1-6 for headings, 0 otherwise), and a list of spans where each
+        span is either plain text or a {{ variable }} placeholder.
+
+        Empty paragraphs are skipped. Tables and images are not included in
+        this first iteration — placeholders inside tables still surface via
+        extract_variables().
+        """
+        # Same regex used by extract_variables / validate so the three stay in sync.
+        # Note: capture the WHOLE placeholder ({{ name }}) plus the inner name.
+        placeholder_re = re.compile(r"(\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\})")
+
+        def _spans_for(text: str) -> list[dict]:
+            """Split paragraph text into a list of plain-text and placeholder spans."""
+            spans: list[dict] = []
+            last_end = 0
+            for m in placeholder_re.finditer(text):
+                if m.start() > last_end:
+                    spans.append({"text": text[last_end : m.start()], "variable": None})
+                spans.append({"text": m.group(1), "variable": m.group(2)})
+                last_end = m.end()
+            if last_end < len(text):
+                spans.append({"text": text[last_end:], "variable": None})
+            return spans
+
+        def _classify(para) -> tuple[str, int]:
+            """Detect heading via paragraph style name. Falls back to plain paragraph."""
+            style_name = ""
+            try:
+                if para.style is not None and para.style.name:
+                    style_name = para.style.name
+            except AttributeError:
+                # Defensive: some malformed docx files don't expose style cleanly
+                style_name = ""
+
+            if style_name.startswith("Heading"):
+                # "Heading 1" → level 1, "Heading 2" → 2, ...
+                # If no number present (just "Heading"), default to level 1.
+                try:
+                    level = int(style_name.split()[-1])
+                    if level < 1 or level > 6:
+                        level = 1
+                except (ValueError, IndexError):
+                    level = 1
+                return ("heading", level)
+            if style_name == "Title":
+                return ("heading", 1)
+            return ("paragraph", 0)
+
+        def _node_for(para) -> dict | None:
+            """Build a structure node from a python-docx paragraph, or None if empty."""
+            text = para.text
+            if not text or not text.strip():
+                return None
+            kind, level = _classify(para)
+            return {"kind": kind, "level": level, "spans": _spans_for(text)}
+
+        def _extract(data: bytes) -> dict:
+            with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp:
+                tmp.write(data)
+                tmp_path = tmp.name
+            try:
+                doc = Document(tmp_path)
+
+                body_nodes: list[dict] = []
+                for para in doc.paragraphs:
+                    node = _node_for(para)
+                    if node is not None:
+                        body_nodes.append(node)
+
+                # Sections can have distinct headers/footers; we flatten them
+                # into a single list each. The first iteration of the preview
+                # treats the document as one logical scope.
+                header_nodes: list[dict] = []
+                footer_nodes: list[dict] = []
+                for section in doc.sections:
+                    if section.header:
+                        for para in section.header.paragraphs:
+                            node = _node_for(para)
+                            if node is not None:
+                                header_nodes.append(node)
+                    if section.footer:
+                        for para in section.footer.paragraphs:
+                            node = _node_for(para)
+                            if node is not None:
+                                footer_nodes.append(node)
+
+                return {
+                    "headers": header_nodes,
+                    "body": body_nodes,
+                    "footers": footer_nodes,
+                }
+            finally:
+                os.unlink(tmp_path)
+
+        return await asyncio.to_thread(_extract, file_bytes)
+
     async def auto_fix(self, file_bytes: bytes) -> bytes:
         """
         Auto-fix fixable issues in a template file.
