@@ -125,3 +125,19 @@ class TemplateRepository(ABC):
     ) -> TemplateVersion:
         """Replace variables_meta for the given version and return the updated entity."""
         ...
+
+    @abstractmethod
+    async def count_by_owner(self, user_id: UUID) -> int:
+        """Return how many templates the given user owns. Used to decide
+        whether deactivating that user requires a reassign target."""
+        ...
+
+    @abstractmethod
+    async def reassign_owner(
+        self, from_user_id: UUID, to_user_id: UUID
+    ) -> int:
+        """Bulk reassign every template owned by `from_user_id` to
+        `to_user_id`. Returns the number of templates updated. Caller is
+        responsible for validating that both users belong to the same
+        tenant before invoking this."""
+        ...

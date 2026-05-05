@@ -242,3 +242,18 @@ class FakeTemplateRepository(TemplateRepository):
             raise KeyError(f"Version {version_id} not found")
         version.variables_meta = variables_meta
         return version
+
+    async def count_by_owner(self, user_id: UUID) -> int:
+        return sum(
+            1 for t in self._templates.values() if t.created_by == user_id
+        )
+
+    async def reassign_owner(
+        self, from_user_id: UUID, to_user_id: UUID
+    ) -> int:
+        count = 0
+        for t in self._templates.values():
+            if t.created_by == from_user_id:
+                t.created_by = to_user_id
+                count += 1
+        return count

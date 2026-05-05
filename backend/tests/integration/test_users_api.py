@@ -352,3 +352,329 @@ async def test_create_user_without_role_defaults_to_document_generator(
     assert response.status_code == 201, response.text
     data = response.json()
     assert data["role"] == "document_generator"
+
+
+@pytest.mark.asyncio
+async def test_create_user_with_explicit_admin_role(
+    async_client, auth_headers, monkeypatch
+):
+    """Admin POSTs /users with role=admin → 201, role=admin."""
+    fake_repo = FakeUserRepository()
+
+    repo_class = _make_users_repo_class_with_create(fake_repo)
+    monkeypatch.setattr("app.presentation.api.v1.users.SQLAlchemyUserRepository", repo_class)
+
+    response = await async_client.post(
+        "/api/v1/users",
+        headers=auth_headers,
+        json={
+            "email": "newadmin@test.com",
+            "full_name": "New Admin",
+            "password": "securepassword123",
+            "role": "admin",
+        },
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["role"] == "admin"
+
+
+@pytest.mark.asyncio
+async def test_create_user_with_template_creator_role(
+    async_client, auth_headers, monkeypatch
+):
+    """Admin POSTs /users with role=template_creator → 201."""
+    fake_repo = FakeUserRepository()
+
+    repo_class = _make_users_repo_class_with_create(fake_repo)
+    monkeypatch.setattr("app.presentation.api.v1.users.SQLAlchemyUserRepository", repo_class)
+
+    response = await async_client.post(
+        "/api/v1/users",
+        headers=auth_headers,
+        json={
+            "email": "creator@test.com",
+            "full_name": "Template Creator",
+            "password": "securepassword123",
+            "role": "template_creator",
+        },
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["role"] == "template_creator"
+
+
+@pytest.mark.asyncio
+async def test_create_user_with_invalid_role_returns_422(
+    async_client, auth_headers, monkeypatch
+):
+    """Admin POSTs /users with an unknown role → 422 (validator rejects)."""
+    fake_repo = FakeUserRepository()
+
+    repo_class = _make_users_repo_class_with_create(fake_repo)
+    monkeypatch.setattr("app.presentation.api.v1.users.SQLAlchemyUserRepository", repo_class)
+
+    response = await async_client.post(
+        "/api/v1/users",
+        headers=auth_headers,
+        json={
+            "email": "weirdo@test.com",
+            "full_name": "Weirdo",
+            "password": "securepassword123",
+            "role": "superuser",
+        },
+    )
+    assert response.status_code == 422
+
+
+# ── DELETE /users/{id} with reassign_to (B1) ─────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_deactivate_user_without_templates_works(
+    async_client, auth_headers, monkeypatch, fake_template_repo
+):
+    """Baseline retrocompat: deactivate succeeds when the user owns no templates."""
+    fake_repo = FakeUserRepository()
+    target = _make_admin_user(
+        TARGET_USER_ID, ADMIN_TENANT_ID, role="document_generator"
+    )
+    _seed_user(fake_repo, target)
+    requesting_admin = _make_admin_user(ADMIN_USER_ID, ADMIN_TENANT_ID, role="admin")
+    _seed_user(fake_repo, requesting_admin)
+
+    repo_class = _make_users_repo_class(fake_repo)
+    monkeypatch.setattr("app.presentation.api.v1.users.SQLAlchemyUserRepository", repo_class)
+    # No templates seeded for target → endpoint takes the simple soft-delete path.
+
+    response = await async_client.delete(
+        f"/api/v1/users/{TARGET_USER_ID}",
+        headers=auth_headers,
+    )
+    assert response.status_code == 204, response.text
+
+
+@pytest.mark.asyncio
+async def test_deactivate_user_with_templates_returns_409_without_reassign(
+    async_client, auth_headers, monkeypatch, fake_template_repo
+):
+    """User owns templates and admin doesn't pass reassign_to → 409 with hint."""
+    from app.domain.entities import Template
+    from datetime import datetime, timezone
+
+    fake_repo = FakeUserRepository()
+    target = _make_admin_user(
+        TARGET_USER_ID, ADMIN_TENANT_ID, role="document_generator"
+    )
+    _seed_user(fake_repo, target)
+    requesting_admin = _make_admin_user(ADMIN_USER_ID, ADMIN_TENANT_ID, role="admin")
+    _seed_user(fake_repo, requesting_admin)
+
+    # Seed a template owned by the target user
+    tpl_id = uuid.uuid4()
+    fake_template_repo._templates[tpl_id] = Template(
+        id=tpl_id,
+        tenant_id=ADMIN_TENANT_ID,
+        name="OwnedByTarget",
+        description=None,
+        current_version=1,
+        created_by=TARGET_USER_ID,
+        versions=[],
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    )
+
+    repo_class = _make_users_repo_class(fake_repo)
+    monkeypatch.setattr("app.presentation.api.v1.users.SQLAlchemyUserRepository", repo_class)
+
+    response = await async_client.delete(
+        f"/api/v1/users/{TARGET_USER_ID}",
+        headers=auth_headers,
+    )
+    assert response.status_code == 409, response.text
+    assert "reassign_to" in response.json()["detail"]
+
+    # Cleanup so other tests aren't affected
+    fake_template_repo._templates.pop(tpl_id, None)
+
+
+@pytest.mark.asyncio
+async def test_deactivate_user_with_reassign_transfers_templates(
+    async_client, auth_headers, monkeypatch, fake_template_repo
+):
+    """Happy path: reassign_to transfers ownership and then deactivates."""
+    from app.domain.entities import Template
+    from datetime import datetime, timezone
+
+    REASSIGN_TARGET_ID = uuid.UUID("ffffffff-ffff-ffff-ffff-ffffffffffff")
+
+    fake_repo = FakeUserRepository()
+    target = _make_admin_user(
+        TARGET_USER_ID, ADMIN_TENANT_ID, role="document_generator"
+    )
+    reassign_target = _make_admin_user(
+        REASSIGN_TARGET_ID, ADMIN_TENANT_ID, role="document_generator"
+    )
+    requesting_admin = _make_admin_user(ADMIN_USER_ID, ADMIN_TENANT_ID, role="admin")
+    _seed_user(fake_repo, target)
+    _seed_user(fake_repo, reassign_target)
+    _seed_user(fake_repo, requesting_admin)
+
+    tpl_id = uuid.uuid4()
+    fake_template_repo._templates[tpl_id] = Template(
+        id=tpl_id,
+        tenant_id=ADMIN_TENANT_ID,
+        name="ReassignableTemplate",
+        description=None,
+        current_version=1,
+        created_by=TARGET_USER_ID,
+        versions=[],
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    )
+
+    repo_class = _make_users_repo_class(fake_repo)
+    monkeypatch.setattr("app.presentation.api.v1.users.SQLAlchemyUserRepository", repo_class)
+
+    response = await async_client.delete(
+        f"/api/v1/users/{TARGET_USER_ID}?reassign_to={REASSIGN_TARGET_ID}",
+        headers=auth_headers,
+    )
+    assert response.status_code == 204, response.text
+    # Template ownership transferred
+    assert fake_template_repo._templates[tpl_id].created_by == REASSIGN_TARGET_ID
+
+    fake_template_repo._templates.pop(tpl_id, None)
+
+
+@pytest.mark.asyncio
+async def test_deactivate_user_reassign_to_self_returns_400(
+    async_client, auth_headers, monkeypatch, fake_template_repo
+):
+    from app.domain.entities import Template
+    from datetime import datetime, timezone
+
+    fake_repo = FakeUserRepository()
+    target = _make_admin_user(
+        TARGET_USER_ID, ADMIN_TENANT_ID, role="document_generator"
+    )
+    _seed_user(fake_repo, target)
+    requesting_admin = _make_admin_user(ADMIN_USER_ID, ADMIN_TENANT_ID, role="admin")
+    _seed_user(fake_repo, requesting_admin)
+
+    tpl_id = uuid.uuid4()
+    fake_template_repo._templates[tpl_id] = Template(
+        id=tpl_id,
+        tenant_id=ADMIN_TENANT_ID,
+        name="SelfReassignTpl",
+        description=None,
+        current_version=1,
+        created_by=TARGET_USER_ID,
+        versions=[],
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    )
+
+    repo_class = _make_users_repo_class(fake_repo)
+    monkeypatch.setattr("app.presentation.api.v1.users.SQLAlchemyUserRepository", repo_class)
+
+    response = await async_client.delete(
+        f"/api/v1/users/{TARGET_USER_ID}?reassign_to={TARGET_USER_ID}",
+        headers=auth_headers,
+    )
+    assert response.status_code == 400, response.text
+
+    fake_template_repo._templates.pop(tpl_id, None)
+
+
+@pytest.mark.asyncio
+async def test_deactivate_user_reassign_to_inactive_returns_400(
+    async_client, auth_headers, monkeypatch, fake_template_repo
+):
+    from app.domain.entities import Template, User
+    from datetime import datetime, timezone
+
+    INACTIVE_TARGET_ID = uuid.UUID("99999999-9999-9999-9999-999999999999")
+
+    fake_repo = FakeUserRepository()
+    target = _make_admin_user(
+        TARGET_USER_ID, ADMIN_TENANT_ID, role="document_generator"
+    )
+    inactive_user = User(
+        id=INACTIVE_TARGET_ID,
+        tenant_id=ADMIN_TENANT_ID,
+        email="inactive@test.com",
+        hashed_password=hash_password("x"),
+        full_name="Inactive User",
+        role="document_generator",
+        is_active=False,
+        created_at=datetime.now(timezone.utc),
+    )
+    requesting_admin = _make_admin_user(ADMIN_USER_ID, ADMIN_TENANT_ID, role="admin")
+    _seed_user(fake_repo, target)
+    _seed_user(fake_repo, inactive_user)
+    _seed_user(fake_repo, requesting_admin)
+
+    tpl_id = uuid.uuid4()
+    fake_template_repo._templates[tpl_id] = Template(
+        id=tpl_id,
+        tenant_id=ADMIN_TENANT_ID,
+        name="InactiveReassignTpl",
+        description=None,
+        current_version=1,
+        created_by=TARGET_USER_ID,
+        versions=[],
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    )
+
+    repo_class = _make_users_repo_class(fake_repo)
+    monkeypatch.setattr("app.presentation.api.v1.users.SQLAlchemyUserRepository", repo_class)
+
+    response = await async_client.delete(
+        f"/api/v1/users/{TARGET_USER_ID}?reassign_to={INACTIVE_TARGET_ID}",
+        headers=auth_headers,
+    )
+    assert response.status_code == 400, response.text
+
+    fake_template_repo._templates.pop(tpl_id, None)
+
+
+@pytest.mark.asyncio
+async def test_deactivate_user_reassign_to_nonexistent_returns_404(
+    async_client, auth_headers, monkeypatch, fake_template_repo
+):
+    from app.domain.entities import Template
+    from datetime import datetime, timezone
+
+    NONEXISTENT_ID = uuid.UUID("88888888-8888-8888-8888-888888888888")
+
+    fake_repo = FakeUserRepository()
+    target = _make_admin_user(
+        TARGET_USER_ID, ADMIN_TENANT_ID, role="document_generator"
+    )
+    requesting_admin = _make_admin_user(ADMIN_USER_ID, ADMIN_TENANT_ID, role="admin")
+    _seed_user(fake_repo, target)
+    _seed_user(fake_repo, requesting_admin)
+
+    tpl_id = uuid.uuid4()
+    fake_template_repo._templates[tpl_id] = Template(
+        id=tpl_id,
+        tenant_id=ADMIN_TENANT_ID,
+        name="NoTargetTpl",
+        description=None,
+        current_version=1,
+        created_by=TARGET_USER_ID,
+        versions=[],
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    )
+
+    repo_class = _make_users_repo_class(fake_repo)
+    monkeypatch.setattr("app.presentation.api.v1.users.SQLAlchemyUserRepository", repo_class)
+
+    response = await async_client.delete(
+        f"/api/v1/users/{TARGET_USER_ID}?reassign_to={NONEXISTENT_ID}",
+        headers=auth_headers,
+    )
+    assert response.status_code == 404, response.text
+
+    fake_template_repo._templates.pop(tpl_id, None)

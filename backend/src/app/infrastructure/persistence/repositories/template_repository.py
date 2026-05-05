@@ -408,3 +408,28 @@ class SQLAlchemyTemplateRepository(TemplateRepositoryPort):
         fetch_stmt = select(TemplateVersionModel).where(TemplateVersionModel.id == version_id)
         result = await self._session.execute(fetch_stmt)
         return result.scalar_one()
+
+
+    async def count_by_owner(self, user_id: UUID) -> int:
+        """Return the number of templates owned by the given user."""
+        stmt = select(func.count()).select_from(TemplateModel).where(
+            TemplateModel.created_by == user_id,
+        )
+        result = await self._session.execute(stmt)
+        return int(result.scalar_one())
+
+    async def reassign_owner(
+        self, from_user_id: UUID, to_user_id: UUID
+    ) -> int:
+        """Bulk reassign every template owned by `from_user_id` to
+        `to_user_id`. Returns the number of templates updated."""
+        from sqlalchemy import update as sa_update
+
+        stmt = (
+            sa_update(TemplateModel)
+            .where(TemplateModel.created_by == from_user_id)
+            .values(created_by=to_user_id)
+        )
+        result = await self._session.execute(stmt)
+        await self._session.flush()
+        return int(result.rowcount or 0)

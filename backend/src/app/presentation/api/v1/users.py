@@ -3,8 +3,13 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.application.services import get_audit_service, get_quota_service
+from app.application.services import (
+    get_audit_service,
+    get_quota_service,
+    get_template_service,
+)
 from app.application.services.quota_service import QuotaService
+from app.application.services.template_service import TemplateService
 from app.domain.entities import AuditAction
 from app.domain.services.permissions import is_admin_role
 from app.infrastructure.auth.jwt_handler import hash_password
@@ -56,7 +61,7 @@ async def create_user(
         full_name=request.full_name,
         hashed_password=hash_password(request.password),
         tenant_id=admin.tenant_id,
-        role="document_generator",
+        role=request.role,
     )
     created = await repo.create(user)
 
@@ -179,10 +184,25 @@ async def update_user(
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def deactivate_user(
     user_id: UUID,
+    reassign_to: UUID | None = Query(
+        None,
+        description=(
+            "If the user owns templates, the admin must pass the UUID of an "
+            "active user in the same tenant to receive ownership before the "
+            "soft delete proceeds."
+        ),
+    ),
     admin: CurrentUser = Depends(require_admin),
     session: AsyncSession = Depends(get_tenant_session),
+    template_service: TemplateService = Depends(get_template_service),
 ):
-    """Soft delete a user (set is_active=False)."""
+    """Soft delete a user (set is_active=False).
+
+    When the user owns templates the admin must pass `?reassign_to=<uuid>`
+    so the templates are transferred before the user is deactivated. This
+    keeps the historical audit trail intact while preventing orphaned
+    templates from becoming inaccessible.
+    """
     repo = SQLAlchemyUserRepository(session)
 
     user = await repo.get_by_id(user_id)
@@ -201,16 +221,56 @@ async def deactivate_user(
                 detail="No se puede desactivar al último administrador del tenant",
             )
 
+    # Template ownership: must reassign before deactivation
+    owned_count = await template_service.count_user_templates(user_id)
+    reassigned_count = 0
+    if owned_count > 0:
+        if reassign_to is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"El usuario tiene {owned_count} plantilla(s). Use "
+                    f"reassign_to=<user_id> para reasignarlas a otro "
+                    f"usuario activo antes de desactivar."
+                ),
+            )
+        if reassign_to == user_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="reassign_to no puede ser el mismo usuario que se desactiva",
+            )
+        target = await repo.get_by_id(reassign_to)
+        if target is None or target.tenant_id != admin.tenant_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Usuario destino para reasignación no encontrado en este tenant",
+            )
+        if not target.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="El usuario destino para reasignación está inactivo",
+            )
+        reassigned_count = await template_service.reassign_templates_owner(
+            user_id, reassign_to
+        )
+
     await repo.deactivate(user_id)
 
-    # Fire-and-forget audit
+    # Fire-and-forget audit — include reassignment metadata when applicable
     audit_svc = get_audit_service()
+    details: dict | None = None
+    if reassigned_count > 0:
+        details = {
+            "reassigned_count": reassigned_count,
+            "reassigned_to": str(reassign_to),
+        }
     audit_svc.log(
         actor_id=admin.user_id,
         tenant_id=admin.tenant_id,
         action=AuditAction.USER_DEACTIVATE,
         resource_type="user",
         resource_id=user_id,
+        details=details,
     )
 
 

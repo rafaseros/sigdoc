@@ -8,6 +8,10 @@ class CreateUserRequest(BaseModel):
     email: str
     full_name: str
     password: str
+    # Default keeps backwards compatibility with frontends that don't yet
+    # send a role. Admins creating users via the new RolePicker UI pass
+    # one of: "admin", "template_creator", "document_generator".
+    role: str = "document_generator"
 
     @field_validator("email")
     @classmethod
@@ -16,6 +20,15 @@ class CreateUserRequest(BaseModel):
         if not re.match(pattern, v):
             raise ValueError("Formato de correo electrónico inválido")
         return v.lower()
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, v: str) -> str:
+        if v not in ("admin", "template_creator", "document_generator"):
+            raise ValueError(
+                "El rol debe ser 'admin', 'template_creator' o 'document_generator'"
+            )
+        return v
 
 
 class UpdateUserRequest(BaseModel):

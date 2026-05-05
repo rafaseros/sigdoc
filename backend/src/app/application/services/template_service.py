@@ -49,6 +49,20 @@ class TemplateService:
         """Expose the underlying repository for endpoint-level lookups."""
         return self._repository
 
+    async def count_user_templates(self, user_id: UUID) -> int:
+        """Return how many templates the given user owns. Wrapper around the
+        repository — used by the user-deactivation flow to decide whether
+        a reassign target is mandatory."""
+        return await self._repository.count_by_owner(user_id)
+
+    async def reassign_templates_owner(
+        self, from_user_id: UUID, to_user_id: UUID
+    ) -> int:
+        """Bulk reassign every template owned by `from_user_id` to
+        `to_user_id`. Tenant validation is the caller's responsibility —
+        this method only manipulates ownership rows."""
+        return await self._repository.reassign_owner(from_user_id, to_user_id)
+
     async def get_version_structure(
         self,
         template_id: UUID,
