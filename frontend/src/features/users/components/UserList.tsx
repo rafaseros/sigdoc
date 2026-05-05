@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import { toast } from "sonner";
 import { Pencil, Search, UserX } from "lucide-react";
 import {
   Table,
@@ -14,8 +13,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ROLE_LABELS } from "@/shared/lib/role-labels";
-import { useUsers, useDeactivateUser, type UserResponse } from "../api";
+import { useUsers, type UserResponse } from "../api";
 import { EditUserDialog } from "./EditUserDialog";
+import { DeactivateUserDialog } from "./DeactivateUserDialog";
 
 function getInitials(email: string) {
   const local = email.split("@")[0] ?? email;
@@ -41,9 +41,8 @@ function roleLabel(role: string) {
 
 export function UserList() {
   const { data, isLoading, isError, error } = useUsers({ size: 100 });
-  const deactivateMutation = useDeactivateUser();
   const [editingUser, setEditingUser] = useState<UserResponse | null>(null);
-  const [confirmDeactivate, setConfirmDeactivate] = useState<string | null>(
+  const [deactivatingUser, setDeactivatingUser] = useState<UserResponse | null>(
     null,
   );
   const [search, setSearch] = useState("");
@@ -72,18 +71,6 @@ export function UserList() {
       month: "short",
       day: "numeric",
     });
-  }
-
-  async function handleDeactivate(id: string) {
-    try {
-      await deactivateMutation.mutateAsync(id);
-      toast.success("Usuario desactivado con éxito");
-      setConfirmDeactivate(null);
-    } catch (err: unknown) {
-      const message =
-        err instanceof Error ? err.message : "Error al desactivar usuario";
-      toast.error(message);
-    }
   }
 
   return (
@@ -203,36 +190,16 @@ export function UserList() {
                       >
                         <Pencil className="size-4" />
                       </Button>
-                      {confirmDeactivate === user.id ? (
-                        <div className="flex items-center gap-1">
-                          <Button
-                            variant="destructive"
-                            size="sm"
-                            onClick={() => handleDeactivate(user.id)}
-                            disabled={deactivateMutation.isPending}
-                          >
-                            {deactivateMutation.isPending ? "..." : "Confirmar"}
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => setConfirmDeactivate(null)}
-                          >
-                            No
-                          </Button>
-                        </div>
-                      ) : (
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          onClick={() => setConfirmDeactivate(user.id)}
-                          title="Desactivar"
-                          disabled={!user.is_active}
-                          className="text-[var(--fg-2)] hover:bg-[#ffdad6]/50 hover:text-[var(--destructive)]"
-                        >
-                          <UserX className="size-4" />
-                        </Button>
-                      )}
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        onClick={() => setDeactivatingUser(user)}
+                        title="Desactivar"
+                        disabled={!user.is_active}
+                        className="text-[var(--fg-2)] hover:bg-[#ffdad6]/50 hover:text-[var(--destructive)]"
+                      >
+                        <UserX className="size-4" />
+                      </Button>
                     </div>
                   </TableCell>
                 </TableRow>
@@ -248,6 +215,17 @@ export function UserList() {
           open={!!editingUser}
           onOpenChange={(open) => {
             if (!open) setEditingUser(null);
+          }}
+        />
+      )}
+
+      {deactivatingUser && (
+        <DeactivateUserDialog
+          user={deactivatingUser}
+          candidates={items}
+          open={!!deactivatingUser}
+          onOpenChange={(open) => {
+            if (!open) setDeactivatingUser(null);
           }}
         />
       )}

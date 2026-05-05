@@ -155,6 +155,7 @@ export function CreateUserDialog() {
         email: email.trim(),
         full_name: fullName.trim(),
         password,
+        role,
       });
       toast.success("Usuario creado con éxito");
       resetForm();

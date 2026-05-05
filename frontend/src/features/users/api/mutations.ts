@@ -10,6 +10,7 @@ export function useCreateUser() {
       email: string;
       full_name: string;
       password: string;
+      role?: string;
     }) => {
       const { data } = await apiClient.post("/users", payload);
       return data;
@@ -47,8 +48,17 @@ export function useDeactivateUser() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (id: string) => {
-      await apiClient.delete(`/users/${id}`);
+    mutationFn: async (input: string | { id: string; reassignTo?: string }) => {
+      // Backwards compatible: accept either a bare id (legacy) or
+      // { id, reassignTo? }. Backend uses ?reassign_to=<uuid> when the
+      // user owns templates that must be transferred before deactivation.
+      const id = typeof input === "string" ? input : input.id;
+      const reassignTo =
+        typeof input === "string" ? undefined : input.reassignTo;
+      const url = reassignTo
+        ? `/users/${id}?reassign_to=${reassignTo}`
+        : `/users/${id}`;
+      await apiClient.delete(url);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: userKeys.lists() });
