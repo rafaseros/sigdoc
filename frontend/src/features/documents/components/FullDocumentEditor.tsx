@@ -3,20 +3,30 @@
  *
  * Renders the complete .docx as a paginated document with three sections —
  * Encabezado / Contenido / Pie de página — and lets the user fill every
- * `{{ variable }}` placeholder inline through a popover. Unlike
- * InlineDocumentEditor, which only shows the paragraphs that contain a
- * specific variable, this view gives the full document context: surrounding
- * text, headers, and footers.
+ * `{{ variable }}` placeholder inline through a popover.
  *
  * Powered by GET /api/v1/templates/{tid}/versions/{vid}/structure.
  *
  * Auto-jump: every placeholder occurrence is tracked as a unique "instance"
- * (key derived from its position). When the user commits a value, the
- * editor advances to the next pending instance and opens its popover —
- * mirroring the InlineDocumentEditor behaviour.
+ * (key derived from its position). Committing a value advances the editor
+ * to the next pending instance and opens its popover.
+ *
+ * Performance:
+ * - PlaceholderPill is wrapped in React.memo so a commit on one pill does
+ *   not re-render the other 200/500/1000 pills in the document.
+ * - Parent callbacks are stabilised with useCallback + a ref to the latest
+ *   `values` so the pills can compare props by identity.
  */
 
-import { Fragment, useMemo, useState } from "react";
+import {
+  Fragment,
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Popover } from "@base-ui/react/popover";
 import { Select as BaseSelect } from "@base-ui/react/select";
 import { Check, ChevronDown, FileText, Sparkles } from "lucide-react";
@@ -33,6 +43,7 @@ import { DownloadButton } from "./DownloadButton";
 import type {
   StructureNode,
   StructureSpan,
+  StructureTableCell as StructureTableCellType,
   TemplateStructure,
 } from "@/features/templates/api/queries";
 import type {
@@ -41,7 +52,7 @@ import type {
 } from "@/features/templates/api/queries";
 
 // ---------------------------------------------------------------------------
-// Props
+// Props / types
 // ---------------------------------------------------------------------------
 
 interface FullDocumentEditorProps {
@@ -56,13 +67,17 @@ interface GeneratedInfo {
   fileName: string;
 }
 
-// Each placeholder occurrence in the document gets a unique key so we can
-// auto-jump from one pill to the next regardless of whether several pills
-// reference the same variable name.
 interface PlaceholderInstance {
   key: string;
   varName: string;
 }
+
+type CommitHandler = (
+  instanceKey: string,
+  varName: string,
+  value: string,
+) => void;
+type OpenChangeHandler = (instanceKey: string, open: boolean) => void;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -72,52 +87,69 @@ function humanLabel(name: string): string {
   return name.replace(/_/g, " ");
 }
 
-/** Build a stable instance key from its position in the structure. */
-function instanceKey(
-  section: "h" | "b" | "f",
-  nodeIdx: number,
-  spanIdx: number,
-): string {
-  return `${section}-${nodeIdx}-${spanIdx}`;
+function instanceKey(prefix: string, ...indices: number[]): string {
+  return `${prefix}-${indices.join("-")}`;
 }
 
-/** Flatten every placeholder occurrence in the document, preserving render order. */
-function collectInstances(structure: TemplateStructure): PlaceholderInstance[] {
-  const out: PlaceholderInstance[] = [];
-  const sections: [Array<StructureNode>, "h" | "b" | "f"][] = [
-    [structure.headers, "h"],
-    [structure.body, "b"],
-    [structure.footers, "f"],
-  ];
-  for (const [nodes, tag] of sections) {
-    nodes.forEach((node, nodeIdx) => {
-      node.spans.forEach((span, spanIdx) => {
-        if (span.variable) {
-          out.push({
-            key: instanceKey(tag, nodeIdx, spanIdx),
-            varName: span.variable,
-          });
-        }
+function visitNodeForInstances(
+  node: StructureNode,
+  prefix: string,
+  out: PlaceholderInstance[],
+): void {
+  if (node.kind === "table") {
+    node.rows.forEach((row, rowIdx) => {
+      row.cells.forEach((cell, cellIdx) => {
+        cell.nodes.forEach((child, childIdx) => {
+          visitNodeForInstances(
+            child,
+            instanceKey(prefix, rowIdx, cellIdx, childIdx),
+            out,
+          );
+        });
       });
     });
+    return;
   }
+  node.spans.forEach((span, spanIdx) => {
+    if (span.variable) {
+      out.push({
+        key: instanceKey(prefix, spanIdx),
+        varName: span.variable,
+      });
+    }
+  });
+}
+
+function collectInstances(structure: TemplateStructure): PlaceholderInstance[] {
+  const out: PlaceholderInstance[] = [];
+  structure.headers.forEach((node, i) =>
+    visitNodeForInstances(node, instanceKey("h", i), out),
+  );
+  structure.body.forEach((node, i) =>
+    visitNodeForInstances(node, instanceKey("b", i), out),
+  );
+  structure.footers.forEach((node, i) =>
+    visitNodeForInstances(node, instanceKey("f", i), out),
+  );
   return out;
 }
 
 // ---------------------------------------------------------------------------
-// PlaceholderPill — controlled placeholder + popover
+// PlaceholderPill — memoized so commits on one pill don't re-render the rest
 // ---------------------------------------------------------------------------
 
 interface PlaceholderPillProps {
+  instanceKey: string;
   varName: string;
   value: string;
   meta: VariableMeta | undefined;
   isEditing: boolean;
-  onOpenChange: (open: boolean) => void;
-  onCommit: (value: string) => void;
+  onOpenChange: OpenChangeHandler;
+  onCommit: CommitHandler;
 }
 
-function PlaceholderPill({
+const PlaceholderPill = memo(function PlaceholderPill({
+  instanceKey: key,
   varName,
   value,
   meta,
@@ -132,14 +164,12 @@ function PlaceholderPill({
   const options = meta?.options ?? null;
 
   const handleOpenChange = (next: boolean) => {
-    if (next) {
-      setDraft(value);
-    }
-    onOpenChange(next);
+    if (next) setDraft(value);
+    onOpenChange(key, next);
   };
 
   const commit = (raw: string) => {
-    onCommit(raw.trim());
+    onCommit(key, varName, raw.trim());
   };
 
   return (
@@ -192,7 +222,7 @@ function PlaceholderPill({
                     e.preventDefault();
                     commit(draft);
                   } else if (e.key === "Escape") {
-                    onOpenChange(false);
+                    onOpenChange(key, false);
                   }
                 }}
                 inputMode={
@@ -212,7 +242,7 @@ function PlaceholderPill({
                 type="button"
                 variant="outline"
                 size="sm"
-                onClick={() => onOpenChange(false)}
+                onClick={() => onOpenChange(key, false)}
               >
                 Cancelar
               </Button>
@@ -231,12 +261,8 @@ function PlaceholderPill({
       </Popover.Portal>
     </Popover.Root>
   );
-}
+});
 
-// Tiny wrapper around Base UI Select for the type=select popover content.
-// Always controlled (value never `undefined`) — passing `undefined` only on
-// the first render and a real value later flips the component from
-// uncontrolled to controlled, which Base UI warns about.
 function SelectInput({
   value,
   options,
@@ -254,10 +280,8 @@ function SelectInput({
       onValueChange={(v) => {
         const next = (v as string) ?? "";
         onChange(next);
-        // Defer the commit one frame: the BaseSelect needs to finish its
-        // close + focus-restore cycle before the outer Popover unmounts
-        // (auto-jump). Without this, focus has nowhere to land and the
-        // browser scrolls back to the top of the page.
+        // Defer parent commit by one frame: the BaseSelect needs to finish
+        // its close + focus-restore cycle before the outer Popover unmounts.
         requestAnimationFrame(() => onCommit(next));
       }}
     >
@@ -285,30 +309,69 @@ function SelectInput({
 }
 
 // ---------------------------------------------------------------------------
-// DocumentNode — renders one paragraph or heading with its inline placeholders
+// Block renderers — text, list, table
 // ---------------------------------------------------------------------------
 
-interface DocumentNodeProps {
+interface NodeRendererProps {
   node: StructureNode;
-  section: "h" | "b" | "f";
-  nodeIdx: number;
+  prefix: string;
   values: Record<string, string>;
   metaByName: Record<string, VariableMeta>;
   editingKey: string | null;
-  onOpenChange: (key: string, open: boolean) => void;
-  onCommit: (key: string, varName: string, value: string) => void;
+  onOpenChange: OpenChangeHandler;
+  onCommit: CommitHandler;
 }
 
-function DocumentNode({
+function DocumentNode(props: NodeRendererProps) {
+  const { node, prefix } = props;
+  if (node.kind === "table") {
+    return <TableNode {...props} />;
+  }
+  if (node.kind === "list_bullet" || node.kind === "list_number") {
+    return <ListItemNode {...props} />;
+  }
+  // paragraph or heading
+  return <TextNode {...props} key={prefix} />;
+}
+
+function renderSpans(
+  spans: StructureSpan[],
+  prefix: string,
+  values: Record<string, string>,
+  metaByName: Record<string, VariableMeta>,
+  editingKey: string | null,
+  onOpenChange: OpenChangeHandler,
+  onCommit: CommitHandler,
+) {
+  return spans.map((span: StructureSpan, spanIdx) => {
+    if (!span.variable) {
+      return <Fragment key={spanIdx}>{span.text}</Fragment>;
+    }
+    const key = instanceKey(prefix, spanIdx);
+    return (
+      <PlaceholderPill
+        key={key}
+        instanceKey={key}
+        varName={span.variable}
+        value={values[span.variable] ?? ""}
+        meta={metaByName[span.variable]}
+        isEditing={editingKey === key}
+        onOpenChange={onOpenChange}
+        onCommit={onCommit}
+      />
+    );
+  });
+}
+
+function TextNode({
   node,
-  section,
-  nodeIdx,
+  prefix,
   values,
   metaByName,
   editingKey,
   onOpenChange,
   onCommit,
-}: DocumentNodeProps) {
+}: NodeRendererProps) {
   const isHeading = node.kind === "heading";
   const headingClass =
     node.level === 1
@@ -323,24 +386,111 @@ function DocumentNode({
 
   return (
     <p className={className}>
-      {node.spans.map((span: StructureSpan, spanIdx) => {
-        if (!span.variable) {
-          return <Fragment key={spanIdx}>{span.text}</Fragment>;
-        }
-        const key = instanceKey(section, nodeIdx, spanIdx);
-        return (
-          <PlaceholderPill
-            key={key}
-            varName={span.variable}
-            value={values[span.variable] ?? ""}
-            meta={metaByName[span.variable]}
-            isEditing={editingKey === key}
-            onOpenChange={(open) => onOpenChange(key, open)}
-            onCommit={(v) => onCommit(key, span.variable as string, v)}
-          />
-        );
-      })}
+      {renderSpans(
+        node.spans,
+        prefix,
+        values,
+        metaByName,
+        editingKey,
+        onOpenChange,
+        onCommit,
+      )}
     </p>
+  );
+}
+
+function ListItemNode({
+  node,
+  prefix,
+  values,
+  metaByName,
+  editingKey,
+  onOpenChange,
+  onCommit,
+}: NodeRendererProps) {
+  const isBullet = node.kind === "list_bullet";
+  const indent = Math.max(node.level, 1);
+  // Visual marker — for numbered lists we don't have the original index from
+  // the .docx (Word numbers them via field codes, not run text), so we use a
+  // generic "1." marker that signals it's a numbered item without lying about
+  // the order.
+  const marker = isBullet ? "•" : "1.";
+  return (
+    <p
+      className="my-1 flex gap-2 text-[14px] leading-[1.7] text-[var(--fg-1)]"
+      style={{ paddingLeft: `${(indent - 1) * 16 + 12}px` }}
+    >
+      <span
+        className={`shrink-0 ${isBullet ? "w-3 text-[var(--fg-3)]" : "w-5 font-medium tabular-nums text-[var(--fg-3)]"}`}
+      >
+        {marker}
+      </span>
+      <span className="flex-1">
+        {renderSpans(
+          node.spans,
+          prefix,
+          values,
+          metaByName,
+          editingKey,
+          onOpenChange,
+          onCommit,
+        )}
+      </span>
+    </p>
+  );
+}
+
+function TableNode({
+  node,
+  prefix,
+  values,
+  metaByName,
+  editingKey,
+  onOpenChange,
+  onCommit,
+}: NodeRendererProps) {
+  return (
+    <div className="my-3 overflow-x-auto">
+      <table className="w-full border-collapse text-[13px]">
+        <tbody>
+          {node.rows.map((row, rowIdx) => (
+            <tr
+              key={`${prefix}-r${rowIdx}`}
+              className="border-b border-[rgba(195,198,215,0.30)] last:border-b-0"
+            >
+              {row.cells.map((cell: StructureTableCellType, cellIdx) => (
+                <td
+                  key={`${prefix}-r${rowIdx}-c${cellIdx}`}
+                  className="border-l border-[rgba(195,198,215,0.20)] px-2.5 py-1.5 align-top first:border-l-0"
+                >
+                  {cell.nodes.length === 0 ? (
+                    <span className="text-[var(--fg-3)]">—</span>
+                  ) : (
+                    cell.nodes.map((child, childIdx) => (
+                      <DocumentNode
+                        key={`${prefix}-r${rowIdx}-c${cellIdx}-${childIdx}`}
+                        node={child}
+                        prefix={instanceKey(
+                          prefix,
+                          rowIdx,
+                          cellIdx,
+                          childIdx,
+                        )}
+                        values={values}
+                        metaByName={metaByName}
+                        editingKey={editingKey}
+                        onOpenChange={onOpenChange}
+                        onCommit={onCommit}
+                      />
+                    ))
+                  )}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -366,8 +516,13 @@ export function FullDocumentEditor({
 
   const generateMutation = useGenerateDocument();
 
-  // Distinct variable names — used for the progress indicator (we want
-  // "3 of 5 variables", not "3 of 17 placeholders").
+  // Keep a ref to the latest `values` so the memoized commit callback can
+  // read the freshest state without invalidating its identity.
+  const valuesRef = useRef(values);
+  useEffect(() => {
+    valuesRef.current = values;
+  }, [values]);
+
   const distinctVarNames = useMemo(() => {
     const seen = new Set<string>();
     for (const inst of instances) seen.add(inst.varName);
@@ -381,43 +536,41 @@ export function FullDocumentEditor({
   const allFilled = filledCount === totalCount && totalCount > 0;
   const progress = totalCount === 0 ? 100 : (filledCount / totalCount) * 100;
 
-  /** Find the next instance whose variable still has no value. */
-  const nextPendingAfter = (currentKey: string): string | null => {
-    const startIdx = instances.findIndex((i) => i.key === currentKey);
-    if (startIdx === -1) return null;
-    for (let i = startIdx + 1; i < instances.length; i++) {
-      const inst = instances[i];
-      if (!values[inst.varName] || values[inst.varName].trim() === "") {
-        return inst.key;
-      }
-    }
-    return null;
-  };
-
-  const handleOpenChange = (key: string, open: boolean) => {
-    setEditingKey(open ? key : (current) =>
-      // Only close if we're closing the currently-edited pill;
-      // otherwise an unrelated trigger is just signalling its own state.
-      current === key ? null : current,
-    );
-  };
-
-  const handleCommit = (key: string, varName: string, value: string) => {
-    // The popover swap (auto-jump) + Base UI focus restore can momentarily
-    // push the page to scrollTop=0 — particularly when the source pill held
-    // a Select whose close animation outraces the Popover unmount. Snapshot
-    // the scroll position before mutating state and restore it next frame so
-    // the user keeps their place in long documents.
-    const scrollY = window.scrollY;
-    setValues((prev) => ({ ...prev, [varName]: value }));
-    const nextKey = nextPendingAfter(key);
-    setEditingKey(nextKey);
-    requestAnimationFrame(() => {
-      if (Math.abs(window.scrollY - scrollY) > 4) {
-        window.scrollTo({ top: scrollY, behavior: "instant" });
-      }
+  const handleOpenChange = useCallback<OpenChangeHandler>((key, open) => {
+    setEditingKey((current) => {
+      if (open) return key;
+      return current === key ? null : current;
     });
-  };
+  }, []);
+
+  const handleCommit = useCallback<CommitHandler>(
+    (key, varName, value) => {
+      const scrollY = window.scrollY;
+      setValues((prev) => ({ ...prev, [varName]: value }));
+
+      // Find next pending instance using the post-commit values snapshot.
+      const nextValues = { ...valuesRef.current, [varName]: value };
+      const startIdx = instances.findIndex((i) => i.key === key);
+      let nextKey: string | null = null;
+      if (startIdx !== -1) {
+        for (let i = startIdx + 1; i < instances.length; i++) {
+          const inst = instances[i];
+          if (!nextValues[inst.varName] || nextValues[inst.varName].trim() === "") {
+            nextKey = inst.key;
+            break;
+          }
+        }
+      }
+      setEditingKey(nextKey);
+
+      requestAnimationFrame(() => {
+        if (Math.abs(window.scrollY - scrollY) > 4) {
+          window.scrollTo({ top: scrollY, behavior: "instant" });
+        }
+      });
+    },
+    [instances],
+  );
 
   const handleGenerate = () => {
     if (!allFilled) {
@@ -445,6 +598,14 @@ export function FullDocumentEditor({
 
   const hasHeaders = structure.headers.length > 0;
   const hasFooters = structure.footers.length > 0;
+
+  const sectionProps = {
+    values,
+    metaByName,
+    editingKey,
+    onOpenChange: handleOpenChange,
+    onCommit: handleCommit,
+  };
 
   return (
     <div className="flex flex-col gap-4">
@@ -498,13 +659,8 @@ export function FullDocumentEditor({
                 <DocumentNode
                   key={`h-${i}`}
                   node={node}
-                  section="h"
-                  nodeIdx={i}
-                  values={values}
-                  metaByName={metaByName}
-                  editingKey={editingKey}
-                  onOpenChange={handleOpenChange}
-                  onCommit={handleCommit}
+                  prefix={instanceKey("h", i)}
+                  {...sectionProps}
                 />
               ))}
             </DocumentSection>
@@ -520,13 +676,8 @@ export function FullDocumentEditor({
                 <DocumentNode
                   key={`b-${i}`}
                   node={node}
-                  section="b"
-                  nodeIdx={i}
-                  values={values}
-                  metaByName={metaByName}
-                  editingKey={editingKey}
-                  onOpenChange={handleOpenChange}
-                  onCommit={handleCommit}
+                  prefix={instanceKey("b", i)}
+                  {...sectionProps}
                 />
               ))
             )}
@@ -538,13 +689,8 @@ export function FullDocumentEditor({
                 <DocumentNode
                   key={`f-${i}`}
                   node={node}
-                  section="f"
-                  nodeIdx={i}
-                  values={values}
-                  metaByName={metaByName}
-                  editingKey={editingKey}
-                  onOpenChange={handleOpenChange}
-                  onCommit={handleCommit}
+                  prefix={instanceKey("f", i)}
+                  {...sectionProps}
                 />
               ))}
             </DocumentSection>
@@ -565,7 +711,7 @@ function DocumentSection({
   children: React.ReactNode;
 }) {
   return (
-    <section className={emphasis ? "mt-4 first:mt-0" : "mt-4 first:mt-0"}>
+    <section className="mt-4 first:mt-0">
       <div className="sd-meta mb-2 inline-block rounded bg-[var(--bg-page)] px-2 py-0.5">
         {label}
       </div>

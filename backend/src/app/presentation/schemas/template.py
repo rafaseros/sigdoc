@@ -95,7 +95,13 @@ class TemplateShareResponse(BaseModel):
 # document context (body + headers + footers) with placeholders inline.
 # ---------------------------------------------------------------------------
 
-NodeKind = Literal["paragraph", "heading"]
+NodeKind = Literal[
+    "paragraph",
+    "heading",
+    "list_bullet",
+    "list_number",
+    "table",
+]
 
 
 class StructureSpan(BaseModel):
@@ -108,12 +114,34 @@ class StructureSpan(BaseModel):
     variable: str | None = None
 
 
+class StructureTableCell(BaseModel):
+    """A single cell inside a table row. Holds nested paragraph/heading/list
+    nodes (table-in-table is intentionally not recursed)."""
+
+    nodes: list["StructureNode"] = []
+
+
+class StructureTableRow(BaseModel):
+    cells: list[StructureTableCell] = []
+
+
 class StructureNode(BaseModel):
-    """A paragraph from the document. `level` is 1-6 for headings, 0 otherwise."""
+    """A node in the document.
+
+    - paragraph / heading / list_bullet / list_number: text content via `spans`
+    - heading: `level` is 1-6
+    - list_bullet / list_number: `level` is the indentation depth (>=1)
+    - table: `rows` carries the grid; `spans` is empty
+    """
 
     kind: NodeKind = "paragraph"
     level: int = 0
     spans: list[StructureSpan] = []
+    rows: list[StructureTableRow] = []
+
+
+# Resolve the forward reference inside StructureTableCell.
+StructureTableCell.model_rebuild()
 
 
 class TemplateStructureResponse(BaseModel):

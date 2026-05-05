@@ -214,3 +214,136 @@ class TestExtractStructureMisc:
         spans = result["body"][0]["spans"]
         assert len(spans) == 1
         assert spans[0]["variable"] is None
+
+
+# ─── Lists ───────────────────────────────────────────────────────────────────
+
+
+class TestExtractStructureLists:
+    async def test_bullet_list_detected(self):
+        engine = DocxTemplateEngine()
+
+        def build(d):
+            d.add_paragraph("Items:", style=None)
+            d.add_paragraph("Primero", style="List Bullet")
+            d.add_paragraph("Segundo", style="List Bullet")
+
+        raw = _doc_bytes(build)
+        result = await engine.extract_structure(raw)
+
+        kinds = [n["kind"] for n in result["body"]]
+        # First item is a plain paragraph; the next two are bullet list items.
+        assert kinds[0] == "paragraph"
+        assert kinds[1] == "list_bullet"
+        assert kinds[2] == "list_bullet"
+        assert result["body"][1]["level"] == 1
+        assert result["body"][1]["spans"][0]["text"] == "Primero"
+
+    async def test_numbered_list_detected(self):
+        engine = DocxTemplateEngine()
+
+        def build(d):
+            d.add_paragraph("Uno", style="List Number")
+            d.add_paragraph("Dos", style="List Number")
+
+        raw = _doc_bytes(build)
+        result = await engine.extract_structure(raw)
+
+        assert all(n["kind"] == "list_number" for n in result["body"])
+        assert all(n["level"] == 1 for n in result["body"])
+
+    async def test_list_with_placeholder_splits_spans(self):
+        engine = DocxTemplateEngine()
+        raw = _doc_bytes(
+            lambda d: d.add_paragraph("Pago a {{ nombre }}", style="List Bullet")
+        )
+
+        result = await engine.extract_structure(raw)
+
+        node = result["body"][0]
+        assert node["kind"] == "list_bullet"
+        variables = [s["variable"] for s in node["spans"] if s["variable"]]
+        assert variables == ["nombre"]
+
+
+# ─── Tables ──────────────────────────────────────────────────────────────────
+
+
+class TestExtractStructureTables:
+    async def test_simple_table_returned_as_table_node(self):
+        engine = DocxTemplateEngine()
+
+        def build(d):
+            d.add_paragraph("Antes")
+            t = d.add_table(rows=2, cols=2)
+            t.rows[0].cells[0].text = "Campo"
+            t.rows[0].cells[1].text = "Valor"
+            t.rows[1].cells[0].text = "Nombre"
+            t.rows[1].cells[1].text = "Acme"
+            d.add_paragraph("Despues")
+
+        raw = _doc_bytes(build)
+        result = await engine.extract_structure(raw)
+
+        body = result["body"]
+        # paragraph - table - paragraph in document order
+        assert [n["kind"] for n in body] == ["paragraph", "table", "paragraph"]
+        table = body[1]
+        assert len(table["rows"]) == 2
+        assert len(table["rows"][0]["cells"]) == 2
+        # Cell content survives as a nested paragraph node
+        first_cell_nodes = table["rows"][0]["cells"][0]["nodes"]
+        assert first_cell_nodes[0]["spans"][0]["text"] == "Campo"
+
+    async def test_table_with_placeholder_in_cell(self):
+        engine = DocxTemplateEngine()
+
+        def build(d):
+            t = d.add_table(rows=1, cols=2)
+            t.rows[0].cells[0].text = "Empresa"
+            t.rows[0].cells[1].text = "{{ nombre_empresa }}"
+
+        raw = _doc_bytes(build)
+        result = await engine.extract_structure(raw)
+
+        cell_nodes = result["body"][0]["rows"][0]["cells"][1]["nodes"]
+        spans = cell_nodes[0]["spans"]
+        assert any(
+            s["variable"] == "nombre_empresa" and s["text"] == "{{ nombre_empresa }}"
+            for s in spans
+        )
+
+    async def test_blank_table_is_skipped(self):
+        """Tables whose every cell is empty are usually layout artifacts —
+        we drop them so the preview stays meaningful."""
+        engine = DocxTemplateEngine()
+
+        def build(d):
+            d.add_paragraph("Antes")
+            d.add_table(rows=2, cols=3)  # all cells empty
+            d.add_paragraph("Despues")
+
+        raw = _doc_bytes(build)
+        result = await engine.extract_structure(raw)
+
+        kinds = [n["kind"] for n in result["body"]]
+        assert "table" not in kinds
+        assert kinds == ["paragraph", "paragraph"]
+
+    async def test_table_in_header_is_returned_in_headers(self):
+        engine = DocxTemplateEngine()
+
+        def build(d):
+            section = d.sections[0]
+            t = section.header.add_table(rows=1, cols=2, width=10)
+            t.rows[0].cells[0].text = "logo"
+            t.rows[0].cells[1].text = "Contrato {{ numero_contrato }}"
+            d.add_paragraph("cuerpo")
+
+        raw = _doc_bytes(build)
+        result = await engine.extract_structure(raw)
+
+        # Header now carries a table node
+        assert any(n["kind"] == "table" for n in result["headers"])
+        # Body still has the plain paragraph
+        assert result["body"][0]["spans"][0]["text"] == "cuerpo"

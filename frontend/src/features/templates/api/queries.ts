@@ -82,15 +82,31 @@ export function useTemplate(id: string) {
   });
 }
 
+export type NodeKind =
+  | "paragraph"
+  | "heading"
+  | "list_bullet"
+  | "list_number"
+  | "table";
+
 export interface StructureSpan {
   text: string;
   variable: string | null;
 }
 
+export interface StructureTableCell {
+  nodes: StructureNode[];
+}
+
+export interface StructureTableRow {
+  cells: StructureTableCell[];
+}
+
 export interface StructureNode {
-  kind: "paragraph" | "heading";
+  kind: NodeKind;
   level: number;
   spans: StructureSpan[];
+  rows: StructureTableRow[];
 }
 
 export interface TemplateStructure {

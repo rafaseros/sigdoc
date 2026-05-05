@@ -358,14 +358,26 @@ class DocxTemplateEngine(TemplateEngine):
         Extract document structure (headers, body, footers) as a list of nodes
         for the generation preview UI.
 
-        Each node is a paragraph with its kind (paragraph | heading), heading
-        level (1-6 for headings, 0 otherwise), and a list of spans where each
-        span is either plain text or a {{ variable }} placeholder.
+        Node kinds returned:
+          - "paragraph" — plain body text. `spans` carries the inline pieces.
+          - "heading"   — `level` is 1-6.
+          - "list_bullet" / "list_number" — `level` is the indentation depth
+            (1 for top-level, 2+ for nested items).
+          - "table"     — `rows` is a list of row dicts; each row has `cells`,
+            each cell has `nodes` (a nested list of paragraph/heading/list
+            nodes — table-in-table is intentionally NOT recursed in this
+            iteration to keep the preview bounded).
 
-        Empty paragraphs are skipped. Tables and images are not included in
-        this first iteration — placeholders inside tables still surface via
-        extract_variables().
+        Empty paragraphs are skipped. Order between paragraphs and tables is
+        preserved by walking the underlying XML (CT_P / CT_Tbl) in document
+        order.
         """
+        # Local imports — these are private-ish python-docx internals but the
+        # block-iteration recipe is the standard pattern in the docx ecosystem.
+        from docx.oxml.ns import qn
+        from docx.table import Table as _DocxTable
+        from docx.text.paragraph import Paragraph as _DocxParagraph
+
         # Same regex used by extract_variables / validate so the three stay in sync.
         # Note: capture the WHOLE placeholder ({{ name }}) plus the inner name.
         placeholder_re = re.compile(r"(\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\})")
@@ -384,7 +396,7 @@ class DocxTemplateEngine(TemplateEngine):
             return spans
 
         def _classify(para) -> tuple[str, int]:
-            """Detect heading via paragraph style name. Falls back to plain paragraph."""
+            """Detect heading / list / paragraph via the paragraph style name."""
             style_name = ""
             try:
                 if para.style is not None and para.style.name:
@@ -405,15 +417,76 @@ class DocxTemplateEngine(TemplateEngine):
                 return ("heading", level)
             if style_name == "Title":
                 return ("heading", 1)
+            if style_name.startswith("List Bullet"):
+                # "List Bullet" → 1, "List Bullet 2" → 2, ...
+                try:
+                    level = int(style_name.split()[-1])
+                except (ValueError, IndexError):
+                    level = 1
+                return ("list_bullet", level)
+            if style_name.startswith("List Number"):
+                try:
+                    level = int(style_name.split()[-1])
+                except (ValueError, IndexError):
+                    level = 1
+                return ("list_number", level)
             return ("paragraph", 0)
 
-        def _node_for(para) -> dict | None:
+        def _node_for_para(para) -> dict | None:
             """Build a structure node from a python-docx paragraph, or None if empty."""
             text = para.text
             if not text or not text.strip():
                 return None
             kind, level = _classify(para)
             return {"kind": kind, "level": level, "spans": _spans_for(text)}
+
+        def _node_for_table(table) -> dict | None:
+            """Build a table node. Cells contain nested paragraph/heading/list
+            nodes; nested tables inside cells are intentionally skipped to
+            avoid unbounded recursion in pathological documents."""
+            rows: list[dict] = []
+            any_content = False
+            for row in table.rows:
+                cells: list[dict] = []
+                for cell in row.cells:
+                    cell_nodes: list[dict] = []
+                    for para in cell.paragraphs:
+                        node = _node_for_para(para)
+                        if node is not None:
+                            cell_nodes.append(node)
+                            any_content = True
+                    cells.append({"nodes": cell_nodes})
+                rows.append({"cells": cells})
+            if not any_content:
+                # Skip tables whose every cell is blank — they are usually
+                # spacing artifacts in legal templates.
+                return None
+            return {"kind": "table", "level": 0, "spans": [], "rows": rows}
+
+        # Body container lives at `doc.element.body`; headers/footers expose
+        # their container directly at `_element`. The block parent passed to
+        # Paragraph/Table must be the *python-docx parent object* (Document,
+        # _Header, _Footer) — not None — so that `paragraph.style` resolves
+        # via `parent.part.styles`.
+
+        p_tag = qn("w:p")
+        tbl_tag = qn("w:tbl")
+
+        def _walk_blocks(parent_obj, container_elm) -> list[dict]:
+            """Iterate `container_elm` children in document order and emit
+            structure nodes. `parent_obj` is the python-docx owner used for
+            style resolution."""
+            out: list[dict] = []
+            for child in container_elm.iterchildren():
+                if child.tag == p_tag:
+                    node = _node_for_para(_DocxParagraph(child, parent_obj))
+                elif child.tag == tbl_tag:
+                    node = _node_for_table(_DocxTable(child, parent_obj))
+                else:
+                    node = None
+                if node is not None:
+                    out.append(node)
+            return out
 
         def _extract(data: bytes) -> dict:
             with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp:
@@ -422,11 +495,7 @@ class DocxTemplateEngine(TemplateEngine):
             try:
                 doc = Document(tmp_path)
 
-                body_nodes: list[dict] = []
-                for para in doc.paragraphs:
-                    node = _node_for(para)
-                    if node is not None:
-                        body_nodes.append(node)
+                body_nodes = _walk_blocks(doc, doc.element.body)
 
                 # Sections can have distinct headers/footers; we flatten them
                 # into a single list each. The first iteration of the preview
@@ -435,15 +504,13 @@ class DocxTemplateEngine(TemplateEngine):
                 footer_nodes: list[dict] = []
                 for section in doc.sections:
                     if section.header:
-                        for para in section.header.paragraphs:
-                            node = _node_for(para)
-                            if node is not None:
-                                header_nodes.append(node)
+                        header_nodes.extend(
+                            _walk_blocks(section.header, section.header._element)
+                        )
                     if section.footer:
-                        for para in section.footer.paragraphs:
-                            node = _node_for(para)
-                            if node is not None:
-                                footer_nodes.append(node)
+                        footer_nodes.extend(
+                            _walk_blocks(section.footer, section.footer._element)
+                        )
 
                 return {
                     "headers": header_nodes,
