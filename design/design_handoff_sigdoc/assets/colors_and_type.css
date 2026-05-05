@@ -1,0 +1,253 @@
+/* SigDoc Design System — Foundations
+ * Source: rafaseros/sigdoc → frontend/src/index.css
+ * Library: shadcn/ui (style: base-nova, baseColor: neutral) + base-ui primitives
+ * Font: Geist Variable (sans + heading; heading uses tighter tracking)
+ */
+
+/* ---------- Web fonts ---------- */
+/* Geist Variable — local brand font (uploaded). Geist Mono still from Google Fonts. */
+@font-face {
+  font-family: "Geist";
+  src: url("fonts/Geist-VariableFont_wght.ttf") format("truetype-variations"),
+       url("fonts/Geist-VariableFont_wght.ttf") format("truetype");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@import url("https://fonts.googleapis.com/css2?family=Geist+Mono:wght@100..900&display=swap");
+
+:root {
+  /* ============================================================
+     COLOR — raw palette
+     The product is a contracts / legal docs SaaS in Spanish.
+     The vibe is "professional banking blue + soft mist": cool,
+     trustworthy, calm, with a single saturated brand blue.
+     ============================================================ */
+
+  /* Brand blue scale (the only saturated color in the system) */
+  --sd-blue-900: #001a4d; /* deep ink */
+  --sd-blue-700: #004ac6; /* PRIMARY — buttons, links, brand wordmark */
+  --sd-blue-600: #2563eb; /* ring / focus / gradient end-stop */
+  --sd-blue-200: #b4c5ff; /* hover on accent */
+  --sd-blue-100: #dbe1ff; /* accent — selected nav, badges, drop zones */
+  --sd-blue-050: #e0e7ff; /* gradient end of body background */
+
+  /* Cool neutrals — almost-blue grays */
+  --sd-ink:        #191c1e; /* primary text */
+  --sd-ink-2:      #434655; /* secondary text / muted-foreground */
+  --sd-ink-3:      #515f74; /* secondary-foreground */
+  --sd-stroke:     #c3c6d7; /* hairline strokes (used at low opacity) */
+  --sd-surface-0:  #ffffff; /* card / popover */
+  --sd-surface-1:  #f7f9fb; /* page background start, zebra row */
+  --sd-surface-2:  #f2f4f6; /* secondary surface, sidebar */
+  --sd-surface-3:  #eceef0; /* table header, muted */
+  --sd-surface-4:  #e6e8ea; /* input, hover */
+
+  /* Semantic — success / warn / danger */
+  --sd-success-bg:    #d1fae5;
+  --sd-success-fg:    #059669;
+  --sd-success-text:  #065f46;
+  --sd-warn-bg:       #fef3c7; /* amber-50 derivative */
+  --sd-warn-fg:       #b45309; /* amber-600 */
+  --sd-warn-text:     #78350f; /* amber-700 */
+  --sd-danger-bg:     #ffdad6;
+  --sd-danger-fg:     #ba1a1a;
+  --sd-danger-text:   #93000a;
+
+  /* ============================================================
+     SHADCN TOKENS (mirrors src/index.css 1:1 — light theme)
+     Use these for any code that follows the shadcn convention.
+     ============================================================ */
+  --background: #f7f9fb;
+  --foreground: #191c1e;
+  --card: #ffffff;
+  --card-foreground: #191c1e;
+  --popover: #ffffff;
+  --popover-foreground: #191c1e;
+  --primary: #004ac6;
+  --primary-foreground: #ffffff;
+  --secondary: #f2f4f6;
+  --secondary-foreground: #515f74;
+  --muted: #eceef0;
+  --muted-foreground: #434655;
+  --accent: #dbe1ff;
+  --accent-foreground: #004ac6;
+  --destructive: #ba1a1a;
+  --border: rgba(195, 198, 215, 0.2);
+  --input: #e6e8ea;
+  --ring: #2563eb;
+  --chart-1: #004ac6;
+  --chart-2: #2563eb;
+  --chart-3: #515f74;
+  --chart-4: #059669;
+  --chart-5: #b4c5ff;
+  --sidebar: #f2f4f6;
+  --sidebar-foreground: #191c1e;
+  --sidebar-primary: #004ac6;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #dbe1ff;
+  --sidebar-accent-foreground: #004ac6;
+  --sidebar-border: rgba(195, 198, 215, 0.2);
+  --sidebar-ring: #2563eb;
+
+  /* ============================================================
+     SEMANTIC SHORTHANDS (foreground / background layers)
+     ============================================================ */
+  --fg-1: var(--sd-ink);     /* primary text */
+  --fg-2: var(--sd-ink-2);   /* body / secondary text */
+  --fg-3: var(--sd-ink-3);   /* tertiary, captions */
+  --fg-brand: var(--sd-blue-700);
+  --bg-page: var(--sd-surface-1);
+  --bg-card: var(--sd-surface-0);
+  --bg-muted: var(--sd-surface-3);
+  --bg-input: var(--sd-surface-4);
+  --bg-accent: var(--sd-blue-100);
+
+  /* ============================================================
+     RADII — derived from --radius: 0.5rem
+     ============================================================ */
+  --radius:    0.5rem;
+  --radius-sm: calc(var(--radius) * 0.6);  /* 4.8px */
+  --radius-md: calc(var(--radius) * 0.8);  /* 6.4px */
+  --radius-lg: var(--radius);              /* 8px   */
+  --radius-xl: calc(var(--radius) * 1.4);  /* 11.2px — cards */
+  --radius-2xl: calc(var(--radius) * 1.8); /* 14.4px */
+  --radius-3xl: calc(var(--radius) * 2.2); /* 17.6px */
+  --radius-4xl: calc(var(--radius) * 2.6); /* 20.8px — pills */
+  --radius-pill: 999px;
+
+  /* ============================================================
+     ELEVATION — soft, low, cool. Never harsh black drop shadows.
+     ============================================================ */
+  --shadow-xs: 0 1px 2px rgba(25, 28, 30, 0.04);
+  --shadow-sm: 0 2px 8px rgba(25, 28, 30, 0.04);
+  --shadow-md: 0 12px 32px rgba(25, 28, 30, 0.06); /* canonical card lift */
+  --shadow-lg: 0 12px 32px rgba(25, 28, 30, 0.10); /* dialog */
+  --shadow-brand-sm: 0 4px 12px rgba(0, 74, 198, 0.30);
+  --shadow-brand-md: 0 6px 20px rgba(0, 74, 198, 0.40);
+  --ring-focus: 0 0 0 3px rgba(37, 99, 235, 0.20);
+
+  /* ============================================================
+     SPACING — 4px base, used through Tailwind utilities in code
+     ============================================================ */
+  --space-0: 0;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* ============================================================
+     MOTION
+     ============================================================ */
+  --ease-default: cubic-bezier(0.4, 0, 0.2, 1);
+  --dur-fast: 100ms;   /* dialog open/close */
+  --dur-base: 150ms;   /* hovers, color shifts */
+  --dur-slow: 250ms;   /* page transitions */
+
+  /* ============================================================
+     TYPE — Geist variable. Heading inherits from sans, but uses
+     tighter letter-spacing per the codebase rules.
+     ============================================================ */
+  --font-sans: "Geist", "Geist Variable", -apple-system, BlinkMacSystemFont,
+    "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-heading: var(--font-sans);
+  --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Monaco,
+    Consolas, monospace;
+
+  /* Type scale (px values; map roughly to Tailwind text-* classes used in repo) */
+  --fs-xs:   12px;  /* badge, fine print           */
+  --fs-sm:   14px;  /* body, buttons, table cells  */
+  --fs-base: 14px;  /* default body                */
+  --fs-md:   16px;  /* dense paragraph             */
+  --fs-lg:   18px;  /* nav title, lead             */
+  --fs-xl:   20px;  /* card title prominent        */
+  --fs-2xl:  24px;  /* h2 — page section title     */
+  --fs-3xl:  30px;  /* h1 — page title (login)     */
+  --fs-4xl:  36px;  /* hero                        */
+
+  /* Line heights */
+  --lh-tight: 1.15;
+  --lh-snug:  1.25;
+  --lh-base:  1.5;
+  --lh-loose: 1.7;
+
+  /* Letter spacing — headings tighten, body neutral, micro/uppercase opens */
+  --ls-heading: -0.02em;
+  --ls-body:    0;
+  --ls-meta:    0.04em;
+}
+
+/* ============================================================
+   Semantic element styles — opt-in. Apply by wrapping content
+   in `.sd-prose` or by reusing the classes directly.
+   ============================================================ */
+html { font-family: var(--font-sans); color: var(--fg-1); }
+
+.sd-h1 {
+  font-family: var(--font-heading);
+  font-weight: 700;
+  font-size: var(--fs-3xl);
+  line-height: var(--lh-tight);
+  letter-spacing: var(--ls-heading);
+  color: var(--fg-1);
+}
+.sd-h2 {
+  font-family: var(--font-heading);
+  font-weight: 700;
+  font-size: var(--fs-2xl);
+  line-height: var(--lh-snug);
+  letter-spacing: var(--ls-heading);
+  color: var(--fg-1);
+}
+.sd-h3 {
+  font-family: var(--font-heading);
+  font-weight: 600;
+  font-size: var(--fs-lg);
+  line-height: var(--lh-snug);
+  letter-spacing: var(--ls-heading);
+  color: var(--fg-1);
+}
+.sd-h4 {
+  font-family: var(--font-heading);
+  font-weight: 600;
+  font-size: var(--fs-md);
+  line-height: var(--lh-snug);
+  letter-spacing: var(--ls-heading);
+  color: var(--fg-1);
+}
+.sd-body {
+  font-family: var(--font-sans);
+  font-weight: 400;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-base);
+  color: var(--fg-2);
+}
+.sd-meta {
+  font-family: var(--font-sans);
+  font-weight: 500;
+  font-size: var(--fs-xs);
+  letter-spacing: var(--ls-meta);
+  text-transform: uppercase;
+  color: var(--fg-3);
+}
+.sd-code,
+code,
+kbd,
+pre,
+samp {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+.sd-prose p { font-size: var(--fs-sm); color: var(--fg-2); line-height: var(--lh-base); }
+
+/* Canonical page background — soft cool gradient */
+.sd-bg-page {
+  background: linear-gradient(135deg, #f7f9fb 0%, #e0e7ff 100%);
+  min-height: 100vh;
+}

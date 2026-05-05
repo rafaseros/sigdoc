@@ -1,0 +1,395 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>SigDoc — Rediseño</title>
+
+<template id="__bundler_thumbnail">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f7f9fb"/><stop offset="1" stop-color="#e0e7ff"/></linearGradient>
+  </defs>
+  <rect width="400" height="400" fill="url(#g)"/>
+  <text x="200" y="220" font-family="ui-sans-serif, system-ui" font-weight="700" font-size="80" letter-spacing="-3" text-anchor="middle" fill="#004ac6">SigDoc</text>
+</svg>
+</template>
+
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&display=swap"/>
+
+<link rel="stylesheet" href="assets/colors_and_type.css"/>
+<link rel="stylesheet" href="src/app.css"/>
+
+<style>
+  body { margin: 0; font-family: var(--font-sans); background: var(--background); color: var(--foreground); }
+  #root { min-height: 100vh; }
+
+  /* App wrapper (presentation layer) */
+  .stage {
+    min-height: 100vh;
+    background:
+      radial-gradient(circle at 90% -10%, rgba(0,74,198,0.05), transparent 50%),
+      radial-gradient(circle at 0% 110%, rgba(180,197,255,0.20), transparent 50%),
+      linear-gradient(135deg, #f7f9fb 0%, #e0e7ff 100%);
+  }
+
+  /* View switcher (tabs at top to swap between Prototype + Canvas) */
+  .view-switch {
+    position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
+    z-index: 100;
+    display: inline-flex; gap: 2px;
+    background: rgba(255,255,255,0.78); backdrop-filter: blur(12px);
+    padding: 4px; border-radius: 999px;
+    box-shadow: 0 2px 12px rgba(25,28,30,0.10), 0 0 0 1px rgba(195,198,215,0.30);
+  }
+  .view-switch button {
+    appearance: none; border: 0; background: transparent; cursor: pointer;
+    padding: 6px 14px; font-family: inherit; font-size: 12.5px; font-weight: 500;
+    color: #515f74; border-radius: 999px; display: inline-flex; align-items: center; gap: 6px;
+    transition: all 150ms;
+  }
+  .view-switch button.active {
+    background: linear-gradient(135deg, #004ac6, #2563eb); color: #fff;
+    box-shadow: 0 2px 8px rgba(0,74,198,0.25);
+  }
+  .view-switch button:hover:not(.active) { color: #004ac6; }
+</style>
+</head>
+
+<body>
+<div id="root"></div>
+
+<!-- React + Babel -->
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<!-- Tweakable defaults -->
+<script>
+  window.TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+    "variant": "B",
+    "density": "comfortable",
+    "showCanvas": false
+  }/*EDITMODE-END*/;
+</script>
+
+<!-- Components: order matters — primitives & data first, then screens, then app -->
+<script type="text/babel" src="src/icons.jsx"></script>
+<script type="text/babel" src="src/data.jsx"></script>
+<script type="text/babel" src="src/primitives.jsx"></script>
+<script type="text/babel" src="src/shell.jsx"></script>
+<script type="text/babel" src="src/design-canvas.jsx"></script>
+<script type="text/babel" src="src/tweaks-panel.jsx"></script>
+<script type="text/babel" src="src/screens-login.jsx"></script>
+<script type="text/babel" src="src/screens-templates.jsx"></script>
+<script type="text/babel" src="src/screens-detail.jsx"></script>
+<script type="text/babel" src="src/screens-generate.jsx"></script>
+<script type="text/babel" src="src/screens-admin.jsx"></script>
+<script type="text/babel" src="src/screens-modals.jsx"></script>
+<script type="text/babel" src="src/screens-user-modals.jsx"></script>
+
+<!-- Main app -->
+<script type="text/babel">
+const { useState, useEffect } = React;
+
+function PrototypeApp({ variant }) {
+  const [route, setRoute] = useState("login");      // login | templates | detail | generate | bulk | users | audit
+  const [tplId, setTplId] = useState(null);
+  const [authed, setAuthed] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(false);
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [toast, setToast] = useState(null);
+
+  const tpl = window.TEMPLATES.find(t => t.id === tplId) || window.TEMPLATES[4];
+  const currentUser = window.USERS[0];
+
+  const showToast = (msg, kind="ok") => { setToast({msg,kind}); setTimeout(()=>setToast(null), 2200); };
+
+  // Login screen
+  if (!authed) {
+    return (
+      <>
+        <LoginScreen variant={variant} onLogin={() => { setAuthed(true); setRoute("templates"); showToast("Inicio de sesión exitoso"); }}/>
+        {toast && <Toast {...toast}/>}
+      </>
+    );
+  }
+
+  const onNav = (id) => { setRoute(id); };
+
+  let active = "templates";
+  if (route === "users") active = "users";
+  else if (route === "audit") active = "audit";
+
+  let breadcrumbs = null;
+  if (route === "detail") {
+    breadcrumbs = <Breadcrumbs items={[{label:"Plantillas", onClick:()=>setRoute("templates")}, {label: tpl.nombre}]}/>;
+  } else if (route === "generate") {
+    breadcrumbs = <Breadcrumbs items={[{label:"Plantillas", onClick:()=>setRoute("templates")}, {label: tpl.nombre, onClick:()=>setRoute("detail")}, {label:"Generar Documento"}]}/>;
+  } else if (route === "bulk") {
+    breadcrumbs = <Breadcrumbs items={[{label:"Plantillas", onClick:()=>setRoute("templates")}, {label: tpl.nombre, onClick:()=>setRoute("detail")}, {label:"Generación Masiva"}]}/>;
+  }
+
+  const wide = route === "audit" || route === "detail" || route === "generate";
+
+  return (
+    <div className="stage">
+      <AppShell
+        active={active}
+        onNav={onNav}
+        currentUser={currentUser}
+        onLogout={() => { setAuthed(false); setRoute("login"); }}
+        onChangePass={() => showToast("Vínculo de cambio enviado a su correo", "ok")}
+        wide={wide}
+        breadcrumbs={breadcrumbs}
+      >
+        {route === "templates" && (
+          <TemplatesScreen
+            variant={variant}
+            query={query} setQuery={setQuery}
+            onOpenTemplate={(t) => { setTplId(t.id); setRoute("detail"); }}
+            onUpload={() => setUploadOpen(true)}
+            onGuide={() => setGuideOpen(true)}
+          />
+        )}
+        {route === "detail" && (
+          <TemplateDetailScreen
+            variant={variant}
+            template={tpl}
+            onBack={() => setRoute("templates")}
+            onGenerate={() => setRoute("generate")}
+            onBulk={() => setRoute("bulk")}
+            onShare={() => setShareOpen(true)}
+            onDelete={() => setDeleteOpen(true)}
+            onGuide={() => setGuideOpen(true)}
+          />
+        )}
+        {route === "generate" && (
+          <GenerateIndividualScreen variant={variant} template={tpl} onBack={() => setRoute("detail")}/>
+        )}
+        {route === "bulk" && (
+          <GenerateBulkScreen variant={variant} template={tpl} onBack={() => setRoute("detail")}/>
+        )}
+        {route === "users" && <UsersScreen variant={variant}/>}
+        {route === "audit" && <AuditScreen variant={variant}/>}
+      </AppShell>
+
+      <GuideDialog open={guideOpen} onClose={() => setGuideOpen(false)}/>
+      <UploadDialog open={uploadOpen} onClose={() => setUploadOpen(false)} onUploaded={(name) => showToast(`Plantilla "${name}" subida con éxito`)}/>
+      <ShareDialog open={shareOpen} onClose={() => setShareOpen(false)} template={tpl}/>
+      <DeleteDialog open={deleteOpen} onClose={() => setDeleteOpen(false)} template={tpl} onConfirm={() => { setDeleteOpen(false); setRoute("templates"); showToast("Plantilla eliminada", "ok"); }}/>
+
+      {toast && <Toast {...toast}/>}
+    </div>
+  );
+}
+
+const Toast = ({ msg, kind = "ok" }) => (
+  <div style={{
+    position:"fixed", top:24, right:24, zIndex:9999,
+    background: kind==="ok" ? "#d1fae5" : "#ffdad6",
+    color: kind==="ok" ? "#065f46" : "#93000a",
+    padding:"10px 16px", borderRadius:10, fontSize:13.5, fontWeight:500,
+    boxShadow:"0 4px 16px rgba(25,28,30,0.10)",
+    display:"flex", alignItems:"center", gap:8,
+    animation: "toast-in 200ms ease-out",
+  }}>
+    {kind === "ok" ? <CheckCircleIcon size={16}/> : <AlertCircleIcon size={16}/>}
+    {msg}
+  </div>
+);
+
+// ─────────────────────────────────────────────────────────────
+// Canvas view — every screen, both variants, side-by-side
+// ─────────────────────────────────────────────────────────────
+function CanvasView() {
+  // Each artboard renders the screen statically (no live state, no nav).
+  const Frame = ({ children, w = 1200, h = 760 }) => (
+    <div style={{width: w, height: h, overflow: "hidden", borderRadius: 12, background:"#f7f9fb", position:"relative", isolation:"isolate"}}>
+      <div className="stage" style={{minHeight: h}}>{children}</div>
+    </div>
+  );
+
+  const FullShell = ({ children, active = "templates", wide = false, breadcrumbs }) => (
+    <AppShell active={active} currentUser={window.USERS[0]} onNav={()=>{}} onLogout={()=>{}} onChangePass={()=>{}} wide={wide} breadcrumbs={breadcrumbs}>
+      {children}
+    </AppShell>
+  );
+
+  const variants = ["A", "B"];
+
+  return (
+    <DesignCanvas>
+      <DCSection id="login" title="Login" subtitle="Pantalla de inicio de sesión — entrada al producto">
+        {variants.map(v => (
+          <DCArtboard key={v} id={`login-${v}`} label={`${v} · ${v==="A"?"Card centrada con halos brand":"Split panel con manifiesto de marca"}`} width={1200} height={760}>
+            <Frame><LoginScreen variant={v} onLogin={()=>{}}/></Frame>
+          </DCArtboard>
+        ))}
+      </DCSection>
+
+      <DCSection id="templates" title="Plantillas" subtitle="Lista principal — gestión de plantillas .docx">
+        {variants.map(v => (
+          <DCArtboard key={v} id={`templates-${v}`} label={`${v} · ${v==="A"?"Tabla con autor y banner de onboarding":"Grilla de tarjetas con stats"}`} width={1280} height={820}>
+            <Frame w={1280} h={820}>
+              <FullShell>
+                <TemplatesScreen variant={v} query="" setQuery={()=>{}} onOpenTemplate={()=>{}} onUpload={()=>{}} onGuide={()=>{}}/>
+              </FullShell>
+            </Frame>
+          </DCArtboard>
+        ))}
+      </DCSection>
+
+      <DCSection id="detail" title="Detalle de plantilla" subtitle="Información, variables, versiones, compartido, documentos">
+        {variants.map(v => (
+          <DCArtboard key={v} id={`detail-${v}`} label={`${v} · ${v==="A"?"Tabs horizontales (clásico)":"Sidebar lateral de secciones"}`} width={1440} height={920}>
+            <Frame w={1440} h={920}>
+              <FullShell wide>
+                <TemplateDetailScreen variant={v} template={window.TEMPLATES[4]} onBack={()=>{}} onGenerate={()=>{}} onBulk={()=>{}} onShare={()=>{}} onDelete={()=>{}} onGuide={()=>{}}/>
+              </FullShell>
+            </Frame>
+          </DCArtboard>
+        ))}
+      </DCSection>
+
+      <DCSection id="generate" title="Generación individual" subtitle="Completar variables y generar un documento">
+        {variants.map(v => (
+          <DCArtboard key={v} id={`generate-${v}`} label={`${v} · ${v==="A"?"Form lateral + preview en vivo":"Form arriba, preview abajo"}`} width={1440} height={920}>
+            <Frame w={1440} h={920}>
+              <FullShell wide>
+                <GenerateIndividualScreen variant={v} template={window.TEMPLATES[4]} onBack={()=>{}}/>
+              </FullShell>
+            </Frame>
+          </DCArtboard>
+        ))}
+      </DCSection>
+
+      <DCSection id="bulk" title="Generación masiva" subtitle="Pasos para generar un lote desde Excel">
+        {variants.map(v => (
+          <DCArtboard key={v} id={`bulk-${v}`} label={`${v} · stepper visible · paso ${v==="A"?"2":"2"}`} width={1280} height={820}>
+            <Frame w={1280} h={820}>
+              <FullShell>
+                <GenerateBulkScreen variant={v} template={window.TEMPLATES[4]} onBack={()=>{}}/>
+              </FullShell>
+            </Frame>
+          </DCArtboard>
+        ))}
+      </DCSection>
+
+      <DCSection id="users" title="Usuarios" subtitle="Administración de cuentas y roles">
+        {variants.map(v => (
+          <DCArtboard key={v} id={`users-${v}`} label={`${v} · ${v==="A"?"Tabla densa con info de usuario":"Stats arriba + tabla rica"}`} width={1280} height={820}>
+            <Frame w={1280} h={820}>
+              <FullShell active="users">
+                <UsersScreen variant={v}/>
+              </FullShell>
+            </Frame>
+          </DCArtboard>
+        ))}
+      </DCSection>
+
+      <DCSection id="audit" title="Auditoría" subtitle="Registro inmutable de eventos del sistema">
+        {variants.map(v => (
+          <DCArtboard key={v} id={`audit-${v}`} label={`${v} · ${v==="A"?"Tabla compacta con filtros":"Stats + timeline agrupada por día"}`} width={1440} height={920}>
+            <Frame w={1440} h={920}>
+              <FullShell active="audit" wide>
+                <AuditScreen variant={v}/>
+              </FullShell>
+            </Frame>
+          </DCArtboard>
+        ))}
+      </DCSection>
+
+      <DCSection id="modals" title="Diálogos" subtitle="Subir, compartir, eliminar, guía">
+        <DCArtboard id="modal-upload" label="Subir plantilla — drag & drop" width={720} height={560}>
+          <Frame w={720} h={560}>
+            <div style={{padding:40, height:"100%", display:"flex", alignItems:"center", justifyContent:"center"}}>
+              <div style={{position:"relative", width:"100%"}}>
+                <UploadDialog open={true} onClose={()=>{}}/>
+              </div>
+            </div>
+          </Frame>
+        </DCArtboard>
+        <DCArtboard id="modal-share" label="Compartir plantilla — usuarios con acceso" width={720} height={560}>
+          <Frame w={720} h={560}>
+            <div style={{padding:40, height:"100%", display:"flex", alignItems:"center", justifyContent:"center"}}>
+              <ShareDialog open={true} onClose={()=>{}} template={window.TEMPLATES[4]}/>
+            </div>
+          </Frame>
+        </DCArtboard>
+        <DCArtboard id="modal-delete" label="Eliminar plantilla — confirmación destructiva" width={720} height={560}>
+          <Frame w={720} h={560}>
+            <div style={{padding:40, height:"100%", display:"flex", alignItems:"center", justifyContent:"center"}}>
+              <DeleteDialog open={true} onClose={()=>{}} template={window.TEMPLATES[4]} onConfirm={()=>{}}/>
+            </div>
+          </Frame>
+        </DCArtboard>
+        <DCArtboard id="modal-guide" label="Guía de plantillas — onboarding contextual" width={760} height={620}>
+          <Frame w={760} h={620}>
+            <div style={{padding:40, height:"100%", display:"flex", alignItems:"center", justifyContent:"center"}}>
+              <GuideDialog open={true} onClose={()=>{}}/>
+            </div>
+          </Frame>
+        </DCArtboard>
+      </DCSection>
+    </DesignCanvas>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// App root — switches between Prototype and Canvas modes
+// ─────────────────────────────────────────────────────────────
+function App() {
+  const [tweaks, setTweak] = useTweaks(window.TWEAK_DEFAULTS);
+  const [mode, setMode] = useState("prototype"); // prototype | canvas
+
+  return (
+    <>
+      <div className="view-switch">
+        <button className={mode==="prototype"?"active":""} onClick={()=>setMode("prototype")}>
+          <span style={{fontSize:14}}>▶</span> Prototipo
+        </button>
+        <button className={mode==="canvas"?"active":""} onClick={()=>setMode("canvas")}>
+          <span style={{fontSize:14}}>⊟</span> Canvas (todas las pantallas)
+        </button>
+      </div>
+
+      {mode === "prototype" ? <PrototypeApp variant={tweaks.variant}/> : <CanvasView/>}
+
+      {mode === "prototype" && (
+        <TweaksPanel title="Tweaks">
+          <TweakSection title="Variación de diseño" subtitle="Cambia entre las 2 direcciones de cada pantalla">
+            <TweakRadio label="Variante" value={tweaks.variant} onChange={(v)=>setTweak("variant", v)} options={[
+              {value:"A", label:"A · Refinado"},
+              {value:"B", label:"B · Reimaginado"},
+            ]}/>
+          </TweakSection>
+          <TweakSection title="Notas" subtitle="">
+            <div style={{fontSize:12, color:"#515f74", lineHeight:1.5}}>
+              <strong style={{color:"#191c1e"}}>Variante A</strong> mantiene el patrón actual pero pulido (tipografía, jerarquía, espaciado, badges, autores).<br/><br/>
+              <strong style={{color:"#191c1e"}}>Variante B</strong> reimagina cada pantalla — stats arriba, timeline en auditoría, tarjetas en plantillas, sidebar en detalle, split en login.
+            </div>
+          </TweakSection>
+        </TweaksPanel>
+      )}
+    </>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+
+<style>
+  @keyframes toast-in {
+    from { transform: translateY(-8px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+  }
+</style>
+
+</body>
+</html>
