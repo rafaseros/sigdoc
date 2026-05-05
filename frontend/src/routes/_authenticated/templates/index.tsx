@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { TemplateList, UploadTemplateDialog, TemplateGuideButton, TemplateGuideBanner, useTemplates } from "@/features/templates";
+import { TemplateList, UploadTemplateDialog, TemplateGuideButton, useTemplates } from "@/features/templates";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/shared/lib/auth";
 import { canUploadTemplates } from "@/shared/lib/permissions";
@@ -32,7 +32,6 @@ function TemplatesPage() {
           {canUploadTemplates(user?.role) && <UploadTemplateDialog />}
         </div>
       </div>
-      <TemplateGuideBanner />
       <TemplateList />
     </div>
   );

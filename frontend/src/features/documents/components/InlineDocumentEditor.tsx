@@ -12,7 +12,7 @@
 import { Fragment, useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { Popover } from "@base-ui/react/popover";
 import { Select as BaseSelect } from "@base-ui/react/select";
-import { CheckIcon, ChevronDownIcon } from "lucide-react";
+import { Check, ChevronDown, CircleCheck, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -153,16 +153,19 @@ function PlaceholderWidget({
         type="button"
         onClick={onOpen}
         className={cn(
-          "inline-flex items-center gap-1 px-2 py-0.5 rounded text-sm font-medium transition-all cursor-pointer select-none",
+          "inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-sm font-medium transition-all cursor-pointer select-none",
           "align-baseline mx-0.5 whitespace-normal",
           isFilled
-            ? "bg-green-50 text-green-800 border border-solid border-green-300 hover:bg-green-100"
-            : "bg-blue-50 text-blue-700 border border-dashed border-blue-300 hover:bg-blue-100",
-          isEditing && "ring-2 ring-blue-400 ring-offset-0",
+            ? "bg-gradient-to-br from-[#fef3c7] to-[#fde68a] text-[#78350f] border border-solid border-[#f59e0b] font-semibold shadow-[0_1px_3px_rgba(245,158,11,0.25)] hover:shadow-[0_2px_6px_rgba(245,158,11,0.35)] hover:from-[#fde68a] hover:to-[#fcd34d]"
+            : "bg-[var(--bg-accent)] text-[var(--primary)] border border-dashed border-[#2563eb]/40 hover:bg-[#c7d2fe] hover:border-[#2563eb]/70",
+          isEditing &&
+            "ring-2 ring-[#2563eb]/60 ring-offset-1 ring-offset-white",
         )}
       >
         {!isFilled && (
-          <span className="text-blue-400 font-bold text-xs leading-none">+</span>
+          <span className="text-[#2563eb] font-bold text-xs leading-none">
+            +
+          </span>
         )}
         <span>{isFilled ? value : label}</span>
       </button>
@@ -185,20 +188,20 @@ function PlaceholderWidget({
           >
             <Popover.Popup
               className={cn(
-                "z-50 w-72 rounded-xl border border-border bg-white p-4",
-                "shadow-[0_8px_24px_rgba(25,28,30,0.12)]",
+                "z-50 w-72 rounded-xl bg-white p-4 ring-1 ring-[rgba(195,198,215,0.30)]",
+                "shadow-[var(--shadow-lg)]",
                 "outline-none",
               )}
             >
               <Label
                 htmlFor={inputId}
-                className="block text-xs font-semibold text-muted-foreground mb-2 capitalize"
+                className="block text-[11px] font-semibold uppercase tracking-[0.04em] text-[var(--fg-3)] mb-2"
               >
                 {label}
               </Label>
 
               {varHelpText && (
-                <p className="text-xs text-muted-foreground italic mb-2">
+                <p className="text-[12px] text-[var(--fg-3)] italic mb-2">
                   {varHelpText}
                 </p>
               )}
@@ -221,15 +224,15 @@ function PlaceholderWidget({
                   <BaseSelect.Trigger
                     id={inputId}
                     className={cn(
-                      "flex w-full items-center justify-between gap-2 rounded-lg border border-input bg-[#e6e8ea] px-3 py-2 text-sm",
+                      "flex w-full items-center justify-between gap-2 rounded-lg border border-input bg-[var(--bg-muted)] px-3 py-2 text-sm",
                       "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563eb]/50",
-                      "data-placeholder:text-muted-foreground",
+                      "data-placeholder:text-[var(--fg-3)]",
                     )}
                   >
                     <BaseSelect.Value placeholder={`Seleccione ${label}`} />
                     <BaseSelect.Icon
                       render={
-                        <ChevronDownIcon className="size-4 text-muted-foreground shrink-0" />
+                        <ChevronDown className="size-4 text-[var(--fg-3)] shrink-0" />
                       }
                     />
                   </BaseSelect.Trigger>
@@ -268,7 +271,7 @@ function PlaceholderWidget({
                                   <span className="pointer-events-none absolute right-2 flex size-4 items-center justify-center" />
                                 }
                               >
-                                <CheckIcon className="size-3.5" />
+                                <Check className="size-3.5" />
                               </BaseSelect.ItemIndicator>
                             </BaseSelect.Item>
                           ))}
@@ -296,10 +299,10 @@ function PlaceholderWidget({
                     onChange={(e) => setDraft(e.target.value)}
                     onKeyDown={handleKeyDown}
                     placeholder={`Ingrese ${label}`}
-                    className="bg-[#e6e8ea] border-transparent focus:border-[#2563eb] focus:ring-[#2563eb]/20 pr-10 text-sm"
+                    className="bg-[var(--bg-muted)] border-transparent focus:border-[#2563eb] focus:ring-[#2563eb]/20 pr-10 text-sm"
                   />
                   {/* ↵ Enter hint */}
-                  <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground/60 font-mono">
+                  <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-[var(--fg-3)]/60 font-mono">
                     ↵
                   </span>
                 </div>
@@ -313,7 +316,7 @@ function PlaceholderWidget({
                     variant="ghost"
                     size="sm"
                     onClick={onClose}
-                    className="text-xs"
+                    className="text-xs text-[var(--fg-2)]"
                   >
                     Cancelar
                   </Button>
@@ -321,7 +324,7 @@ function PlaceholderWidget({
                     type="button"
                     size="sm"
                     onClick={handleCommit}
-                    className="text-xs bg-gradient-to-br from-[#004ac6] to-[#2563eb] text-white shadow-[0_2px_8px_rgba(0,74,198,0.3)]"
+                    className="text-xs bg-gradient-to-br from-[#004ac6] to-[#2563eb] font-semibold text-white shadow-[var(--shadow-brand-sm)] hover:shadow-[var(--shadow-brand-md)]"
                   >
                     Confirmar
                   </Button>
@@ -362,7 +365,7 @@ function ParagraphRenderer({
   metaByName,
 }: ParagraphRendererProps) {
   return (
-    <p className="text-[15px] leading-8 text-[#191c1e] font-serif">
+    <p className="text-[15px] leading-8 text-[var(--fg-1)] font-serif">
       {paragraph.segments.map((seg: DocumentSegment, i: number) => {
         if (seg.type === "text") {
           return <span key={i}>{seg.content}</span>;
@@ -530,35 +533,36 @@ export function InlineDocumentEditor({
   // Render
   // ---------------------------------------------------------------------------
 
+  const remaining = totalCount - filledCount;
+
   return (
     <div className="flex flex-col gap-0">
-      {/* ── Header ── */}
-      <div className="flex items-center justify-between mb-1">
-        <div>
-          <h2 className="text-base font-semibold text-[#191c1e]">
-            Llenar documento
-          </h2>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            {templateName}
-          </p>
+      {/* ── Header (progress) ── */}
+      <div className="mb-3 rounded-xl bg-white p-4 shadow-[var(--shadow-sm)] ring-1 ring-[rgba(195,198,215,0.30)]">
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <div className="sd-meta">Completar variables</div>
+            <p className="mt-0.5 truncate text-[13px] text-[var(--fg-3)]">
+              {templateName}
+            </p>
+          </div>
+          <span className="whitespace-nowrap text-[13px] font-semibold text-[var(--fg-1)]">
+            {filledCount} <span className="text-[var(--fg-3)]">/</span>{" "}
+            {totalCount}
+          </span>
         </div>
-        <span className="text-xs font-medium text-muted-foreground whitespace-nowrap">
-          {filledCount} de {totalCount} completos
-        </span>
+        <Progress
+          value={filledCount}
+          max={totalCount || 1}
+          className="mt-3 h-1.5 bg-[var(--bg-muted)] [&>div]:bg-gradient-to-r [&>div]:from-[#004ac6] [&>div]:to-[#2563eb]"
+        />
       </div>
-
-      {/* ── Progress bar ── */}
-      <Progress
-        value={filledCount}
-        max={totalCount || 1}
-        className="h-1.5 mb-5 bg-blue-100 [&>div]:bg-gradient-to-r [&>div]:from-[#004ac6] [&>div]:to-[#2563eb]"
-      />
 
       {/* ── Document body ── */}
       <div
         className={cn(
-          "rounded-xl border border-border/50 bg-white",
-          "shadow-[0_4px_16px_rgba(25,28,30,0.06)]",
+          "rounded-xl bg-white",
+          "shadow-[var(--shadow-md)] ring-1 ring-[rgba(195,198,215,0.30)]",
           "px-8 py-8 space-y-5",
           "max-w-3xl w-full mx-auto",
         )}
@@ -568,7 +572,7 @@ export function InlineDocumentEditor({
             {idx > 0 && (
               <div
                 aria-hidden="true"
-                className="text-center text-gray-300 text-lg tracking-[0.6em] select-none py-1"
+                className="select-none py-1 text-center text-lg tracking-[0.6em] text-[rgba(195,198,215,0.60)]"
               >
                 · · ·
               </div>
@@ -587,24 +591,46 @@ export function InlineDocumentEditor({
         ))}
       </div>
 
-      {/* ── Footer ── */}
-      <div className="flex items-center justify-end mt-6">
+      {/* ── Sticky save bar ── */}
+      <div className="sticky bottom-0 z-10 mt-5 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-white/90 px-4 py-3 shadow-[var(--shadow-md)] ring-1 ring-[rgba(195,198,215,0.30)] backdrop-blur">
+        <div className="text-[12.5px] text-[var(--fg-3)]">
+          {allFilled ? (
+            <span className="inline-flex items-center gap-1.5 font-medium text-[#065f46]">
+              <CircleCheck className="size-4 text-[#059669]" />
+              Listo para generar
+            </span>
+          ) : (
+            <>
+              Faltan{" "}
+              <span className="font-semibold text-[var(--fg-1)]">
+                {remaining}
+              </span>{" "}
+              variable{remaining === 1 ? "" : "s"}
+            </>
+          )}
+        </div>
         <Button
           type="button"
           disabled={!allFilled || generateMutation.isPending}
           onClick={handleGenerate}
-          className="bg-gradient-to-br from-[#004ac6] to-[#2563eb] text-white shadow-[0_4px_12px_rgba(0,74,198,0.3)] hover:shadow-[0_6px_20px_rgba(0,74,198,0.4)] transition-all disabled:opacity-50"
+          className="bg-gradient-to-br from-[#004ac6] to-[#2563eb] font-semibold text-white shadow-[var(--shadow-brand-sm)] hover:shadow-[var(--shadow-brand-md)] transition-all disabled:opacity-50"
         >
+          <Sparkles className="size-4" />
           {generateMutation.isPending ? "Generando..." : "Generar documento"}
         </Button>
       </div>
 
       {/* ── Success panel ── */}
       {documentId && (
-        <div className="mt-5 rounded-lg border-0 p-5 bg-[#d1fae5] shadow-[0_4px_16px_rgba(5,150,105,0.1)]">
-          <h3 className="font-semibold mb-2 text-[#065f46]">Documento Listo</h3>
-          <p className="text-sm text-[#047857] mb-3">
-            Su documento &quot;{fileName}&quot; ha sido generado.
+        <div className="mt-5 rounded-xl bg-[#d1fae5] p-5 shadow-[0_4px_16px_rgba(5,150,105,0.10)]">
+          <div className="mb-2 flex items-center gap-2">
+            <CircleCheck className="size-4 text-[#059669]" />
+            <h3 className="m-0 text-[14px] font-bold text-[#065f46]">
+              Documento listo
+            </h3>
+          </div>
+          <p className="mb-3 text-[13px] text-[#047857]">
+            Su documento &quot;{fileName}&quot; ha sido generado correctamente.
           </p>
           <DownloadButton
             documentId={documentId}

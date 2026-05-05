@@ -73,7 +73,8 @@ export function DownloadButton({
       <Button
         onClick={() => handleDownload("pdf")}
         disabled={disabled || isDownloading}
-        className="bg-[#059669] text-white hover:bg-[#047857] transition-all"
+        size="sm"
+        className="bg-gradient-to-br from-[#059669] to-[#10b981] font-semibold text-white shadow-[0_2px_8px_rgba(5,150,105,0.25)] hover:shadow-[0_4px_14px_rgba(5,150,105,0.35)] transition-all"
       >
         <DownloadIcon className="size-4" />
         {downloadingFormat === "pdf" ? "Descargando..." : "Descargar PDF"}
@@ -87,8 +88,8 @@ export function DownloadButton({
       <DropdownMenuTrigger
         disabled={disabled || isDownloading}
         className={cn(
-          buttonVariants({ variant: "default" }),
-          "bg-[#059669] text-white hover:bg-[#047857] transition-all gap-1",
+          buttonVariants({ variant: "default", size: "sm" }),
+          "gap-1 bg-gradient-to-br from-[#059669] to-[#10b981] font-semibold text-white shadow-[0_2px_8px_rgba(5,150,105,0.25)] hover:shadow-[0_4px_14px_rgba(5,150,105,0.35)] transition-all",
         )}
       >
         <DownloadIcon className="size-4" />

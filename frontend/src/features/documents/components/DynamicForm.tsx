@@ -3,6 +3,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { toast } from "sonner";
+import { CircleCheck, Sparkles } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -105,15 +106,32 @@ function DynamicFormFlat({
   };
 
   return (
-    <div className="space-y-6">
-      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+    <div className="space-y-5">
+      <form
+        onSubmit={form.handleSubmit(onSubmit)}
+        className="rounded-xl bg-white p-5 shadow-[var(--shadow-sm)] ring-1 ring-[rgba(195,198,215,0.30)] space-y-4"
+      >
+        <div>
+          <h3 className="m-0 text-base font-bold tracking-tight text-[var(--fg-1)]">
+            Complete las variables
+          </h3>
+          <p className="mt-0.5 text-[12.5px] text-[var(--fg-3)]">
+            Cada campo se reemplazará en el documento generado.
+          </p>
+        </div>
+
         {variables.map((variable) => {
           const meta = variablesMeta.find((m) => m.name === variable);
           const currentValue = watchedValues[variable] || "";
           return (
-            <div key={variable} className="space-y-2">
-              <Label htmlFor={variable} className="font-semibold">
-                {variable}
+            <div key={variable} className="space-y-1.5">
+              <Label
+                htmlFor={variable}
+                className="text-[12.5px] font-semibold text-[var(--fg-2)]"
+              >
+                <span className="font-mono text-[var(--primary)]">
+                  {variable}
+                </span>
               </Label>
               {meta && meta.contexts.length > 0 && (
                 <div className="space-y-1">
@@ -131,10 +149,10 @@ function DynamicFormFlat({
                 id={variable}
                 {...form.register(variable)}
                 placeholder={`Ingrese ${variable}`}
-                className="bg-[#e6e8ea] border-transparent focus:border-[#2563eb] focus:ring-[#2563eb]/20 transition-all"
+                className="bg-[var(--bg-muted)] border-transparent focus:border-[#2563eb] focus:ring-[#2563eb]/20 transition-all"
               />
               {form.formState.errors[variable] && (
-                <p className="text-sm text-destructive">
+                <p className="text-[12.5px] text-[var(--destructive)]">
                   {form.formState.errors[variable]?.message as string}
                 </p>
               )}
@@ -142,18 +160,34 @@ function DynamicFormFlat({
           );
         })}
 
-        <Button type="submit" disabled={generateMutation.isPending} className="bg-gradient-to-br from-[#004ac6] to-[#2563eb] text-white shadow-[0_4px_12px_rgba(0,74,198,0.3)] hover:shadow-[0_6px_20px_rgba(0,74,198,0.4)] transition-all">
-          {generateMutation.isPending ? "Generando..." : "Generar Documento"}
-        </Button>
+        <div className="flex justify-end pt-2">
+          <Button
+            type="submit"
+            disabled={generateMutation.isPending}
+            className="bg-gradient-to-br from-[#004ac6] to-[#2563eb] font-semibold text-white shadow-[var(--shadow-brand-sm)] hover:shadow-[var(--shadow-brand-md)] transition-all"
+          >
+            <Sparkles className="size-4" />
+            {generateMutation.isPending ? "Generando..." : "Generar documento"}
+          </Button>
+        </div>
       </form>
 
       {documentId && (
-        <div className="rounded-lg border-0 p-5 bg-[#d1fae5] shadow-[0_4px_16px_rgba(5,150,105,0.1)]">
-          <h3 className="font-semibold mb-2 text-[#065f46]">Documento Listo</h3>
-          <p className="text-sm text-[#047857] mb-3">
-            Su documento &quot;{fileName}&quot; ha sido generado.
+        <div className="rounded-xl bg-[#d1fae5] p-5 shadow-[0_4px_16px_rgba(5,150,105,0.10)]">
+          <div className="mb-2 flex items-center gap-2">
+            <CircleCheck className="size-4 text-[#059669]" />
+            <h3 className="m-0 text-[14px] font-bold text-[#065f46]">
+              Documento listo
+            </h3>
+          </div>
+          <p className="mb-3 text-[13px] text-[#047857]">
+            Su documento &quot;{fileName}&quot; ha sido generado correctamente.
           </p>
-          <DownloadButton documentId={documentId} baseFileName={fileName} via="direct" />
+          <DownloadButton
+            documentId={documentId}
+            baseFileName={fileName}
+            via="direct"
+          />
         </div>
       )}
     </div>

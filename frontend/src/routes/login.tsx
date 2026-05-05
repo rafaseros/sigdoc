@@ -1,10 +1,10 @@
 import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
+import { LoaderCircle, LogIn } from "lucide-react";
 import { useAuth } from "@/shared/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/login")({
@@ -38,48 +38,104 @@ function LoginPage() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-[#f7f9fb] to-[#e0e7ff]">
-      <Card className="w-full max-w-sm border-0 bg-white/80 backdrop-blur-xl shadow-[0_12px_32px_rgba(25,28,30,0.06)]">
-        <CardHeader className="space-y-1 pb-2 pt-8 px-8">
-          <CardTitle className="text-3xl font-bold tracking-tight text-[#004ac6]">SigDoc</CardTitle>
-          <CardDescription className="text-[#434655]">Inicie sesión para gestionar sus plantillas</CardDescription>
-        </CardHeader>
-        <CardContent className="px-8 pb-8">
-          <form onSubmit={handleSubmit} className="space-y-5">
-            <div className="space-y-2">
-              <Label htmlFor="email" className="text-[#434655] font-medium">Correo electrónico</Label>
+    <div className="grid min-h-screen lg:grid-cols-[1.1fr_1fr]">
+      {/* Brand panel (desktop) */}
+      <aside className="sd-brand-panel hidden lg:flex flex-col justify-between p-14">
+        <div className="flex items-center gap-2.5">
+          <span className="inline-flex h-9 w-9 items-center justify-center rounded-[10px] bg-white text-[17px] font-bold text-[#004ac6] tracking-tight">
+            S
+          </span>
+          <span className="text-[21px] font-bold tracking-tight">SigDoc</span>
+        </div>
+
+        <div className="max-w-[460px]">
+          <div className="mb-3.5 text-[13px] font-semibold uppercase tracking-[0.08em] text-white/65">
+            Sistema integrado de gestión de documentos
+          </div>
+          <h1 className="m-0 mb-3.5 text-[42px] font-bold leading-[1.1] tracking-[-0.025em]">
+            Sus contratos,<br />sin trabajo manual.
+          </h1>
+          <p className="m-0 max-w-[420px] text-[15px] leading-[1.5] text-white/80">
+            Suba plantillas .docx con marcadores variables y genere documentos legales en bloque, con auditoría completa.
+          </p>
+        </div>
+
+        <div className="flex gap-6 text-xs text-white/65">
+          <span>v1.4 · estable</span>
+          <span>Soporte: devrafaseros@gmail.com</span>
+        </div>
+      </aside>
+
+      {/* Form panel */}
+      <main className="flex items-center justify-center p-6 lg:p-8">
+        <div className="w-full max-w-sm">
+          {/* Mobile logo */}
+          <div className="mb-8 flex items-center gap-2.5 lg:hidden">
+            <span className="inline-flex h-9 w-9 items-center justify-center rounded-[10px] bg-gradient-to-br from-[#004ac6] to-[#2563eb] text-[17px] font-bold text-white shadow-[var(--shadow-brand-sm)]">
+              S
+            </span>
+            <span className="text-xl font-bold tracking-tight text-[#004ac6]">SigDoc</span>
+          </div>
+
+          <h2 className="m-0 text-[26px] font-bold tracking-[-0.02em]">Iniciar sesión</h2>
+          <p className="mt-1.5 mb-6 text-[13.5px] text-[var(--fg-3)]">
+            Acceda con su cuenta corporativa.
+          </p>
+
+          <form onSubmit={handleSubmit} className="flex flex-col gap-3.5">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="email" className="text-[12.5px] font-medium text-[var(--fg-2)]">
+                Correo electrónico
+              </Label>
               <Input
                 id="email"
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
-                className="bg-[#e6e8ea] border-transparent focus:border-[#2563eb] focus:ring-[#2563eb]/20 transition-all"
+                autoFocus
+                autoComplete="email"
               />
             </div>
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label htmlFor="password" className="text-[#434655] font-medium">Contraseña</Label>
-              </div>
+
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="password" className="text-[12.5px] font-medium text-[var(--fg-2)]">
+                Contraseña
+              </Label>
               <Input
                 id="password"
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
-                className="bg-[#e6e8ea] border-transparent focus:border-[#2563eb] focus:ring-[#2563eb]/20 transition-all"
+                autoComplete="current-password"
               />
             </div>
+
             <Button
               type="submit"
-              className="w-full bg-gradient-to-br from-[#004ac6] to-[#2563eb] text-white font-semibold shadow-[0_4px_12px_rgba(0,74,198,0.3)] hover:shadow-[0_6px_20px_rgba(0,74,198,0.4)] transition-all"
               disabled={loading}
+              className="mt-2 h-10 bg-gradient-to-br from-[#004ac6] to-[#2563eb] font-semibold text-white shadow-[var(--shadow-brand-sm)] hover:shadow-[var(--shadow-brand-md)]"
             >
-              {loading ? "Iniciando sesión..." : "Iniciar sesión"}
+              {loading ? (
+                <>
+                  <LoaderCircle className="size-4 animate-spin" />
+                  Iniciando sesión…
+                </>
+              ) : (
+                <>
+                  <LogIn className="size-4" />
+                  Iniciar sesión
+                </>
+              )}
             </Button>
           </form>
-        </CardContent>
-      </Card>
+
+          <div className="mt-5 text-center text-xs text-[var(--fg-3)]">
+            ¿No tiene cuenta? Contacte a su administrador.
+          </div>
+        </div>
+      </main>
     </div>
   );
 }

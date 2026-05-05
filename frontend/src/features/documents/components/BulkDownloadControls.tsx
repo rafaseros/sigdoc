@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Download } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -46,7 +47,7 @@ export function BulkDownloadControls({
   return (
     <>
       {isAdmin && (
-        <label className="flex items-center gap-2 text-sm text-[#434655] cursor-pointer select-none">
+        <label className="flex cursor-pointer select-none items-center gap-2 text-[13px] text-[var(--fg-2)]">
           <input
             type="checkbox"
             checked={includeBoth}
@@ -60,8 +61,9 @@ export function BulkDownloadControls({
       <Button
         onClick={handleDownload}
         disabled={downloading}
-        className="bg-[#059669] text-white hover:bg-[#047857] transition-all"
+        className="bg-gradient-to-br from-[#059669] to-[#10b981] font-semibold text-white shadow-[0_4px_12px_rgba(5,150,105,0.30)] hover:shadow-[0_6px_18px_rgba(5,150,105,0.40)] transition-all"
       >
+        <Download className="size-4" />
         {downloading ? "Descargando..." : "Descargar ZIP"}
       </Button>
     </>

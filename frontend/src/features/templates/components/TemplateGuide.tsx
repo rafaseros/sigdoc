@@ -1,9 +1,9 @@
-import { useState } from "react";
-import { BookOpenIcon, XIcon } from "lucide-react";
+import { BookOpen, Check, X, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -13,184 +13,222 @@ export function TemplateGuideButton() {
   return (
     <Dialog>
       <DialogTrigger render={<Button variant="outline" size="sm" />}>
-        <BookOpenIcon className="size-4 mr-2" />
+        <BookOpen className="mr-2 size-4" />
         Guía de Plantillas
       </DialogTrigger>
-      <DialogContent className="sm:max-w-2xl max-h-[80vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>Cómo Crear Plantillas</DialogTitle>
-        </DialogHeader>
-        <TemplateGuideContent />
-      </DialogContent>
+      <GuideDialogContent />
     </Dialog>
   );
 }
 
-export function TemplateGuideBanner() {
-  const [dismissed, setDismissed] = useState(() => {
-    return localStorage.getItem("sigdoc_guide_dismissed") === "true";
-  });
-
-  if (dismissed) return null;
-
-  const handleDismiss = () => {
-    localStorage.setItem("sigdoc_guide_dismissed", "true");
-    setDismissed(true);
-  };
-
+function GuideDialogContent() {
   return (
-    <div className="rounded-lg border bg-muted/50 p-4 relative">
-      <button
-        onClick={handleDismiss}
-        className="absolute top-2 right-2 text-muted-foreground hover:text-foreground"
-      >
-        <XIcon className="size-4" />
-      </button>
-      <h3 className="font-semibold mb-1">¿Nuevo en SigDoc?</h3>
-      <p className="text-sm text-muted-foreground mb-2">
-        Aprenda a configurar sus plantillas de Word con variables para la generación automática de documentos.
-      </p>
-      <Dialog>
-        <DialogTrigger render={<Button variant="outline" size="sm" />}>
-          <BookOpenIcon className="size-4 mr-2" />
-          Ver Guía de Plantillas
-        </DialogTrigger>
-        <DialogContent className="sm:max-w-2xl max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Cómo Crear Plantillas</DialogTitle>
-          </DialogHeader>
-          <TemplateGuideContent />
-        </DialogContent>
-      </Dialog>
+    <DialogContent className="max-h-[85vh] gap-0 overflow-y-auto p-0 sm:max-w-2xl">
+      <DialogHeader className="border-b border-[rgba(195,198,215,0.20)] px-6 py-5">
+        <DialogTitle className="text-xl font-bold tracking-tight">
+          Cómo crear plantillas
+        </DialogTitle>
+        <DialogDescription>
+          SigDoc utiliza documentos de Word (.docx) como plantillas. Aprenda a configurar marcadores variables.
+        </DialogDescription>
+      </DialogHeader>
+
+      <div className="flex flex-col gap-7 px-6 py-6 text-sm">
+        {/* Variables básicas */}
+        <section>
+          <div className="sd-meta mb-2">Variables básicas</div>
+          <p className="m-0 mb-3 leading-[1.55] text-[var(--fg-2)]">
+            Use llaves dobles con espacios para definir una variable.
+          </p>
+          <CodeBlock>
+            <>
+              {"Estimado "}
+              <CodeVar>{"{{ nombre }}"}</CodeVar>
+              {",\n"}
+              {"Por la presente se notifica que el monto de "}
+              <CodeVar>{"{{ monto }}"}</CodeVar>
+              {"\nfue aprobado el día "}
+              <CodeVar>{"{{ fecha }}"}</CodeVar>
+              {"."}
+            </>
+          </CodeBlock>
+          <div className="mt-3 flex flex-col gap-1.5">
+            <Rule type="do">
+              Use espacios dentro de las llaves: <Mono>{"{{ nombre }}"}</Mono>
+            </Rule>
+            <Rule type="dont">
+              No omita los espacios: <Mono tone="error">{"{{nombre}}"}</Mono> — podría no ser detectado
+            </Rule>
+          </div>
+        </section>
+
+        {/* Reglas de nombres */}
+        <section>
+          <div className="sd-meta mb-2">Reglas de nombres</div>
+          <div className="flex flex-col gap-1.5">
+            <Rule type="do">
+              Minúsculas con guiones bajos: <Mono>{"{{ nombre_completo }}"}</Mono>
+            </Rule>
+            <Rule type="do">
+              Nombres descriptivos: <Mono>{"{{ fecha_emision }}"}</Mono>
+            </Rule>
+            <Rule type="dont">
+              Evite espacios en los nombres: <Mono tone="error">{"{{ nombre completo }}"}</Mono>
+            </Rule>
+            <Rule type="dont">
+              Evite acentos y caracteres especiales: <Mono tone="error">{"{{ año }}"}</Mono>
+            </Rule>
+            <Rule type="do">
+              Use solo ASCII: <Mono>{"{{ anio }}"}</Mono>
+            </Rule>
+          </div>
+        </section>
+
+        {/* Formato */}
+        <section>
+          <div className="sd-meta mb-2">Consejos de formato</div>
+          <p className="m-0 mb-3 leading-[1.55] text-[var(--fg-2)]">
+            El marcador hereda el formato del texto circundante en Word: negrita, fuente, tamaño, color y alineación se preservan.
+          </p>
+          <Banner variant="warn" icon={<AlertTriangle className="size-4 shrink-0" />}>
+            <div>
+              <strong className="font-semibold">Importante.</strong> Mantenga el mismo formato en toda la variable. Si parte de <Mono>{"{{ variable }}"}</Mono> está en negrita y parte no, Word la separa internamente y SigDoc no la detectará.
+            </div>
+          </Banner>
+        </section>
+
+        {/* Variables en tablas */}
+        <section>
+          <div className="sd-meta mb-2">Variables en tablas</div>
+          <p className="m-0 mb-3 leading-[1.55] text-[var(--fg-2)]">
+            Puede colocar variables dentro de celdas. Cada celda admite una o más.
+          </p>
+          <div className="overflow-hidden rounded-lg ring-1 ring-[rgba(195,198,215,0.30)]">
+            <table className="w-full text-sm">
+              <thead className="bg-[var(--muted)]">
+                <tr>
+                  <th className="px-3 py-2 text-left font-semibold text-[var(--fg-1)]">Campo</th>
+                  <th className="px-3 py-2 text-left font-semibold text-[var(--fg-1)]">Valor</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[
+                  ["Nombre", "{{ nombre }}"],
+                  ["Fecha", "{{ fecha }}"],
+                  ["Monto", "{{ monto }}"],
+                ].map(([k, v]) => (
+                  <tr key={k} className="border-t border-[rgba(195,198,215,0.20)]">
+                    <td className="px-3 py-2">{k}</td>
+                    <td className="px-3 py-2 font-mono text-xs text-[var(--primary)]">{v}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        {/* Headers/footers */}
+        <section>
+          <div className="sd-meta mb-2">Encabezados y pies de página</div>
+          <p className="m-0 leading-[1.55] text-[var(--fg-2)]">
+            Las variables también se detectan y reemplazan en encabezados y pies de página, igual que en el cuerpo.
+          </p>
+        </section>
+
+        {/* Ejemplo */}
+        <section>
+          <div className="sd-meta mb-2">Ejemplo completo</div>
+          <p className="m-0 mb-3 leading-[1.55] text-[var(--fg-2)]">
+            Así se ve una plantilla de contrato típica:
+          </p>
+          <CodeBlock>{ExampleContract()}</CodeBlock>
+          <p className="mt-2 text-xs text-[var(--fg-3)]">
+            Esta plantilla tiene <strong>10 variables</strong> que SigDoc detectará automáticamente al subirla.
+          </p>
+        </section>
+
+        {/* Checklist */}
+        <section>
+          <div className="sd-meta mb-2">Lista de verificación pre-subida</div>
+          <ul className="flex flex-col gap-2 p-0">
+            {[
+              "Guarde el documento como .docx (no .doc ni .pdf).",
+              "Use la sintaxis {{ variable }} con espacios dentro de las llaves.",
+              "Use minúsculas_con_guiones_bajos para los nombres.",
+              "Evite acentos y caracteres especiales en los nombres.",
+              "Aplique formato uniforme a todo el marcador.",
+              "Pruebe primero con una plantilla simple.",
+            ].map((line) => (
+              <li key={line} className="flex items-start gap-2 text-[var(--fg-2)]">
+                <Check className="mt-0.5 size-4 shrink-0 text-[#059669]" />
+                <span>{line}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      </div>
+    </DialogContent>
+  );
+}
+
+function CodeBlock({ children }: { children: React.ReactNode }) {
+  return (
+    <pre className="m-0 overflow-x-auto whitespace-pre-wrap rounded-[10px] bg-[#0f172a] p-3.5 font-mono text-xs leading-[1.7] text-[#e0e7ff]">
+      {children}
+    </pre>
+  );
+}
+
+function CodeVar({ children }: { children: React.ReactNode }) {
+  return <span className="text-[#7dd3fc]">{children}</span>;
+}
+
+function Mono({ children, tone = "primary" }: { children: React.ReactNode; tone?: "primary" | "error" }) {
+  return (
+    <span
+      className={`font-mono text-[12px] ${
+        tone === "error" ? "text-[var(--destructive)]" : "text-[var(--primary)]"
+      }`}
+    >
+      {children}
+    </span>
+  );
+}
+
+function Rule({ type, children }: { type: "do" | "dont"; children: React.ReactNode }) {
+  const Icon = type === "do" ? Check : X;
+  const color = type === "do" ? "text-[#059669]" : "text-[var(--destructive)]";
+  return (
+    <div className="flex items-start gap-2 text-[13px] text-[var(--fg-2)]">
+      <Icon className={`mt-0.5 size-3.5 shrink-0 ${color}`} />
+      <span>{children}</span>
     </div>
   );
 }
 
-function TemplateGuideContent() {
+function Banner({
+  variant,
+  icon,
+  children,
+}: {
+  variant: "warn";
+  icon: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  const tone =
+    variant === "warn"
+      ? "bg-[#fef3c7] text-[#78350f]"
+      : "";
   return (
-    <div className="space-y-6 text-sm">
-      {/* Overview */}
-      <section>
-        <p className="text-muted-foreground">
-          SigDoc utiliza documentos de Word (.docx) como plantillas. Se agregan
-          marcadores especiales (variables) en el documento, y SigDoc los reemplaza
-          con valores reales al generar el documento final.
-        </p>
-      </section>
+    <div className={`flex items-start gap-2.5 rounded-[10px] px-3.5 py-3 text-[13px] leading-[1.45] ${tone}`}>
+      <span className="mt-px text-[#b45309]">{icon}</span>
+      <div className="flex-1">{children}</div>
+    </div>
+  );
+}
 
-      {/* Basic Variables */}
-      <section>
-        <h3 className="font-semibold text-base mb-2">Variables Básicas</h3>
-        <p className="text-muted-foreground mb-3">
-          Use llaves dobles con espacios para definir una variable:
-        </p>
-        <CodeBlock>
-          {"Estimado {{ nombre }},\n\nPor la presente se notifica que el monto de {{ monto }}\nfue aprobado el día {{ fecha }}."}
-        </CodeBlock>
-        <div className="mt-3 space-y-1">
-          <Rule type="do">Use espacios dentro de las llaves: {"{{ nombre }}"}</Rule>
-          <Rule type="dont">No omita los espacios: {"{{nombre}}"} — podría no ser detectado</Rule>
-        </div>
-      </section>
-
-      {/* Variable Names */}
-      <section>
-        <h3 className="font-semibold text-base mb-2">Reglas de Nombres de Variables</h3>
-        <div className="space-y-1">
-          <Rule type="do">Use minúsculas con guiones bajos: {"{{ nombre_completo }}"}</Rule>
-          <Rule type="do">Use nombres descriptivos: {"{{ fecha_emision }}"}, {"{{ numero_contrato }}"}</Rule>
-          <Rule type="dont">Evite espacios en los nombres: {"{{ nombre completo }}"}</Rule>
-          <Rule type="dont">Evite caracteres especiales: {"{{ año }}"}, {"{{ dirección }}"}</Rule>
-          <Rule type="do">Use solo ASCII: {"{{ anio }}"}, {"{{ direccion }}"}</Rule>
-        </div>
-      </section>
-
-      {/* Formatting */}
-      <section>
-        <h3 className="font-semibold text-base mb-2">Consejos de Formato</h3>
-        <p className="text-muted-foreground mb-3">
-          El marcador de variable hereda el formato del texto circundante
-          en Word. Esto significa:
-        </p>
-        <div className="space-y-2 text-muted-foreground">
-          <p>
-            <strong>Texto en negrita:</strong> Si pone {"{{ nombre }}"} en negrita en
-            Word, el valor reemplazado también estará en negrita.
-          </p>
-          <p>
-            <strong>Tamaño de fuente:</strong> La variable hereda la fuente, tamaño
-            y color del estilo de Word aplicado.
-          </p>
-          <p>
-            <strong>Alineación:</strong> La alineación centrada, derecha o justificada
-            se preserva.
-          </p>
-        </div>
-
-        <div className="mt-3 rounded-md bg-amber-500/10 border border-amber-500/20 p-3">
-          <p className="font-medium text-amber-700 dark:text-amber-400 mb-1">
-            Importante: Mismo formato para toda la variable
-          </p>
-          <p className="text-muted-foreground">
-            Todo el marcador {"{{ variable }}"} debe tener el mismo
-            formato. Si pone en negrita solo una parte (como{" "}
-            <strong>{"{{ vari"}</strong>{"able }}"}) el sistema no lo detectará.
-            Seleccione todo el marcador incluyendo las llaves y aplique
-            el formato de manera uniforme.
-          </p>
-        </div>
-      </section>
-
-      {/* Tables */}
-      <section>
-        <h3 className="font-semibold text-base mb-2">Variables en Tablas</h3>
-        <p className="text-muted-foreground mb-3">
-          Puede colocar variables dentro de celdas de tabla. Cada celda puede contener una
-          o más variables:
-        </p>
-        <div className="rounded-md border overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-muted">
-              <tr>
-                <th className="px-3 py-2 text-left font-medium">Campo</th>
-                <th className="px-3 py-2 text-left font-medium">Valor</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr className="border-t">
-                <td className="px-3 py-2">Nombre</td>
-                <td className="px-3 py-2 font-mono text-xs">{"{{ nombre }}"}</td>
-              </tr>
-              <tr className="border-t">
-                <td className="px-3 py-2">Fecha</td>
-                <td className="px-3 py-2 font-mono text-xs">{"{{ fecha }}"}</td>
-              </tr>
-              <tr className="border-t">
-                <td className="px-3 py-2">Monto</td>
-                <td className="px-3 py-2 font-mono text-xs">{"{{ monto }}"}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      {/* Headers and Footers */}
-      <section>
-        <h3 className="font-semibold text-base mb-2">Encabezados y Pies de Página</h3>
-        <p className="text-muted-foreground">
-          Las variables también se pueden colocar en encabezados y pies de página.
-          Serán detectadas y reemplazadas igual que las variables en el cuerpo del documento.
-        </p>
-      </section>
-
-      {/* Example Template */}
-      <section>
-        <h3 className="font-semibold text-base mb-2">Ejemplo Completo</h3>
-        <p className="text-muted-foreground mb-3">
-          Así se ve una plantilla de contrato típica:
-        </p>
-        <CodeBlock>
-{`CONTRATO DE SERVICIOS
+function ExampleContract() {
+  return `CONTRATO DE SERVICIOS
 
 En la ciudad de {{ ciudad }}, a {{ fecha }},
 
@@ -213,54 +251,5 @@ Se acuerda lo siguiente:
 Firmas:
 
 _____________________     _____________________
-{{ nombre_empresa }}       {{ nombre_contratado }}`}
-        </CodeBlock>
-        <p className="text-muted-foreground mt-2">
-          Esta plantilla tiene <strong>10 variables</strong> que SigDoc
-          detectará automáticamente al subirla.
-        </p>
-      </section>
-
-      {/* Quick Checklist */}
-      <section>
-        <h3 className="font-semibold text-base mb-2">Lista de Verificación Pre-Subida</h3>
-        <div className="space-y-2">
-          <CheckItem>Guarde su documento como .docx (no .doc ni .pdf)</CheckItem>
-          <CheckItem>Use la sintaxis {"{{ variable }}"} con espacios dentro de las llaves</CheckItem>
-          <CheckItem>Use minúsculas_con_guiones_bajos para nombres de variables</CheckItem>
-          <CheckItem>Evite caracteres especiales (acentos, ñ) en nombres de variables</CheckItem>
-          <CheckItem>Aplique el formato de manera uniforme a todo el marcador</CheckItem>
-          <CheckItem>Pruebe primero con una plantilla simple antes de las complejas</CheckItem>
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function CodeBlock({ children }: { children: string }) {
-  return (
-    <pre className="rounded-md bg-muted p-3 text-xs font-mono whitespace-pre-wrap overflow-x-auto">
-      {children}
-    </pre>
-  );
-}
-
-function Rule({ type, children }: { type: "do" | "dont"; children: React.ReactNode }) {
-  return (
-    <p className="text-muted-foreground">
-      <span className={type === "do" ? "text-green-600 dark:text-green-400" : "text-red-500 dark:text-red-400"}>
-        {type === "do" ? "✓" : "✗"}
-      </span>{" "}
-      {children}
-    </p>
-  );
-}
-
-function CheckItem({ children }: { children: React.ReactNode }) {
-  return (
-    <label className="flex items-start gap-2 text-muted-foreground">
-      <span className="mt-0.5">☐</span>
-      <span>{children}</span>
-    </label>
-  );
+{{ nombre_empresa }}       {{ nombre_contratado }}`;
 }

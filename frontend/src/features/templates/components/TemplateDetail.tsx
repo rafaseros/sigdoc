@@ -1,5 +1,5 @@
-import { Fragment, useState, useCallback } from "react";
-import { useNavigate } from "@tanstack/react-router";
+import { Fragment, useCallback, useMemo, useState } from "react";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { useDropzone } from "react-dropzone";
 import {
@@ -12,13 +12,19 @@ import {
   Clock,
   Upload,
   Share2,
+  Sparkles,
+  FileSpreadsheet,
+  CircleAlert,
+  BookOpen,
 } from "lucide-react";
 
 import {
   useTemplate,
   useDeleteTemplate,
   useUploadNewVersion,
+  useTemplateShares,
 } from "@/features/templates/api";
+import { useDocuments } from "@/features/documents/api/queries";
 import type { VariableMeta, VariableType } from "@/features/templates/api/queries";
 import {
   useUpdateVariableTypes,
@@ -28,7 +34,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
   DialogContent,
@@ -46,6 +51,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 
 import { TemplateDetailSkeleton } from "./TemplateDetailSkeleton";
@@ -110,30 +116,31 @@ interface VariablesTabProps {
 }
 
 /**
- * Render a paragraph context with all `{{ varName }}` occurrences highlighted —
- * helps the owner spot exactly where a given variable shows up in the document.
- * Other placeholders in the same paragraph stay as plain text.
+ * Renders a paragraph and highlights every `{{ var }}` placeholder inside it.
+ * The placeholder matching `active` gets the amber chip; other placeholders in
+ * the same paragraph render as muted grey chips so the user can see the active
+ * variable in context without losing track of the others.
  */
-function HighlightedContext({ ctx, varName }: { ctx: string; varName: string }) {
-  // Variable names are \w-only (Jinja2 constraint), so no regex escaping needed,
-  // but we escape defensively in case future names break that assumption.
-  const escaped = varName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const pattern = new RegExp(`\\{\\{\\s*${escaped}\\s*\\}\\}`, "g");
-  const parts = ctx.split(pattern);
-  const matches = ctx.match(pattern) ?? [];
+function ParagraphPreview({ text, active }: { text: string; active: string }) {
+  const parts = text.split(/(\{\{\s*[a-zA-Z_][a-zA-Z0-9_]*\s*\}\})/g);
   return (
-    <>
-      {parts.map((part, i) => (
-        <Fragment key={i}>
-          {part}
-          {i < matches.length && (
-            <span className="bg-yellow-200 text-yellow-900 px-1 rounded font-semibold not-italic mx-0.5">
-              {matches[i]}
-            </span>
-          )}
-        </Fragment>
-      ))}
-    </>
+    <p className="m-0 text-[13px] leading-[1.65] text-[var(--fg-1)]">
+      {parts.map((part, i) => {
+        const m = part.match(/\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}/);
+        if (!m) return <Fragment key={i}>{part}</Fragment>;
+        const varName = m[1];
+        const isActive = varName === active;
+        return (
+          <span
+            key={i}
+            className={`var-chip ${isActive ? "var-chip-active" : "var-chip-muted"}`}
+            title={isActive ? `Variable seleccionada: ${varName}` : `Otra variable: ${varName}`}
+          >
+            {`{{ ${varName} }}`}
+          </span>
+        );
+      })}
+    </p>
   );
 }
 
@@ -142,6 +149,10 @@ function VariablesTab({ templateId, versionId, variablesMeta, isOwner }: Variabl
     Object.fromEntries(variablesMeta.map((m) => [m.name, initRow(m)]))
   );
   const [isDirty, setIsDirty] = useState(false);
+  const [query, setQuery] = useState("");
+  const [selectedName, setSelectedName] = useState<string>(
+    () => variablesMeta[0]?.name ?? ""
+  );
 
   const updateMutation = useUpdateVariableTypes(templateId, versionId);
 
@@ -197,123 +208,252 @@ function VariablesTab({ templateId, versionId, variablesMeta, isOwner }: Variabl
     });
   }
 
+  const filtered = useMemo(
+    () =>
+      variablesMeta.filter((m) =>
+        m.name.toLowerCase().includes(query.toLowerCase())
+      ),
+    [variablesMeta, query]
+  );
+
+  const activeMeta =
+    variablesMeta.find((m) => m.name === selectedName) ?? variablesMeta[0];
+  const activeRow = activeMeta
+    ? rows[activeMeta.name] ?? initRow(activeMeta)
+    : null;
+
   if (variablesMeta.length === 0) {
     return (
-      <Card className="border-0 bg-white shadow-[0_12px_32px_rgba(25,28,30,0.06)]">
+      <Card className="border-0 bg-white shadow-[var(--shadow-md)]">
         <CardContent className="pt-6">
-          <p className="text-[#434655]">No se encontraron variables en esta plantilla.</p>
+          <p className="text-[var(--fg-2)]">
+            No se encontraron variables en esta plantilla.
+          </p>
         </CardContent>
       </Card>
     );
   }
 
   return (
-    <div className="space-y-2">
-      {variablesMeta.map((m) => {
-        const row = rows[m.name] ?? initRow(m);
-        return (
-          <Card
-            key={m.name}
-            className="border-0 bg-white shadow-[0_2px_8px_rgba(25,28,30,0.04)] hover:shadow-[0_4px_16px_rgba(25,28,30,0.06)] transition-shadow"
-          >
-            <CardContent className="p-3 space-y-2">
-              {/* Header: name + type + help text on a single row when owner */}
-              <div className="flex items-center gap-2">
-                <span className="font-mono text-sm font-semibold text-[#191c1e] shrink-0 min-w-0 truncate max-w-[180px]">
-                  {m.name}
-                </span>
-                {isOwner ? (
-                  <>
-                    <Select
-                      value={row.type}
-                      onValueChange={(v) => setRowType(m.name, v as VariableType)}
+    <div>
+      <div className="grid gap-4 lg:grid-cols-[280px_1fr]">
+        {/* Left rail — variable list */}
+        <div className="flex max-h-[calc(100vh-280px)] flex-col overflow-hidden rounded-xl bg-white shadow-[var(--shadow-sm)] ring-1 ring-[rgba(195,198,215,0.30)]">
+          <div className="border-b border-[rgba(195,198,215,0.20)] px-4 py-3">
+            <div className="mb-2 text-[13px] font-semibold text-[var(--fg-1)]">
+              Variables detectadas
+            </div>
+            <Input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Buscar variable…"
+              className="h-9 text-sm"
+            />
+            <div className="mt-2 text-[11px] text-[var(--fg-3)]">
+              {variablesMeta.length} marcadores · click para ver párrafos
+            </div>
+          </div>
+          <div className="flex-1 overflow-y-auto">
+            {filtered.length === 0 ? (
+              <div className="px-4 py-6 text-center text-[12.5px] text-[var(--fg-3)]">
+                Sin resultados
+              </div>
+            ) : (
+              filtered.map((m) => {
+                const row = rows[m.name] ?? initRow(m);
+                const isSelected = m.name === activeMeta?.name;
+                return (
+                  <button
+                    type="button"
+                    key={m.name}
+                    onClick={() => setSelectedName(m.name)}
+                    className={`flex w-full items-center gap-2 border-b border-[rgba(195,198,215,0.15)] px-4 py-2.5 text-left transition-colors last:border-b-0 ${
+                      isSelected
+                        ? "bg-[var(--bg-accent)]"
+                        : "hover:bg-[var(--bg-page)]"
+                    }`}
+                  >
+                    <span
+                      className={`min-w-0 flex-1 truncate font-mono text-[12.5px] ${
+                        isSelected
+                          ? "font-semibold text-[var(--primary)]"
+                          : "text-[var(--fg-1)]"
+                      }`}
                     >
-                      <SelectTrigger size="sm" className="w-36 shrink-0">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {(Object.entries(TYPE_LABELS) as [VariableType, string][]).map(
-                          ([val, label]) => (
-                            <SelectItem key={val} value={val}>
-                              {label}
-                            </SelectItem>
-                          )
-                        )}
-                      </SelectContent>
-                    </Select>
-                    <Input
-                      value={row.helpText}
-                      onChange={(e) => setRowHelpText(m.name, e.target.value)}
-                      placeholder="Mensaje de ayuda (ej. formato DD/MM/YYYY)"
-                      className="text-sm h-9 flex-1 min-w-0"
-                    />
-                  </>
-                ) : (
-                  <>
-                    <Badge className="bg-[#e8f0fe] text-[#1a56db] border-0 rounded-full text-xs font-semibold shrink-0">
-                      {TYPE_LABELS[m.type ?? "text"]}
+                      {m.name}
+                    </span>
+                    <Badge
+                      variant="outline"
+                      className="rounded-full border-[rgba(195,198,215,0.40)] px-1.5 text-[10px] text-[var(--fg-3)]"
+                    >
+                      {m.contexts.length}×
                     </Badge>
-                    {m.help_text ? (
-                      <p className="text-xs text-[#434655] italic flex-1 min-w-0 truncate">
-                        {m.help_text}
-                      </p>
-                    ) : null}
-                  </>
-                )}
+                    <Badge
+                      className={`rounded-full border-0 px-1.5 text-[10px] font-semibold ${
+                        isSelected
+                          ? "bg-white text-[var(--primary)]"
+                          : "bg-[var(--bg-muted)] text-[var(--fg-3)]"
+                      }`}
+                    >
+                      {TYPE_LABELS[row.type]}
+                    </Badge>
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </div>
+
+        {/* Right pane — variable detail */}
+        {activeMeta && activeRow && (
+          <div className="flex min-w-0 flex-col gap-4">
+            {/* Editor card */}
+            <div className="rounded-xl bg-white p-5 shadow-[var(--shadow-sm)] ring-1 ring-[rgba(195,198,215,0.30)]">
+              <div className="mb-4 flex flex-wrap items-center gap-2">
+                <span className="font-mono text-[15px] font-semibold text-[var(--primary)]">
+                  {`{{ ${activeMeta.name} }}`}
+                </span>
+                <Badge className="rounded-full border-0 bg-[var(--bg-accent)] font-semibold text-[var(--primary)] hover:bg-[var(--bg-accent)]">
+                  {TYPE_LABELS[activeRow.type]}
+                </Badge>
+                <Badge
+                  variant="outline"
+                  className="rounded-full border-[rgba(195,198,215,0.40)] text-[var(--fg-3)]"
+                >
+                  {activeMeta.contexts.length} aparición
+                  {activeMeta.contexts.length === 1 ? "" : "es"}
+                </Badge>
               </div>
 
-              {/* Options (select type only) — full row when present */}
-              {isOwner && row.type === "select" && (
-                <Textarea
-                  value={row.optionsText}
-                  onChange={(e) => setRowOptions(m.name, e.target.value)}
-                  placeholder="Opciones, una por línea (Bs. / USD / EUR)"
-                  className="text-xs min-h-16 resize-none"
-                />
+              {isOwner ? (
+                <>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="grid gap-1.5">
+                      <Label className="text-[12.5px] font-medium text-[var(--fg-2)]">
+                        Tipo de dato
+                      </Label>
+                      <Select
+                        value={activeRow.type}
+                        onValueChange={(v) =>
+                          setRowType(activeMeta.name, v as VariableType)
+                        }
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {(Object.entries(TYPE_LABELS) as [VariableType, string][]).map(
+                            ([val, label]) => (
+                              <SelectItem key={val} value={val}>
+                                {label}
+                              </SelectItem>
+                            )
+                          )}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="grid gap-1.5">
+                      <Label className="text-[12.5px] font-medium text-[var(--fg-2)]">
+                        Mensaje de ayuda
+                      </Label>
+                      <Input
+                        value={activeRow.helpText}
+                        onChange={(e) =>
+                          setRowHelpText(activeMeta.name, e.target.value)
+                        }
+                        placeholder="ej. formato DD/MM/YYYY"
+                      />
+                    </div>
+                  </div>
+                  {activeRow.type === "select" && (
+                    <div className="mt-3 grid gap-1.5">
+                      <Label className="text-[12.5px] font-medium text-[var(--fg-2)]">
+                        Opciones (una por línea)
+                      </Label>
+                      <Textarea
+                        value={activeRow.optionsText}
+                        onChange={(e) =>
+                          setRowOptions(activeMeta.name, e.target.value)
+                        }
+                        placeholder="Bs.&#10;USD&#10;EUR"
+                        className="min-h-20 resize-none text-sm"
+                      />
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="space-y-2">
+                  {activeMeta.help_text && (
+                    <p className="m-0 text-[13px] italic text-[var(--fg-2)]">
+                      {activeMeta.help_text}
+                    </p>
+                  )}
+                  {activeMeta.type === "select" &&
+                    activeMeta.options &&
+                    activeMeta.options.length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        {activeMeta.options.map((opt) => (
+                          <Badge
+                            key={opt}
+                            variant="outline"
+                            className="rounded-full text-xs"
+                          >
+                            {opt}
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
+                </div>
               )}
-              {!isOwner && m.type === "select" && m.options && m.options.length > 0 && (
-                <div className="flex flex-wrap gap-1">
-                  {m.options.map((opt) => (
-                    <Badge key={opt} variant="outline" className="text-xs rounded-full">
-                      {opt}
-                    </Badge>
+            </div>
+
+            {/* Contexts card */}
+            <div className="overflow-hidden rounded-xl bg-white shadow-[var(--shadow-sm)] ring-1 ring-[rgba(195,198,215,0.30)]">
+              <div className="border-b border-[rgba(195,198,215,0.20)] px-5 py-3">
+                <div className="text-[13px] font-semibold text-[var(--fg-1)]">
+                  Aparece en {activeMeta.contexts.length} párrafo
+                  {activeMeta.contexts.length === 1 ? "" : "s"}
+                </div>
+                <div className="mt-1.5 flex flex-wrap items-center gap-3 text-[11px] text-[var(--fg-3)]">
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="inline-block size-2.5 rounded bg-gradient-to-br from-[#fef3c7] to-[#fde68a] ring-1 ring-[#f59e0b]" />
+                    seleccionada
+                  </span>
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="inline-block size-2.5 rounded bg-[var(--bg-muted)] ring-1 ring-[rgba(195,198,215,0.40)]" />
+                    otras variables del párrafo
+                  </span>
+                </div>
+              </div>
+              {activeMeta.contexts.length === 0 ? (
+                <div className="px-5 py-8 text-center text-[12.5px] text-[var(--fg-3)]">
+                  No hay vista previa de párrafos para esta variable.
+                </div>
+              ) : (
+                <div className="flex flex-col">
+                  {activeMeta.contexts.map((ctx, i) => (
+                    <div
+                      key={i}
+                      className="flex gap-3 border-t border-[rgba(195,198,215,0.15)] px-5 py-3 first:border-t-0"
+                    >
+                      <div className="flex min-w-[60px] shrink-0 flex-col text-[11px] text-[var(--fg-3)]">
+                        <span className="font-mono">¶ {i + 1}</span>
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <ParagraphPreview text={ctx} active={activeMeta.name} />
+                      </div>
+                    </div>
                   ))}
                 </div>
               )}
-
-              {/* Contexts collapsible — paragraph contains the variable name highlighted */}
-              {m.contexts.length > 0 ? (
-                <details className="group">
-                  <summary className="cursor-pointer list-none flex items-center gap-1 text-xs text-muted-foreground select-none hover:text-[#004ac6] transition-colors">
-                    <span className="group-open:rotate-90 transition-transform inline-block">▶</span>
-                    <span>
-                      Aparece en {m.contexts.length} párrafo{m.contexts.length !== 1 ? "s" : ""}
-                    </span>
-                  </summary>
-                  <div className="mt-2 space-y-1.5 max-h-48 overflow-y-auto pl-2">
-                    {m.contexts.map((ctx, i) => (
-                      <blockquote
-                        key={i}
-                        className="border-l-2 border-[#b4c5ff] pl-3 text-xs text-[#434655] italic leading-relaxed"
-                      >
-                        <HighlightedContext ctx={ctx} varName={m.name} />
-                      </blockquote>
-                    ))}
-                  </div>
-                </details>
-              ) : (
-                <p className="text-xs text-muted-foreground italic">
-                  No aparece en ningún párrafo
-                </p>
-              )}
-            </CardContent>
-          </Card>
-        );
-      })}
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* Sticky save/discard bar — owner only */}
       {isOwner && (
-        <div className="sticky bottom-0 bg-white/90 backdrop-blur-sm border-t border-border/40 pt-3 pb-1 flex justify-end gap-2">
+        <div className="sticky bottom-0 mt-4 flex justify-end gap-2 border-t border-[rgba(195,198,215,0.20)] bg-white/90 pt-3 pb-1 backdrop-blur-sm">
           <Button
             type="button"
             variant="outline"
@@ -326,9 +466,9 @@ function VariablesTab({ templateId, versionId, variablesMeta, isOwner }: Variabl
             type="button"
             disabled={!isDirty || updateMutation.isPending}
             onClick={handleSave}
-            className="bg-gradient-to-br from-[#004ac6] to-[#2563eb] text-white shadow-[0_2px_8px_rgba(0,74,198,0.3)]"
+            className="bg-gradient-to-br from-[#004ac6] to-[#2563eb] font-semibold text-white shadow-[var(--shadow-brand-sm)] hover:shadow-[var(--shadow-brand-md)]"
           >
-            {updateMutation.isPending ? "Guardando..." : "Guardar cambios"}
+            {updateMutation.isPending ? "Guardando…" : "Guardar cambios"}
           </Button>
         </div>
       )}
@@ -344,12 +484,18 @@ interface TemplateDetailProps {
 
 export default function TemplateDetail({ templateId }: TemplateDetailProps) {
   const { data: template, isLoading } = useTemplate(templateId);
+  const { data: documentsData } = useDocuments({ template_id: templateId, page: 1, size: 1 });
+  const { data: shares } = useTemplateShares(templateId);
   const deleteTemplate = useDeleteTemplate();
   const uploadNewVersion = useUploadNewVersion();
   const navigate = useNavigate();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState("");
+  const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  type DetailTab = "info" | "variables" | "versions" | "shares" | "documents";
+  const [activeTab, setActiveTab] = useState<DetailTab>("info");
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     if (acceptedFiles.length > 0) {
@@ -421,319 +567,486 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
     setDeleteDialogOpen(false);
   }
 
-  const accessBadgeLabel =
-    template.access_type === "shared" ? "Compartido contigo" : null;
-
   const isOwnerOrAdmin =
     template.is_owner || template.access_type === "admin";
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
+      {/* Back link */}
+      <Link
+        to="/templates"
+        className="-ml-1 inline-flex items-center gap-1 text-[12.5px] font-medium text-[var(--fg-3)] transition-colors hover:text-[var(--primary)]"
+      >
+        <ArrowLeft className="size-3.5" />
+        Volver a Plantillas
+      </Link>
+
       {/* Header */}
-      <div className="flex items-start gap-4">
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => navigate({ to: "/templates" })}
-        >
-          <ArrowLeft />
-        </Button>
-        <div className="flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-2xl font-bold">{template.name}</h1>
-            {accessBadgeLabel && (
-              <Badge className="bg-[#e8f0fe] text-[#1a56db] border-0 rounded-full text-xs font-semibold">
-                {accessBadgeLabel}
+      <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+        <div className="flex items-start gap-3.5">
+          <span className="inline-flex size-12 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[#dbe1ff] to-[#b4c5ff] text-[var(--primary)]">
+            <FileText className="size-5" />
+          </span>
+          <div className="min-w-0">
+            <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
+              <Badge variant="outline" className="rounded-full border-[rgba(37,99,235,0.30)] text-[var(--primary)]">
+                v{template.current_version}
               </Badge>
+              {template.access_type === "shared" && (
+                <Badge className="rounded-full border-0 bg-[var(--bg-accent)] text-[var(--primary)] hover:bg-[var(--bg-accent)]">
+                  Compartida
+                </Badge>
+              )}
+            </div>
+            <h1 className="m-0 max-w-[680px] text-[22px] font-bold tracking-tight text-[var(--fg-1)]">
+              {template.name}
+            </h1>
+            {template.description && (
+              <p className="mt-1.5 text-[13px] text-[var(--fg-3)]">{template.description}</p>
+            )}
+            {template.shared_by_email && (
+              <p className="mt-1.5 text-xs text-[var(--fg-3)]">
+                Compartida por <span className="font-mono text-[var(--primary)]">{template.shared_by_email}</span>
+              </p>
             )}
           </div>
-          {template.description && (
-            <p className="mt-1 text-muted-foreground">{template.description}</p>
+        </div>
+
+        {/* Action row */}
+        <div className="flex flex-wrap items-center gap-1.5">
+          {currentVersion && (
+            <>
+              <Button
+                size="sm"
+                onClick={() =>
+                  navigate({
+                    to: "/documents/generate/$versionId",
+                    params: { versionId: currentVersion.id },
+                    search: { templateId },
+                  })
+                }
+                className="bg-gradient-to-br from-[#004ac6] to-[#2563eb] font-semibold text-white shadow-[var(--shadow-brand-sm)] hover:shadow-[var(--shadow-brand-md)]"
+              >
+                <Sparkles className="size-3.5" />
+                Generar Documento
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  navigate({
+                    to: "/documents/bulk/$versionId",
+                    params: { versionId: currentVersion.id },
+                    search: { templateId },
+                  })
+                }
+              >
+                <FileSpreadsheet className="size-3.5" />
+                Generación Masiva
+              </Button>
+            </>
+          )}
+          {template.is_owner && (
+            <Button variant="outline" size="sm" onClick={() => setShareDialogOpen(true)}>
+              <Share2 className="size-3.5" />
+              Compartir
+            </Button>
+          )}
+          {template.is_owner && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setDeleteConfirm("");
+                setDeleteDialogOpen(true);
+              }}
+              className="border-[rgba(186,26,26,0.25)] text-[var(--destructive)] hover:bg-[#ffdad6]/50 hover:text-[var(--destructive)]"
+            >
+              <Trash2 className="size-3.5" />
+              Eliminar
+            </Button>
           )}
         </div>
       </div>
 
-      {/* Action Bar */}
-      <div className="flex flex-wrap gap-2">
-        {currentVersion && (
-          <>
-            <Button
-              className="bg-gradient-to-br from-[#004ac6] to-[#2563eb] text-white shadow-[0_4px_12px_rgba(0,74,198,0.3)] hover:shadow-[0_6px_20px_rgba(0,74,198,0.4)] transition-all"
-              onClick={() =>
-                navigate({
-                  to: "/documents/generate/$versionId",
-                  params: { versionId: currentVersion.id },
-                  search: { templateId },
-                })
-              }
+      {/* Sidebar layout */}
+      <div className="grid gap-6 lg:grid-cols-[220px_1fr]">
+        <aside className="self-start lg:sticky lg:top-20">
+          <nav className="flex flex-col gap-0.5">
+            <SidebarItem
+              icon={<Info className="size-4" />}
+              active={activeTab === "info"}
+              onClick={() => setActiveTab("info")}
             >
-              <FileText />
-              Generar Documento
-            </Button>
-            <Button
-              variant="outline"
-              className="border-[rgba(195,198,215,0.3)] hover:bg-[#dbe1ff]/50 hover:text-[#004ac6] transition-all"
-              onClick={() =>
-                navigate({
-                  to: "/documents/bulk/$versionId",
-                  params: { versionId: currentVersion.id },
-                  search: { templateId },
-                })
-              }
+              Información
+            </SidebarItem>
+            <SidebarItem
+              icon={<Variable className="size-4" />}
+              active={activeTab === "variables"}
+              onClick={() => setActiveTab("variables")}
+              count={currentVersion?.variables.length}
             >
-              <Files />
-              Generación Masiva
-            </Button>
-          </>
-        )}
-
-        {template.is_owner && (
-          <ShareTemplateDialog
-            templateId={templateId}
-            templateName={template.name}
-          />
-        )}
-
-        {template.is_owner && (
-          <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-            <DialogTrigger
-              render={
-                <Button variant="destructive">
-                  <Trash2 />
-                  Eliminar Plantilla
-                </Button>
-              }
-            />
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Eliminar Plantilla</DialogTitle>
-                <DialogDescription>
-                  ¿Está seguro de que desea eliminar "{template.name}"? Esta acción
-                  no se puede deshacer. Todas las versiones serán eliminadas permanentemente.
-                </DialogDescription>
-              </DialogHeader>
-              <DialogFooter>
-                <Button
-                  variant="outline"
-                  onClick={() => setDeleteDialogOpen(false)}
-                >
-                  Cancelar
-                </Button>
-                <Button
-                  variant="destructive"
-                  onClick={handleDelete}
-                  disabled={deleteTemplate.isPending}
-                >
-                  {deleteTemplate.isPending ? "Eliminando..." : "Eliminar"}
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-        )}
-      </div>
-
-      {/* Tabs */}
-      <Tabs defaultValue="info">
-        <TabsList>
-          <TabsTrigger value="info">
-            <Info className="size-3.5" />
-            Información
-          </TabsTrigger>
-          <TabsTrigger value="variables">
-            <Variable className="size-3.5" />
-            Variables
-          </TabsTrigger>
-          <TabsTrigger value="versions">
-            <Clock className="size-3.5" />
-            Versiones
-          </TabsTrigger>
-          {isOwnerOrAdmin && (
-            <TabsTrigger value="shares">
-              <Share2 className="size-3.5" />
-              Compartido con
-            </TabsTrigger>
-          )}
-          <TabsTrigger value="documents">
-            <Files className="size-3.5" />
-            Documentos
-          </TabsTrigger>
-        </TabsList>
-
-        {/* Info Tab */}
-        <TabsContent value="info">
-          <Card className="border-0 bg-white shadow-[0_12px_32px_rgba(25,28,30,0.06)]">
-            <CardHeader>
-              <CardTitle>Información de la Plantilla</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-3">
-                <dt className="text-[#434655]">Versión Actual</dt>
-                <dd className="font-medium">v{template.current_version}</dd>
-
-                <dt className="text-[#434655]">Creado</dt>
-                <dd>{formatDate(template.created_at)}</dd>
-
-                <dt className="text-[#434655]">Actualizado</dt>
-                <dd>{formatDate(template.updated_at)}</dd>
-
-                {currentVersion && (
-                  <>
-                    <dt className="text-[#434655]">Tamaño del Archivo</dt>
-                    <dd>{formatFileSize(currentVersion.file_size)}</dd>
-                  </>
-                )}
-
-                <dt className="text-[#434655]">Total de Versiones</dt>
-                <dd>{template.versions.length}</dd>
-              </dl>
-              {template.shared_by_email && (
-                <p className="mt-4 text-sm text-muted-foreground">
-                  <span className="font-medium">Compartido por:</span>{" "}
-                  {template.shared_by_email}
-                </p>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* Variables Tab */}
-        <TabsContent value="variables">
-          {currentVersion ? (
-            <VariablesTab
-              templateId={templateId}
-              versionId={currentVersion.id}
-              variablesMeta={currentVersion.variables_meta}
-              isOwner={template.is_owner}
-            />
-          ) : (
-            <Card className="border-0 bg-white shadow-[0_12px_32px_rgba(25,28,30,0.06)]">
-              <CardContent className="pt-6">
-                <p className="text-[#434655]">No se encontraron variables en esta plantilla.</p>
-              </CardContent>
-            </Card>
-          )}
-        </TabsContent>
-
-        {/* Versions Tab */}
-        <TabsContent value="versions">
-          <div className="space-y-3">
-            {template.is_owner && (
-              <Dialog
-                open={uploadDialogOpen}
-                onOpenChange={setUploadDialogOpen}
+              Variables
+            </SidebarItem>
+            <SidebarItem
+              icon={<Clock className="size-4" />}
+              active={activeTab === "versions"}
+              onClick={() => setActiveTab("versions")}
+              count={template.versions.length}
+            >
+              Versiones
+            </SidebarItem>
+            {isOwnerOrAdmin && (
+              <SidebarItem
+                icon={<Share2 className="size-4" />}
+                active={activeTab === "shares"}
+                onClick={() => setActiveTab("shares")}
               >
-                <DialogTrigger
-                  render={
-                    <Button className="bg-gradient-to-br from-[#004ac6] to-[#2563eb] text-white shadow-[0_4px_12px_rgba(0,74,198,0.3)] hover:shadow-[0_6px_20px_rgba(0,74,198,0.4)] transition-all">
-                      <Upload className="size-4" />
-                      Subir Nueva Versión
-                    </Button>
-                  }
-                />
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>Subir Nueva Versión</DialogTitle>
-                    <DialogDescription>
-                      Suba un nuevo archivo .docx para crear la versión v
-                      {template.current_version + 1} de "{template.name}".
-                    </DialogDescription>
-                  </DialogHeader>
-                  <div
-                    {...getRootProps()}
-                    className={`flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed p-10 transition-all ${
-                      isDragActive
-                        ? "border-[#004ac6] bg-[#dbe1ff]/30"
-                        : "border-[rgba(195,198,215,0.4)] hover:border-[#2563eb]/50 hover:bg-[#f7f9fb]"
-                    }`}
-                  >
-                    <input {...getInputProps()} />
-                    <Upload className="mb-2 size-8 text-[#434655]" />
-                    {selectedFile ? (
-                      <p className="text-sm font-medium">{selectedFile.name}</p>
-                    ) : isDragActive ? (
-                      <p className="text-sm text-muted-foreground">
-                        Suelte el archivo aquí...
-                      </p>
-                    ) : (
-                      <p className="text-sm text-muted-foreground">
-                        Arrastre y suelte un archivo .docx, o haga clic para seleccionar
-                      </p>
-                    )}
-                  </div>
-                  <DialogFooter>
-                    <Button
-                      variant="outline"
-                      onClick={() => {
-                        setUploadDialogOpen(false);
-                        setSelectedFile(null);
-                      }}
-                    >
-                      Cancelar
-                    </Button>
-                    <Button
-                      onClick={handleUploadVersion}
-                      disabled={!selectedFile || uploadNewVersion.isPending}
-                    >
-                      {uploadNewVersion.isPending
-                        ? "Subiendo..."
-                        : "Subir Versión"}
-                    </Button>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
+                Compartido
+              </SidebarItem>
             )}
+            <SidebarItem
+              icon={<Files className="size-4" />}
+              active={activeTab === "documents"}
+              onClick={() => setActiveTab("documents")}
+            >
+              Documentos
+            </SidebarItem>
+          </nav>
+        </aside>
 
-            {template.versions
-              .sort((a, b) => b.version - a.version)
-              .map((version) => (
-                <Card key={version.id} size="sm" className="border-0 bg-white shadow-[0_4px_16px_rgba(25,28,30,0.04)] hover:shadow-[0_8px_24px_rgba(25,28,30,0.08)] transition-shadow">
+        <div className="min-w-0">
+          {activeTab === "info" && (
+            <div className="grid gap-4 lg:grid-cols-[1.6fr_1fr]">
+              <Card className="border-0 bg-white shadow-[var(--shadow-md)]">
+                <CardHeader className="border-b border-[rgba(195,198,215,0.20)]">
+                  <CardTitle>Información de la plantilla</CardTitle>
+                </CardHeader>
+                <CardContent className="p-0">
+                  {[
+                    ["Versión actual", `v${template.current_version}`],
+                    ["Creado", formatDate(template.created_at)],
+                    ["Actualizado", formatDate(template.updated_at)],
+                    ...(currentVersion
+                      ? [["Tamaño del archivo", formatFileSize(currentVersion.file_size)]]
+                      : []),
+                    ["Total de versiones", String(template.versions.length)],
+                    ["Variables detectadas", `${currentVersion?.variables.length ?? 0} marcadores`],
+                    ...(template.shared_by_email
+                      ? [["Compartida por", template.shared_by_email]]
+                      : []),
+                  ].map(([k, v], i) => (
+                    <div
+                      key={k}
+                      className={`flex items-center px-5 py-2.5 text-[13.5px] ${
+                        i ? "border-t border-[rgba(195,198,215,0.15)]" : ""
+                      }`}
+                    >
+                      <div className="w-[180px] shrink-0 text-[12.5px] text-[var(--fg-3)]">{k}</div>
+                      <div className="font-medium text-[var(--fg-1)]">{v}</div>
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+
+              <div className="flex flex-col gap-4">
+                <Card className="border-0 bg-white shadow-[var(--shadow-md)]">
+                  <CardHeader>
+                    <CardTitle className="text-base">Resumen de uso</CardTitle>
+                  </CardHeader>
                   <CardContent>
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <Badge
-                          className={
-                            version.version === template.current_version
-                              ? "bg-gradient-to-br from-[#004ac6] to-[#2563eb] text-white border-0 rounded-full"
-                              : "border-[#2563eb]/30 text-[#004ac6] bg-transparent rounded-full"
-                          }
-                          variant={
-                            version.version === template.current_version
-                              ? "default"
-                              : "outline"
-                          }
-                        >
-                          v{version.version}
-                        </Badge>
-                        <span className="text-[#434655]">
-                          {version.variables.length} variable
-                          {version.variables.length !== 1 ? "s" : ""}
-                        </span>
-                        <span className="text-[#434655]">
-                          {formatFileSize(version.file_size)}
-                        </span>
-                      </div>
-                      <span className="text-sm text-[#434655]">
-                        {formatDate(version.created_at)}
-                      </span>
+                    <div className="grid grid-cols-2 gap-2.5">
+                      <UsageStat value={documentsData?.total ?? 0} label="documentos generados" />
+                      {isOwnerOrAdmin && (
+                        <UsageStat value={shares?.length ?? 0} label="usuarios con acceso" />
+                      )}
+                      <UsageStat value={template.versions.length} label="versiones publicadas" />
+                      <UsageStat
+                        value={currentVersion?.variables.length ?? 0}
+                        label="variables detectadas"
+                      />
                     </div>
                   </CardContent>
                 </Card>
-              ))}
-          </div>
-        </TabsContent>
 
-        {/* Shares Tab — visible to owner and admin only */}
-        {isOwnerOrAdmin && (
-          <TabsContent value="shares">
+                <div className="flex items-start gap-2.5 rounded-[10px] bg-[var(--bg-accent)] px-3.5 py-3 text-[13px] leading-[1.45] text-[var(--primary)]">
+                  <BookOpen className="mt-px size-4 shrink-0" />
+                  <div className="flex-1">
+                    ¿Dudas con marcadores{" "}
+                    <span className="font-mono">{"{{ var }}"}</span>? Usá el botón{" "}
+                    <strong className="font-semibold">Guía de Plantillas</strong> arriba para ver la documentación completa.
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === "variables" && (
+            currentVersion ? (
+              <VariablesTab
+                templateId={templateId}
+                versionId={currentVersion.id}
+                variablesMeta={currentVersion.variables_meta}
+                isOwner={template.is_owner}
+              />
+            ) : (
+              <Card className="border-0 bg-white shadow-[var(--shadow-md)]">
+                <CardContent className="pt-6">
+                  <p className="text-[var(--fg-2)]">No se encontraron variables en esta plantilla.</p>
+                </CardContent>
+              </Card>
+            )
+          )}
+
+          {activeTab === "versions" && (
+            <div className="space-y-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="m-0 text-lg font-bold tracking-tight text-[var(--fg-1)]">
+                    Historial de versiones
+                  </h3>
+                  <p className="mt-1 text-[12.5px] text-[var(--fg-3)]">
+                    Cada versión preserva las variables y el archivo original.
+                  </p>
+                </div>
+                {template.is_owner && (
+                  <Dialog open={uploadDialogOpen} onOpenChange={setUploadDialogOpen}>
+                    <DialogTrigger
+                      render={
+                        <Button
+                          size="sm"
+                          className="bg-gradient-to-br from-[#004ac6] to-[#2563eb] font-semibold text-white shadow-[var(--shadow-brand-sm)] hover:shadow-[var(--shadow-brand-md)]"
+                        />
+                      }
+                    >
+                      <Upload className="size-3.5" />
+                      Subir Nueva Versión
+                    </DialogTrigger>
+                    <DialogContent>
+                      <DialogHeader>
+                        <DialogTitle>Subir nueva versión</DialogTitle>
+                        <DialogDescription>
+                          Suba un nuevo archivo .docx para crear la versión v
+                          {template.current_version + 1} de "{template.name}".
+                        </DialogDescription>
+                      </DialogHeader>
+                      <div
+                        {...getRootProps()}
+                        className={`flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed p-10 text-center transition-all ${
+                          isDragActive
+                            ? "border-[var(--primary)] bg-[var(--bg-accent)]/50"
+                            : "border-[rgba(195,198,215,0.45)] hover:border-[var(--ring)]/40 hover:bg-[var(--bg-page)]"
+                        }`}
+                      >
+                        <input {...getInputProps()} />
+                        <Upload
+                          className={`size-8 ${isDragActive ? "text-[var(--primary)]" : "text-[var(--fg-3)]"}`}
+                        />
+                        {selectedFile ? (
+                          <p className="text-sm font-semibold text-[var(--fg-1)]">
+                            {selectedFile.name}
+                          </p>
+                        ) : isDragActive ? (
+                          <p className="text-sm font-semibold text-[var(--fg-1)]">
+                            Suelte aquí
+                          </p>
+                        ) : (
+                          <>
+                            <p className="text-sm font-semibold text-[var(--fg-1)]">
+                              Arrastre y suelte un archivo .docx
+                            </p>
+                            <p className="text-xs text-[var(--fg-3)]">
+                              o haga clic para seleccionar · máx. 10 MB
+                            </p>
+                          </>
+                        )}
+                      </div>
+                      <DialogFooter>
+                        <Button
+                          variant="outline"
+                          onClick={() => {
+                            setUploadDialogOpen(false);
+                            setSelectedFile(null);
+                          }}
+                        >
+                          Cancelar
+                        </Button>
+                        <Button
+                          onClick={handleUploadVersion}
+                          disabled={!selectedFile || uploadNewVersion.isPending}
+                          className="bg-gradient-to-br from-[#004ac6] to-[#2563eb] font-semibold text-white shadow-[var(--shadow-brand-sm)] hover:shadow-[var(--shadow-brand-md)]"
+                        >
+                          {uploadNewVersion.isPending ? "Subiendo…" : "Subir Versión"}
+                        </Button>
+                      </DialogFooter>
+                    </DialogContent>
+                  </Dialog>
+                )}
+              </div>
+
+              <div className="flex flex-col gap-2.5">
+                {template.versions
+                  .sort((a, b) => b.version - a.version)
+                  .map((version) => {
+                    const isCurrent = version.version === template.current_version;
+                    return (
+                      <div
+                        key={version.id}
+                        className="flex items-center gap-3.5 rounded-xl bg-white p-4 shadow-[var(--shadow-sm)] ring-1 ring-[rgba(195,198,215,0.30)] transition-shadow hover:shadow-[var(--shadow-md)]"
+                      >
+                        <span
+                          className={`inline-flex size-10 shrink-0 items-center justify-center rounded-[10px] text-[13px] font-bold tracking-tight ${
+                            isCurrent
+                              ? "bg-gradient-to-br from-[#004ac6] to-[#2563eb] text-white shadow-[var(--shadow-brand-sm)]"
+                              : "bg-[var(--bg-muted)] text-[var(--fg-3)]"
+                          }`}
+                        >
+                          v{version.version}
+                        </span>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-semibold text-[var(--fg-1)]">
+                              Versión {version.version}
+                            </span>
+                            {isCurrent && (
+                              <Badge className="rounded-full border-0 bg-[#d1fae5] text-[#065f46] hover:bg-[#d1fae5]">
+                                Actual
+                              </Badge>
+                            )}
+                          </div>
+                          <div className="mt-0.5 text-[12px] text-[var(--fg-3)]">
+                            {version.variables.length} variable
+                            {version.variables.length !== 1 ? "s" : ""} ·{" "}
+                            {formatFileSize(version.file_size)} · {formatDate(version.created_at)}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+            </div>
+          )}
+
+          {activeTab === "shares" && isOwnerOrAdmin && (
             <SharesTab templateId={templateId} templateName={template.name} />
-          </TabsContent>
-        )}
+          )}
 
-        {/* Documents Tab */}
-        <TabsContent value="documents">
-          <DocumentsTab templateId={templateId} />
-        </TabsContent>
-      </Tabs>
+          {activeTab === "documents" && <DocumentsTab templateId={templateId} />}
+        </div>
+      </div>
+
+      {/* Share dialog (controlled from action row) */}
+      {template.is_owner && (
+        <ShareTemplateDialog
+          templateId={templateId}
+          templateName={template.name}
+          open={shareDialogOpen}
+          onOpenChange={setShareDialogOpen}
+        />
+      )}
+
+      {/* Delete dialog with confirm-by-typing */}
+      {template.is_owner && (
+        <Dialog
+          open={deleteDialogOpen}
+          onOpenChange={(o) => {
+            setDeleteDialogOpen(o);
+            if (!o) setDeleteConfirm("");
+          }}
+        >
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Eliminar plantilla</DialogTitle>
+            </DialogHeader>
+            <div className="flex items-start gap-2.5 rounded-[10px] bg-[#ffdad6] px-3.5 py-3 text-[13px] leading-[1.45] text-[#93000a]">
+              <CircleAlert className="mt-px size-4 shrink-0 text-[var(--destructive)]" />
+              <div className="flex-1">
+                <strong className="font-semibold">Esta acción no se puede deshacer.</strong>{" "}
+                Se eliminarán todas las versiones, configuraciones de variables y el historial asociado.
+              </div>
+            </div>
+            <p className="text-[13.5px] leading-[1.55] text-[var(--fg-2)]">
+              ¿Está seguro de eliminar la plantilla{" "}
+              <strong className="text-[var(--fg-1)]">"{template.name}"</strong>?
+            </p>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="delete-confirm" className="text-[12.5px] font-medium text-[var(--fg-2)]">
+                Para confirmar, escriba{" "}
+                <span className="font-mono text-[var(--destructive)]">ELIMINAR</span>
+              </Label>
+              <Input
+                id="delete-confirm"
+                value={deleteConfirm}
+                onChange={(e) => setDeleteConfirm(e.target.value)}
+                placeholder="ELIMINAR"
+                autoFocus
+              />
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>
+                Cancelar
+              </Button>
+              <Button
+                onClick={handleDelete}
+                disabled={deleteConfirm !== "ELIMINAR" || deleteTemplate.isPending}
+                className="bg-[var(--destructive)] font-semibold text-white hover:bg-[#93000a]"
+              >
+                <Trash2 className="size-3.5" />
+                {deleteTemplate.isPending ? "Eliminando…" : "Eliminar permanentemente"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
+  );
+}
+
+function UsageStat({ value, label }: { value: number; label: string }) {
+  return (
+    <div className="rounded-[10px] bg-[var(--bg-page)] px-3 py-3 ring-1 ring-[rgba(195,198,215,0.30)]">
+      <div className="text-2xl font-bold tracking-tight text-[var(--fg-1)]">{value}</div>
+      <div className="text-[11.5px] text-[var(--fg-3)]">{label}</div>
+    </div>
+  );
+}
+
+function SidebarItem({
+  icon,
+  active,
+  count,
+  onClick,
+  children,
+}: {
+  icon: React.ReactNode;
+  active: boolean;
+  count?: number;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition-colors ${
+        active
+          ? "bg-[var(--bg-accent)] font-semibold text-[var(--primary)]"
+          : "text-[var(--fg-2)] hover:bg-[var(--bg-muted)]"
+      }`}
+    >
+      {icon}
+      <span className="flex-1">{children}</span>
+      {count != null && (
+        <span
+          className={`inline-flex h-[18px] items-center justify-center rounded-full px-1.5 text-[10.5px] font-semibold ${
+            active
+              ? "bg-white text-[var(--primary)]"
+              : "bg-[var(--bg-muted)] text-[var(--fg-3)]"
+          }`}
+        >
+          {count}
+        </span>
+      )}
+    </button>
   );
 }
