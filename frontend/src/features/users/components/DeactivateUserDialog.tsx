@@ -220,7 +220,10 @@ export function DeactivateUserDialog({
                 plantillas.
               </div>
             ) : (
-              <Select value={reassignTo} onValueChange={setReassignTo}>
+              <Select
+                value={reassignTo}
+                onValueChange={(v) => setReassignTo(v ?? "")}
+              >
                 <SelectTrigger id="reassign-to" className="h-10">
                   <SelectValue placeholder="Seleccionar usuario destino…" />
                 </SelectTrigger>
