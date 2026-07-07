@@ -76,6 +76,10 @@ jobs:
         working-directory: frontend
         run: pnpm tsc --noEmit
 
+      - name: Run tests
+        working-directory: frontend
+        run: pnpm test
+
       - name: Build
         working-directory: frontend
         run: pnpm build

@@ -3,13 +3,15 @@
  *
  * Renders the complete .docx as a paginated document with three sections —
  * Encabezado / Contenido / Pie de página — and lets the user fill every
- * `{{ variable }}` placeholder inline through a popover.
+ * `{{ variable }}` placeholder inline: clicking a pill swaps it, in place,
+ * for a text/select control (no popover, no portal — see PlaceholderPill).
  *
  * Powered by GET /api/v1/templates/{tid}/versions/{vid}/structure.
  *
  * Auto-jump: every placeholder occurrence is tracked as a unique "instance"
- * (key derived from its position). Committing a value advances the editor
- * to the next pending instance and opens its popover.
+ * (key derived from its position). Committing a value via Enter (or picking
+ * a select option) advances the editor to the next pending instance and
+ * swaps its pill for a control; committing via blur does not advance.
  *
  * Performance:
  * - PlaceholderPill is wrapped in React.memo so a commit on one pill does
@@ -23,18 +25,17 @@ import {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
-import { Popover } from "@base-ui/react/popover";
+import type { RefObject } from "react";
 import { Select as BaseSelect } from "@base-ui/react/select";
-import { Check, ChevronDown, FileText, Sparkles } from "lucide-react";
+import { ChevronDown, FileText, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 
 import { useGenerateDocument } from "../api/mutations";
@@ -76,6 +77,7 @@ type CommitHandler = (
   instanceKey: string,
   varName: string,
   value: string,
+  advance: boolean,
 ) => void;
 type OpenChangeHandler = (instanceKey: string, open: boolean) => void;
 
@@ -138,6 +140,11 @@ function collectInstances(structure: TemplateStructure): PlaceholderInstance[] {
 // PlaceholderPill — memoized so commits on one pill don't re-render the rest
 // ---------------------------------------------------------------------------
 
+/** Clamp the inline control's `ch`-based width to a sensible range. */
+function inputWidthCh(draftLength: number, placeholderLength: number): number {
+  return Math.min(Math.max(draftLength, placeholderLength, 3), 40);
+}
+
 interface PlaceholderPillProps {
   instanceKey: string;
   varName: string;
@@ -158,136 +165,197 @@ const PlaceholderPill = memo(function PlaceholderPill({
   onCommit,
 }: PlaceholderPillProps) {
   const [draft, setDraft] = useState(value);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const suppressBlurRef = useRef(false);
+  // Select-only guards (see InlineSelectInput): dropdownOpenRef tracks
+  // whether the listbox is currently open, committedRef tracks whether a
+  // value was committed during this editing session. Both live here (the
+  // editing-session owner) rather than inside InlineSelectInput so they
+  // reset in lockstep with suppressBlurRef every time editing (re-)starts.
+  const dropdownOpenRef = useRef(false);
+  const committedRef = useRef(false);
   const filled = value.trim().length > 0;
   const label = humanLabel(varName);
   const type: VariableType = meta?.type ?? "text";
   const options = meta?.options ?? null;
+  const helpText = meta?.help_text ?? null;
+  const placeholder = helpText || varName;
 
-  const handleOpenChange = (next: boolean) => {
-    if (next) setDraft(value);
-    onOpenChange(key, next);
+  // This component is never remounted while swapping pill <-> input (memo
+  // boundary keeps typing from re-rendering sibling pills) — re-sync `draft`
+  // from the shared, name-keyed committed value every time this instance
+  // (re-)enters edit mode. Also reset the blur-suppression guard here: it's
+  // only meant to swallow the single spurious blur that *may* fire when
+  // Enter/Escape unmount the input, and some environments never fire that
+  // event at all — resetting on every fresh edit prevents a stale `true`
+  // from silently discarding a later, genuine blur-commit.
+  useLayoutEffect(() => {
+    if (isEditing) {
+      setDraft(value);
+      suppressBlurRef.current = false;
+      dropdownOpenRef.current = false;
+      committedRef.current = false;
+    }
+  }, [isEditing, value]);
+
+  // Focus the swapped-in control synchronously (before paint) without
+  // scrolling the page — this replaces the old triple/uncoordinated focus
+  // calls (Popover auto-focus + native autoFocus) that raced floating-ui's
+  // positioning and caused the scroll-to-top jump.
+  useLayoutEffect(() => {
+    if (isEditing && type !== "select") {
+      inputRef.current?.focus({ preventScroll: true });
+      inputRef.current?.scrollIntoView({ block: "nearest" });
+    }
+  }, [isEditing, type]);
+
+  const commit = (raw: string, advance: boolean) => {
+    onCommit(key, varName, raw.trim(), advance);
   };
 
-  const commit = (raw: string) => {
-    onCommit(key, varName, raw.trim());
+  const cancel = () => {
+    setDraft(value);
+    onOpenChange(key, false);
   };
 
-  return (
-    <Popover.Root open={isEditing} onOpenChange={handleOpenChange}>
-      <Popover.Trigger
-        render={
-          <button
-            type="button"
-            className={`var-chip ${filled ? "var-chip-active" : "var-chip-muted"} cursor-pointer hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]`}
-            title={`Editar: ${label}`}
-          />
-        }
+  if (!isEditing) {
+    return (
+      <button
+        type="button"
+        onClick={() => onOpenChange(key, true)}
+        className={`var-chip ${filled ? "var-chip-active" : "var-chip-muted"} cursor-pointer hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]`}
+        title={helpText ?? `Editar: ${label}`}
       >
         {filled ? value : `{{ ${varName} }}`}
-      </Popover.Trigger>
-      <Popover.Portal>
-        <Popover.Positioner sideOffset={6}>
-          <Popover.Popup className="z-50 w-72 rounded-xl bg-white p-4 shadow-[var(--shadow-lg)] ring-1 ring-[rgba(195,198,215,0.30)]">
-            <div className="mb-2 flex items-start justify-between gap-2">
-              <div>
-                <Label className="text-[12.5px] font-semibold text-[var(--fg-1)]">
-                  {label}
-                </Label>
-                <div className="font-mono text-[10.5px] text-[var(--fg-3)]">
-                  {`{{ ${varName} }}`}
-                </div>
-              </div>
-            </div>
+      </button>
+    );
+  }
 
-            {meta?.help_text && (
-              <p className="mb-2 text-[11.5px] italic text-[var(--fg-3)]">
-                {meta.help_text}
-              </p>
-            )}
+  if (type === "select" && options && options.length > 0) {
+    return (
+      <InlineSelectInput
+        value={draft}
+        options={options}
+        placeholder={placeholder}
+        helpText={helpText}
+        onCommit={(v) => commit(v, true)}
+        onCancel={cancel}
+        dropdownOpenRef={dropdownOpenRef}
+        committedRef={committedRef}
+      />
+    );
+  }
 
-            {type === "select" && options && options.length > 0 ? (
-              <SelectInput
-                value={draft}
-                options={options}
-                onChange={(v) => setDraft(v)}
-                onCommit={commit}
-              />
-            ) : (
-              <Input
-                autoFocus
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    commit(draft);
-                  } else if (e.key === "Escape") {
-                    onOpenChange(key, false);
-                  }
-                }}
-                inputMode={
-                  type === "integer"
-                    ? "numeric"
-                    : type === "decimal"
-                      ? "decimal"
-                      : "text"
-                }
-                placeholder={`Valor para ${label}`}
-                className="h-9 text-sm"
-              />
-            )}
+  const widthCh = inputWidthCh(draft.length, placeholder.length);
 
-            <div className="mt-3 flex justify-end gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => onOpenChange(key, false)}
-              >
-                Cancelar
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => commit(draft)}
-                className="bg-gradient-to-br from-[#004ac6] to-[#2563eb] font-semibold text-white shadow-[var(--shadow-brand-sm)] hover:shadow-[var(--shadow-brand-md)]"
-              >
-                <Check className="size-3.5" />
-                Confirmar
-              </Button>
-            </div>
-          </Popover.Popup>
-        </Popover.Positioner>
-      </Popover.Portal>
-    </Popover.Root>
+  return (
+    <input
+      ref={inputRef}
+      type="text"
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          if (e.nativeEvent.isComposing) return;
+          e.preventDefault();
+          suppressBlurRef.current = true;
+          commit(draft, true);
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          suppressBlurRef.current = true;
+          cancel();
+        }
+      }}
+      onBlur={() => {
+        if (suppressBlurRef.current) {
+          suppressBlurRef.current = false;
+          return;
+        }
+        commit(draft, false);
+      }}
+      inputMode={
+        type === "integer"
+          ? "numeric"
+          : type === "decimal"
+            ? "decimal"
+            : "text"
+      }
+      placeholder={placeholder}
+      title={helpText ?? undefined}
+      className="mx-0.5 max-w-full min-w-0 rounded-md border border-[#2563eb]/50 bg-white px-1.5 py-px align-baseline font-mono text-[11.5px] text-[var(--fg-1)] outline-none ring-2 ring-[#2563eb]/30 focus:ring-[#2563eb]/50"
+      style={{ width: `${widthCh}ch` }}
+    />
   );
 });
 
-function SelectInput({
+function InlineSelectInput({
   value,
   options,
-  onChange,
+  placeholder,
+  helpText,
   onCommit,
+  onCancel,
+  dropdownOpenRef,
+  committedRef,
 }: {
   value: string;
   options: string[];
-  onChange: (v: string) => void;
+  placeholder: string;
+  helpText: string | null;
   onCommit: (v: string) => void;
+  onCancel: () => void;
+  dropdownOpenRef: RefObject<boolean>;
+  committedRef: RefObject<boolean>;
 }) {
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+
+  useLayoutEffect(() => {
+    triggerRef.current?.focus({ preventScroll: true });
+    triggerRef.current?.scrollIntoView({ block: "nearest" });
+  }, []);
+
   return (
     <BaseSelect.Root
-      value={value}
+      value={value || null}
       onValueChange={(v) => {
         const next = (v as string) ?? "";
-        onChange(next);
-        // Defer parent commit by one frame: the BaseSelect needs to finish
-        // its close + focus-restore cycle before the outer Popover unmounts.
-        requestAnimationFrame(() => onCommit(next));
+        if (next) {
+          // Mark committed BEFORE onCommit: the parent may synchronously
+          // auto-advance editingKey, and the dropdown-close/blur that follows
+          // this selection must not fire a stale onCancel against that new
+          // editing state.
+          committedRef.current = true;
+          onCommit(next);
+        }
+      }}
+      onOpenChange={(open) => {
+        dropdownOpenRef.current = open;
+        // Closing the listbox without having selected a value means the
+        // user clicked away (or dismissed it) — revert to the pill instead
+        // of leaving this select stuck open-looking forever.
+        if (!open && !committedRef.current) onCancel();
       }}
     >
-      <BaseSelect.Trigger className="flex h-9 w-full items-center justify-between rounded-lg border border-[rgba(195,198,215,0.50)] bg-white px-3 text-sm">
-        <BaseSelect.Value placeholder="Seleccionar opción" />
-        <ChevronDown className="size-3.5 text-[var(--fg-3)]" />
+      <BaseSelect.Trigger
+        ref={triggerRef}
+        title={helpText ?? undefined}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.preventDefault();
+            onCancel();
+          }
+        }}
+        onBlur={() => {
+          // Clicking away from a focused trigger whose dropdown never
+          // opened also needs to revert. Do NOT cancel while the dropdown
+          // is open: opening the listbox moves focus off the trigger, and
+          // treating that as a blur-cancel would abort mid-selection.
+          if (!dropdownOpenRef.current && !committedRef.current) onCancel();
+        }}
+        className="mx-0.5 inline-flex max-w-full items-center gap-1 rounded-md border border-[#2563eb]/50 bg-white px-1.5 py-px align-baseline font-mono text-[11.5px] text-[var(--fg-1)] outline-none ring-2 ring-[#2563eb]/30"
+      >
+        <BaseSelect.Value placeholder={placeholder} />
+        <ChevronDown className="size-3 text-[var(--fg-3)]" />
       </BaseSelect.Trigger>
       <BaseSelect.Portal>
         <BaseSelect.Positioner sideOffset={4}>
@@ -544,9 +612,13 @@ export function FullDocumentEditor({
   }, []);
 
   const handleCommit = useCallback<CommitHandler>(
-    (key, varName, value) => {
-      const scrollY = window.scrollY;
+    (key, varName, value, advance) => {
       setValues((prev) => ({ ...prev, [varName]: value }));
+
+      if (!advance) {
+        setEditingKey(null);
+        return;
+      }
 
       // Find next pending instance using the post-commit values snapshot.
       const nextValues = { ...valuesRef.current, [varName]: value };
@@ -562,12 +634,6 @@ export function FullDocumentEditor({
         }
       }
       setEditingKey(nextKey);
-
-      requestAnimationFrame(() => {
-        if (Math.abs(window.scrollY - scrollY) > 4) {
-          window.scrollTo({ top: scrollY, behavior: "instant" });
-        }
-      });
     },
     [instances],
   );
