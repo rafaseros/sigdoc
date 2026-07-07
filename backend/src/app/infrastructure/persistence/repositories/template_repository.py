@@ -433,3 +433,44 @@ class SQLAlchemyTemplateRepository(TemplateRepositoryPort):
         result = await self._session.execute(stmt)
         await self._session.flush()
         return int(result.rowcount or 0)
+
+    async def update(
+        self,
+        template_id: UUID,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        description_provided: bool = False,
+    ) -> TemplateModel:
+        """Update name/description on a template and return the updated model.
+
+        `name` is applied when not None. `description` is applied whenever
+        `description_provided` is True — including clearing it to NULL.
+        On a (tenant_id, name) collision, rolls back the aborted transaction
+        and raises TemplateNameCollisionError so callers never see a leaked
+        sqlalchemy.exc.IntegrityError nor an aborted session."""
+        from sqlalchemy import update as sa_update
+        from sqlalchemy.exc import IntegrityError
+
+        from app.domain.exceptions import TemplateNameCollisionError
+
+        values: dict = {}
+        if name is not None:
+            values["name"] = name
+        if description_provided:
+            values["description"] = description
+
+        if values:
+            stmt = (
+                sa_update(TemplateModel)
+                .where(TemplateModel.id == template_id)
+                .values(**values)
+            )
+            try:
+                await self._session.execute(stmt)
+                await self._session.flush()
+            except IntegrityError as exc:
+                await self._session.rollback()
+                raise TemplateNameCollisionError(name) from exc
+
+        return await self.get_by_id(template_id)

@@ -34,6 +34,7 @@ export interface Template {
   access_type: "owned" | "shared" | "admin";
   is_owner: boolean;
   shared_by_email: string | null;
+  owner_name: string | null;
 }
 
 interface TemplateListResponse {

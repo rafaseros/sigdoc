@@ -10,6 +10,7 @@ from app.domain.entities import AuditAction
 from app.domain.exceptions import (
     InvalidTemplateError,
     TemplateAccessDeniedError,
+    TemplateNameCollisionError,
     TemplateNotFoundError,
 )
 from tests.fakes import (
@@ -17,6 +18,7 @@ from tests.fakes import (
     FakeStorageService,
     FakeTemplateEngine,
     FakeTemplateRepository,
+    FakeUserRepository,
 )
 
 
@@ -1703,6 +1705,307 @@ class TestUpdateVariableTypes:
         from app.presentation.schemas.template import VariableMeta as VMSchema
         assert VMSchema(**meta_by_name["nombre"]).type == "text"
         assert VMSchema(**meta_by_name["fecha"]).type == "text"
+
+
+# ---------------------------------------------------------------------------
+# update_template
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateTemplate:
+    """update_template enforces owner-or-admin access and applies partial updates."""
+
+    async def test_owner_can_rename_name_only(
+        self,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        service = make_service(fake_template_repo, fake_storage, fake_template_engine)
+        tenant_id = str(uuid.uuid4())
+        owner_id = str(uuid.uuid4())
+
+        tpl = await seed_owned_template(
+            service, fake_template_repo, fake_template_engine, tenant_id, owner_id, name="Original"
+        )
+
+        updated = await service.update_template(
+            tpl.id, uuid.UUID(owner_id), "user", name="Renamed"
+        )
+
+        assert updated.name == "Renamed"
+        assert updated.description == tpl.description
+
+    async def test_owner_can_update_description_only(
+        self,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        service = make_service(fake_template_repo, fake_storage, fake_template_engine)
+        tenant_id = str(uuid.uuid4())
+        owner_id = str(uuid.uuid4())
+
+        tpl = await seed_owned_template(
+            service, fake_template_repo, fake_template_engine, tenant_id, owner_id, name="KeepName"
+        )
+
+        updated = await service.update_template(
+            tpl.id,
+            uuid.UUID(owner_id),
+            "user",
+            description="New description",
+            description_provided=True,
+        )
+
+        assert updated.name == "KeepName"
+        assert updated.description == "New description"
+
+    async def test_owner_can_update_name_and_description_together(
+        self,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        service = make_service(fake_template_repo, fake_storage, fake_template_engine)
+        tenant_id = str(uuid.uuid4())
+        owner_id = str(uuid.uuid4())
+
+        tpl = await seed_owned_template(
+            service, fake_template_repo, fake_template_engine, tenant_id, owner_id, name="Both"
+        )
+
+        updated = await service.update_template(
+            tpl.id,
+            uuid.UUID(owner_id),
+            "user",
+            name="BothRenamed",
+            description="BothDescription",
+            description_provided=True,
+        )
+
+        assert updated.name == "BothRenamed"
+        assert updated.description == "BothDescription"
+
+    async def test_admin_can_rename_another_users_template(
+        self,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        service = make_service(fake_template_repo, fake_storage, fake_template_engine)
+        tenant_id = str(uuid.uuid4())
+        owner_id = str(uuid.uuid4())
+        admin_id = uuid.uuid4()
+
+        tpl = await seed_owned_template(
+            service, fake_template_repo, fake_template_engine, tenant_id, owner_id, name="AdminTarget"
+        )
+
+        updated = await service.update_template(
+            tpl.id, admin_id, "admin", name="RenamedByAdmin"
+        )
+
+        assert updated.name == "RenamedByAdmin"
+
+    async def test_non_owner_non_admin_denied(
+        self,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        service = make_service(fake_template_repo, fake_storage, fake_template_engine)
+        tenant_id = str(uuid.uuid4())
+        owner_id = str(uuid.uuid4())
+        stranger_id = uuid.uuid4()
+
+        tpl = await seed_owned_template(
+            service, fake_template_repo, fake_template_engine, tenant_id, owner_id, name="Denied"
+        )
+
+        with pytest.raises(TemplateAccessDeniedError):
+            await service.update_template(
+                tpl.id, stranger_id, "user", name="ShouldFail"
+            )
+
+    async def test_shared_user_denied(
+        self,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        """A user with only shared (read) access cannot rename — same as delete."""
+        service = make_service(fake_template_repo, fake_storage, fake_template_engine)
+        tenant_id = str(uuid.uuid4())
+        owner_id = str(uuid.uuid4())
+        shared_user_id = uuid.uuid4()
+
+        tpl = await seed_owned_template(
+            service, fake_template_repo, fake_template_engine, tenant_id, owner_id, name="SharedDenied"
+        )
+        await fake_template_repo.add_share(
+            template_id=tpl.id,
+            user_id=shared_user_id,
+            tenant_id=tpl.tenant_id,
+            shared_by=tpl.created_by,
+        )
+
+        with pytest.raises(TemplateAccessDeniedError):
+            await service.update_template(
+                tpl.id, shared_user_id, "user", name="ShouldFail"
+            )
+
+    async def test_template_not_found_raises_error(
+        self,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        service = make_service(fake_template_repo, fake_storage, fake_template_engine)
+
+        with pytest.raises(TemplateNotFoundError):
+            await service.update_template(
+                uuid.uuid4(), uuid.uuid4(), "user", name="Whatever"
+            )
+
+    async def test_collision_with_another_template_raises_non_leaking_domain_error(
+        self,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+        fake_user_repo: FakeUserRepository,
+    ):
+        """Renaming to a name already used by another template in the same
+        tenant raises DomainError with the same non-leaking message pattern
+        as upload_template's collision handling — it must not reveal who
+        owns the colliding template, not even their email or full name."""
+        from app.domain.entities import User
+        from app.domain.exceptions import DomainError
+
+        service = make_service(fake_template_repo, fake_storage, fake_template_engine)
+        tenant_id = str(uuid.uuid4())
+        owner_a = str(uuid.uuid4())
+        owner_b = str(uuid.uuid4())
+        owner_b_email = "owner-b-collision@example.com"
+        owner_b_full_name = "Beatriz Owner Bianchi"
+
+        await fake_user_repo.create(
+            User(
+                id=uuid.UUID(owner_b),
+                tenant_id=uuid.UUID(tenant_id),
+                email=owner_b_email,
+                hashed_password="hashed",
+                full_name=owner_b_full_name,
+            )
+        )
+
+        await seed_owned_template(
+            service, fake_template_repo, fake_template_engine, tenant_id, owner_b, name="TakenName"
+        )
+        tpl_a = await seed_owned_template(
+            service, fake_template_repo, fake_template_engine, tenant_id, owner_a, name="OriginalA"
+        )
+
+        with pytest.raises(DomainError) as exc_info:
+            await service.update_template(
+                tpl_a.id, uuid.UUID(owner_a), "user", name="TakenName"
+            )
+
+        message = str(exc_info.value)
+        assert "TakenName" in message
+        assert owner_b not in message
+        assert str(tpl_a.id) not in message
+        assert owner_b_email not in message
+        assert owner_b_full_name not in message
+
+    async def test_fake_repo_update_raises_template_name_collision_error(
+        self,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        """Repo-level check: the fake raises the domain exception directly
+        (not sqlalchemy.exc.IntegrityError) on a (tenant_id, name) collision,
+        mirroring the real repository's contract after rollback+re-raise."""
+        service = make_service(fake_template_repo, fake_storage, fake_template_engine)
+        tenant_id = str(uuid.uuid4())
+        owner_id = str(uuid.uuid4())
+
+        await seed_owned_template(
+            service, fake_template_repo, fake_template_engine, tenant_id, owner_id, name="RepoTakenName"
+        )
+        tpl = await seed_owned_template(
+            service, fake_template_repo, fake_template_engine, tenant_id, owner_id, name="RepoOriginal"
+        )
+
+        with pytest.raises(TemplateNameCollisionError):
+            await fake_template_repo.update(tpl.id, name="RepoTakenName")
+
+    async def test_update_template_logs_audit_with_old_and_new_name(
+        self,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+        fake_audit_repo: FakeAuditRepository,
+    ):
+        """update_template() logs TEMPLATE_UPDATE with old/new name in the payload."""
+        audit_svc = make_sync_audit_service(fake_audit_repo)
+        service = make_service(fake_template_repo, fake_storage, fake_template_engine, audit_svc)
+
+        tenant_id = str(uuid.uuid4())
+        owner_id = str(uuid.uuid4())
+        tpl = await seed_owned_template(
+            service, fake_template_repo, fake_template_engine, tenant_id, owner_id, name="AuditOld"
+        )
+        await _asyncio.sleep(0)  # Drain upload_template audit task
+        fake_audit_repo._entries.clear()
+
+        await service.update_template(
+            tpl.id, uuid.UUID(owner_id), "user", name="AuditNew"
+        )
+        await _asyncio.sleep(0)
+
+        assert len(fake_audit_repo._entries) == 1
+        entry = fake_audit_repo._entries[0]
+        assert entry.action == AuditAction.TEMPLATE_UPDATE
+        assert entry.details == {"old_name": "AuditOld", "new_name": "AuditNew"}
+
+    async def test_update_template_description_only_logs_audit_with_old_and_new_description(
+        self,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+        fake_audit_repo: FakeAuditRepository,
+    ):
+        """A description-only update logs old/new description in the audit
+        payload, alongside old_name == new_name (name unchanged)."""
+        audit_svc = make_sync_audit_service(fake_audit_repo)
+        service = make_service(fake_template_repo, fake_storage, fake_template_engine, audit_svc)
+
+        tenant_id = str(uuid.uuid4())
+        owner_id = str(uuid.uuid4())
+        tpl = await seed_owned_template(
+            service, fake_template_repo, fake_template_engine, tenant_id, owner_id, name="DescAuditName"
+        )
+        fake_template_repo._templates[tpl.id].description = "Descripción original"
+        await _asyncio.sleep(0)  # Drain upload_template audit task
+        fake_audit_repo._entries.clear()
+
+        await service.update_template(
+            tpl.id,
+            uuid.UUID(owner_id),
+            "user",
+            description="Descripción nueva",
+            description_provided=True,
+        )
+        await _asyncio.sleep(0)
+
+        assert len(fake_audit_repo._entries) == 1
+        entry = fake_audit_repo._entries[0]
+        assert entry.action == AuditAction.TEMPLATE_UPDATE
+        assert entry.details["old_name"] == entry.details["new_name"] == "DescAuditName"
+        assert entry.details["old_description"] == "Descripción original"
+        assert entry.details["new_description"] == "Descripción nueva"
 
 
 class TestShareTemplateWithQuota:

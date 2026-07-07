@@ -4,11 +4,12 @@ import uuid
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from app.domain.entities import TemplateShare, TemplateVersion
+from app.domain.entities import Template, TemplateShare, TemplateVersion
 from app.domain.exceptions import (
     DomainError,
     InvalidTemplateError,
     TemplateAccessDeniedError,
+    TemplateNameCollisionError,
     TemplateNotFoundError,
     TemplateSharingError,
     TemplateVersionNotFoundError,
@@ -381,6 +382,66 @@ class TemplateService:
                 resource_id=template_id,
                 ip_address=self._ip_address,
             )
+
+    async def update_template(
+        self,
+        template_id: UUID,
+        user_id: UUID,
+        role: str,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        description_provided: bool = False,
+    ) -> Template:
+        """Rename and/or update the description of a template.
+
+        Access rule mirrors delete_template — owner or admin only.
+        `name` is applied when not None. `description` is applied whenever
+        `description_provided` is True — this allows explicitly clearing the
+        description (`description=None, description_provided=True`), which
+        is distinct from omitting it (`description_provided=False`, left
+        unchanged). On a (tenant_id, name) collision, raises the same
+        non-leaking DomainError message pattern used by upload_template.
+        """
+        template = await self._repository.get_by_id(template_id)
+        if not template:
+            raise TemplateNotFoundError(f"Template {template_id} not found")
+
+        await self._check_access(template_id, user_id, role, require_owner=True)
+
+        old_name = template.name
+        old_description = template.description
+
+        try:
+            updated = await self._repository.update(
+                template_id,
+                name=name,
+                description=description,
+                description_provided=description_provided,
+            )
+        except TemplateNameCollisionError:
+            raise DomainError(
+                f"Ya existe una plantilla con el nombre '{name}'. Use un nombre diferente."
+            )
+
+        # Audit the update
+        if self._audit_service is not None:
+            from app.domain.entities import AuditAction
+            details = {"old_name": old_name, "new_name": updated.name}
+            if description_provided:
+                details["old_description"] = old_description
+                details["new_description"] = updated.description
+            self._audit_service.log(
+                actor_id=user_id,
+                tenant_id=template.tenant_id,
+                action=AuditAction.TEMPLATE_UPDATE,
+                resource_type="template",
+                resource_id=template_id,
+                details=details,
+                ip_address=self._ip_address,
+            )
+
+        return updated
 
     async def share_template(
         self,

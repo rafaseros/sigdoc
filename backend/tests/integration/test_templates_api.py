@@ -1134,6 +1134,264 @@ async def test_get_version_structure_returns_404_when_version_does_not_exist(
 
 
 @pytest.mark.asyncio
+async def test_update_template_without_auth_returns_401(async_client, app):
+    from app.presentation.middleware.tenant import get_current_user
+
+    original = app.dependency_overrides.pop(get_current_user, None)
+    try:
+        fake_id = uuid.uuid4()
+        response = await async_client.patch(
+            f"/api/v1/templates/{fake_id}", json={"name": "New name"}
+        )
+        assert response.status_code == 401
+    finally:
+        if original is not None:
+            app.dependency_overrides[get_current_user] = original
+
+
+@pytest.mark.asyncio
+async def test_owner_can_rename_template_returns_updated_name_and_owner_name(
+    async_client,
+    app,
+    auth_headers,
+    fake_template_repo: FakeTemplateRepository,
+    fake_user_repo: FakeUserRepository,
+):
+    """A non-admin owner can PATCH the name; response includes owner_name."""
+    owner_id = uuid.UUID("99999999-9999-9999-9999-999999999999")
+    owner = await _ensure_user(
+        fake_user_repo, owner_id, "patch-owner@example.com", role="user"
+    )
+    tpl_id = _upload_template_as_user("PatchOwnerOriginal", owner.id, fake_template_repo)
+
+    owner_current_user = CurrentUser(
+        user_id=owner.id,
+        tenant_id=CONFTEST_TENANT_ID,
+        role="user",
+    )
+
+    async def override_as_owner():
+        return owner_current_user
+
+    original = app.dependency_overrides.get(get_current_user)
+    app.dependency_overrides[get_current_user] = override_as_owner
+    try:
+        response = await async_client.patch(
+            f"/api/v1/templates/{tpl_id}",
+            headers=auth_headers,
+            json={"name": "PatchOwnerRenamed"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["name"] == "PatchOwnerRenamed"
+        assert data["owner_name"] == owner.full_name
+    finally:
+        if original is not None:
+            app.dependency_overrides[get_current_user] = original
+        else:
+            app.dependency_overrides.pop(get_current_user, None)
+
+
+@pytest.mark.asyncio
+async def test_update_template_foreign_non_admin_gets_403(
+    async_client, app, auth_headers, fake_template_repo: FakeTemplateRepository
+):
+    """A user who neither owns nor administers the template gets 403."""
+    tpl_id = _upload_template_as_user(
+        "PatchForeignDenied", CONFTEST_USER_ID, fake_template_repo
+    )
+
+    user_b = CurrentUser(
+        user_id=USER_B_ID,
+        tenant_id=CONFTEST_TENANT_ID,
+        role="document_generator",
+    )
+
+    async def override_as_user_b():
+        return user_b
+
+    original = app.dependency_overrides.get(get_current_user)
+    app.dependency_overrides[get_current_user] = override_as_user_b
+    try:
+        response = await async_client.patch(
+            f"/api/v1/templates/{tpl_id}",
+            headers=auth_headers,
+            json={"name": "ShouldNotApply"},
+        )
+        assert response.status_code == 403
+    finally:
+        if original is not None:
+            app.dependency_overrides[get_current_user] = original
+        else:
+            app.dependency_overrides.pop(get_current_user, None)
+
+
+@pytest.mark.asyncio
+async def test_update_template_unknown_id_returns_404(async_client, auth_headers):
+    fake_id = uuid.uuid4()
+    response = await async_client.patch(
+        f"/api/v1/templates/{fake_id}",
+        headers=auth_headers,
+        json={"name": "Whatever"},
+    )
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_update_template_collision_returns_409(
+    async_client, auth_headers, fake_template_repo: FakeTemplateRepository
+):
+    """Renaming to a name already taken within the tenant returns 409."""
+    _upload_template_as_user("PatchTakenName", CONFTEST_USER_ID, fake_template_repo)
+    tpl_id = _upload_template_as_user(
+        "PatchOriginalName", CONFTEST_USER_ID, fake_template_repo
+    )
+
+    response = await async_client.patch(
+        f"/api/v1/templates/{tpl_id}",
+        headers=auth_headers,
+        json={"name": "PatchTakenName"},
+    )
+    assert response.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_update_template_empty_body_returns_422(
+    async_client, auth_headers, fake_template_repo: FakeTemplateRepository
+):
+    tpl_id = _upload_template_as_user(
+        "PatchEmptyBody", CONFTEST_USER_ID, fake_template_repo
+    )
+
+    response = await async_client.patch(
+        f"/api/v1/templates/{tpl_id}", headers=auth_headers, json={}
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_update_template_extra_fields_returns_422(
+    async_client, auth_headers, fake_template_repo: FakeTemplateRepository
+):
+    tpl_id = _upload_template_as_user(
+        "PatchExtraFields", CONFTEST_USER_ID, fake_template_repo
+    )
+
+    response = await async_client.patch(
+        f"/api/v1/templates/{tpl_id}",
+        headers=auth_headers,
+        json={"name": "Fine", "not_a_real_field": "oops"},
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_update_template_empty_after_strip_name_returns_422(
+    async_client, auth_headers, fake_template_repo: FakeTemplateRepository
+):
+    tpl_id = _upload_template_as_user(
+        "PatchWhitespaceName", CONFTEST_USER_ID, fake_template_repo
+    )
+
+    response = await async_client.patch(
+        f"/api/v1/templates/{tpl_id}",
+        headers=auth_headers,
+        json={"name": "   "},
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_update_template_description_can_be_cleared_with_explicit_null(
+    async_client, auth_headers, fake_template_repo: FakeTemplateRepository
+):
+    """Setting description to null clears a previously set value — mirrors
+    the variables-meta help_text clearing semantics."""
+    tpl_id = _upload_template_as_user(
+        "PatchDescriptionClear", CONFTEST_USER_ID, fake_template_repo
+    )
+    fake_template_repo._templates[tpl_id].description = "Valor inicial"
+
+    response = await async_client.patch(
+        f"/api/v1/templates/{tpl_id}",
+        headers=auth_headers,
+        json={"description": None},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["description"] is None
+    assert fake_template_repo._templates[tpl_id].description is None
+
+
+@pytest.mark.asyncio
+async def test_update_template_description_only_null_body_is_valid(
+    async_client, auth_headers, fake_template_repo: FakeTemplateRepository
+):
+    """A body of just `{"description": null}` is a valid, non-empty PATCH —
+    it explicitly clears the description rather than 422ing as an empty body."""
+    tpl_id = _upload_template_as_user(
+        "PatchDescriptionOnlyNull", CONFTEST_USER_ID, fake_template_repo
+    )
+
+    response = await async_client.patch(
+        f"/api/v1/templates/{tpl_id}",
+        headers=auth_headers,
+        json={"description": None},
+    )
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_update_template_name_explicit_null_returns_422(
+    async_client, auth_headers, fake_template_repo: FakeTemplateRepository
+):
+    """`{"name": null}` must 422 — unlike description, name can never be
+    cleared (it has a min-length requirement) and must not silently no-op."""
+    tpl_id = _upload_template_as_user(
+        "PatchNameExplicitNull", CONFTEST_USER_ID, fake_template_repo
+    )
+
+    response = await async_client.patch(
+        f"/api/v1/templates/{tpl_id}",
+        headers=auth_headers,
+        json={"name": None},
+    )
+    assert response.status_code == 422
+
+
+# ── owner_name / total in list response ──────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_list_response_includes_owner_name_and_total(
+    async_client,
+    auth_headers,
+    fake_template_repo: FakeTemplateRepository,
+    fake_user_repo: FakeUserRepository,
+):
+    """Each list row carries owner_name; total reflects the accessible count."""
+    owner_id = uuid.UUID("66666666-6666-6666-6666-666666666666")
+    owner = await _ensure_user(
+        fake_user_repo, owner_id, "list-owner-name@example.com", role="user"
+    )
+    _upload_template_as_user("ListOwnerNameTpl", owner.id, fake_template_repo)
+
+    response = await async_client.get(
+        "/api/v1/templates",
+        headers=auth_headers,
+        params={"search": "ListOwnerNameTpl"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == len(data["items"])
+    assert len(data["items"]) >= 1
+    for item in data["items"]:
+        assert "owner_name" in item
+    match = next(i for i in data["items"] if i["name"] == "ListOwnerNameTpl")
+    assert match["owner_name"] == owner.full_name
+
+
+@pytest.mark.asyncio
 async def test_get_version_structure_returns_404_on_path_mismatch(
     async_client, auth_headers, fake_template_repo: FakeTemplateRepository
 ):

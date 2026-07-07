@@ -257,3 +257,37 @@ class FakeTemplateRepository(TemplateRepository):
                 t.created_by = to_user_id
                 count += 1
         return count
+
+    async def update(
+        self,
+        template_id: UUID,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        description_provided: bool = False,
+    ) -> Template:
+        """Update the given fields on a template. Mirrors the real DB's
+        UniqueConstraint("tenant_id", "name") by raising
+        TemplateNameCollisionError when the new name collides with another
+        template in the same tenant."""
+        template = self._templates.get(template_id)
+        if template is None:
+            raise KeyError(f"Template {template_id} not found")
+
+        if name is not None:
+            for other in self._templates.values():
+                if (
+                    other.id != template_id
+                    and other.tenant_id == template.tenant_id
+                    and other.name == name
+                ):
+                    from app.domain.exceptions import TemplateNameCollisionError
+
+                    raise TemplateNameCollisionError(name)
+            template.name = name
+
+        if description_provided:
+            template.description = description
+
+        template.updated_at = datetime.now(timezone.utc)
+        return template

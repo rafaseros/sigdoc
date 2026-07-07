@@ -16,6 +16,7 @@ import {
   FileSpreadsheet,
   CircleAlert,
   BookOpen,
+  Pencil,
 } from "lucide-react";
 
 import {
@@ -57,6 +58,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { TemplateDetailSkeleton } from "./TemplateDetailSkeleton";
 import { DocumentsTab } from "./DocumentsTab";
 import { ShareTemplateDialog } from "./ShareTemplateDialog";
+import { RenameTemplateDialog } from "./RenameTemplateDialog";
 import { SharesTab } from "./SharesTab";
 
 function formatFileSize(bytes: number): string {
@@ -492,6 +494,7 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState("");
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
+  const [renameDialogOpen, setRenameDialogOpen] = useState(false);
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   type DetailTab = "info" | "variables" | "versions" | "shares" | "documents";
@@ -645,6 +648,12 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
                 Generación Masiva
               </Button>
             </>
+          )}
+          {isOwnerOrAdmin && (
+            <Button variant="outline" size="sm" onClick={() => setRenameDialogOpen(true)}>
+              <Pencil className="size-3.5" />
+              Renombrar
+            </Button>
           )}
           {template.is_owner && (
             <Button variant="outline" size="sm" onClick={() => setShareDialogOpen(true)}>
@@ -934,6 +943,17 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
           {activeTab === "documents" && <DocumentsTab templateId={templateId} />}
         </div>
       </div>
+
+      {/* Rename dialog (controlled from action row) */}
+      {isOwnerOrAdmin && (
+        <RenameTemplateDialog
+          templateId={templateId}
+          currentName={template.name}
+          currentDescription={template.description}
+          open={renameDialogOpen}
+          onOpenChange={setRenameDialogOpen}
+        />
+      )}
 
       {/* Share dialog (controlled from action row) */}
       {template.is_owner && (

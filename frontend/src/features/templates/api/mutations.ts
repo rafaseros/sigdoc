@@ -137,6 +137,34 @@ export function useDeleteTemplate() {
   });
 }
 
+export function useUpdateTemplate() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      templateId,
+      name,
+      description,
+    }: {
+      templateId: string;
+      name?: string;
+      description?: string;
+    }) => {
+      const { data } = await apiClient.patch(`/templates/${templateId}`, {
+        name,
+        description,
+      });
+      return data;
+    },
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: templateKeys.lists() });
+      queryClient.invalidateQueries({
+        queryKey: templateKeys.detail(variables.templateId),
+      });
+    },
+  });
+}
+
 export function useShareTemplate() {
   const queryClient = useQueryClient();
 

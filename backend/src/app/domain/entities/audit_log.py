@@ -7,6 +7,7 @@ class AuditAction:
     """String constants for all audit action types."""
 
     TEMPLATE_UPLOAD = "template.upload"
+    TEMPLATE_UPDATE = "template.update"
     TEMPLATE_DELETE = "template.delete"
     TEMPLATE_VERSION = "template.version"
     TEMPLATE_SHARE = "template.share"

@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 
 VariableType = Literal["text", "integer", "decimal", "select"]
@@ -44,6 +44,42 @@ class TemplateVersionResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class TemplateUpdateRequest(BaseModel):
+    """PATCH body for renaming a template and/or updating its description.
+
+    Both fields are optional individually, but at least one must be *present*
+    in the request body — an empty body `{}` is rejected with 422. `name`
+    can never be null (it has a min-length requirement), but `description`
+    supports explicit-null semantics: `{"description": null}` is a valid,
+    non-empty body that clears the description. Use `model_fields_set` (via
+    `"description" in body.model_fields_set`) to distinguish "explicitly set
+    to null" from "omitted".
+    """
+
+    name: str | None = None
+    description: str | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("name")
+    @classmethod
+    def _strip_and_validate_name(cls, v: str | None) -> str | None:
+        if v is None:
+            raise ValueError("name cannot be null")
+        stripped = v.strip()
+        if not (1 <= len(stripped) <= 255):
+            raise ValueError(
+                "name must be between 1 and 255 characters after stripping whitespace"
+            )
+        return stripped
+
+    @model_validator(mode="after")
+    def _require_at_least_one_field(self) -> "TemplateUpdateRequest":
+        if "name" not in self.model_fields_set and "description" not in self.model_fields_set:
+            raise ValueError("At least one of 'name' or 'description' must be provided")
+        return self
+
+
 class TemplateResponse(BaseModel):
     id: str
     name: str
@@ -56,6 +92,7 @@ class TemplateResponse(BaseModel):
     access_type: str = "owned"  # "owned" | "shared" | "admin"
     is_owner: bool = True
     shared_by_email: str | None = None  # populated only when access_type == "shared"
+    owner_name: str | None = None  # the template creator's full name
 
     model_config = {"from_attributes": True}
 

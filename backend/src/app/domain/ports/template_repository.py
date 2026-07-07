@@ -141,3 +141,21 @@ class TemplateRepository(ABC):
         responsible for validating that both users belong to the same
         tenant before invoking this."""
         ...
+
+    @abstractmethod
+    async def update(
+        self,
+        template_id: UUID,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        description_provided: bool = False,
+    ) -> Template:
+        """Update the given fields on a template and return the updated entity.
+
+        `name` is applied when not None (name can never be cleared). `description`
+        is applied whenever `description_provided` is True — including clearing it
+        to None — which lets callers distinguish an explicit null from an omitted
+        field. Raises TemplateNameCollisionError on a (tenant_id, name) collision —
+        the caller is responsible for catching it and mapping it to a domain error."""
+        ...

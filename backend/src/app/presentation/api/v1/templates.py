@@ -24,6 +24,7 @@ from app.presentation.schemas.template import (
     TemplateResponse,
     TemplateShareResponse,
     TemplateStructureResponse,
+    TemplateUpdateRequest,
     TemplateUploadResponse,
     TemplateVersionResponse,
     UpdateVariableTypesRequest,
@@ -223,6 +224,21 @@ async def upload_new_version(
     )
 
 
+async def _resolve_owner_name(
+    user_repo: UserRepository, owner_id, cache: dict
+) -> str | None:
+    """Look up a template owner's full name, memoized per-request in `cache`.
+
+    Templates commonly share the same owner (e.g. a list page), so this
+    avoids repeating identical lookups within a single request.
+    """
+    key = str(owner_id)
+    if key not in cache:
+        owner = await user_repo.get_by_id(owner_id)
+        cache[key] = owner.full_name if owner is not None else None
+    return cache[key]
+
+
 @router.get("", response_model=TemplateListResponse)
 async def list_templates(
     page: int = Query(1, ge=1),
@@ -230,6 +246,7 @@ async def list_templates(
     search: str | None = Query(None),
     current_user: CurrentUser = Depends(get_current_user),
     service: TemplateService = Depends(get_template_service),
+    user_repo: UserRepository = Depends(get_user_repository),
 ):
     """List templates with pagination and optional search."""
     templates, total = await service.list_templates(
@@ -240,6 +257,7 @@ async def list_templates(
         role=current_user.role,
     )
 
+    owner_name_cache: dict[str, str | None] = {}
     items = []
     for t in templates:
         # Get variables from the current version
@@ -253,6 +271,7 @@ async def list_templates(
 
         access_type = getattr(t, "access_type", "owned")
         is_owner = str(getattr(t, "created_by", "")) == str(current_user.user_id)
+        owner_name = await _resolve_owner_name(user_repo, t.created_by, owner_name_cache)
 
         items.append(TemplateResponse(
             id=str(t.id),
@@ -275,6 +294,7 @@ async def list_templates(
             updated_at=t.updated_at,
             access_type=access_type,
             is_owner=is_owner,
+            owner_name=owner_name,
         ))
 
     return TemplateListResponse(items=items, total=total, page=page, size=size)
@@ -326,6 +346,8 @@ async def get_template(
             if sharer is not None:
                 shared_by_email = sharer.email
 
+    owner_name = await _resolve_owner_name(user_repo, t.created_by, {})
+
     return TemplateResponse(
         id=str(t.id),
         name=t.name,
@@ -348,6 +370,78 @@ async def get_template(
         access_type=access_type,
         is_owner=is_owner,
         shared_by_email=shared_by_email,
+        owner_name=owner_name,
+    )
+
+
+@router.patch("/{template_id}", response_model=TemplateResponse)
+async def update_template(
+    template_id: UUID,
+    body: TemplateUpdateRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    service: TemplateService = Depends(get_template_service),
+    user_repo: UserRepository = Depends(get_user_repository),
+):
+    """Rename and/or update the description of a template (owner or admin only)."""
+    try:
+        t = await service.update_template(
+            template_id,
+            user_id=current_user.user_id,
+            role=current_user.role,
+            name=body.name,
+            description=body.description,
+            description_provided="description" in body.model_fields_set,
+        )
+    except TemplateAccessDeniedError as e:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(e),
+        )
+    except TemplateNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Plantilla no encontrada",
+        )
+    except DomainError as e:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(e),
+        )
+
+    current_vars: list[str] = []
+    if t.versions:
+        current_version = next(
+            (v for v in t.versions if v.version == t.current_version), None
+        )
+        if current_version:
+            current_vars = current_version.variables
+
+    is_owner = str(getattr(t, "created_by", "")) == str(current_user.user_id)
+    access_type = "owned" if is_owner else ("admin" if can_view_all_templates(current_user.role) else "shared")
+    owner_name = await _resolve_owner_name(user_repo, t.created_by, {})
+
+    return TemplateResponse(
+        id=str(t.id),
+        name=t.name,
+        description=t.description,
+        current_version=t.current_version,
+        variables=current_vars,
+        versions=[
+            TemplateVersionResponse(
+                id=str(v.id),
+                version=v.version,
+                variables=v.variables,
+                variables_meta=v.variables_meta or [],
+                file_size=v.file_size,
+                created_at=v.created_at,
+            )
+            for v in sorted(t.versions, key=lambda x: x.version, reverse=True)
+        ],
+        created_at=t.created_at,
+        updated_at=t.updated_at,
+        access_type=access_type,
+        is_owner=is_owner,
+        owner_name=owner_name,
     )
 
 
