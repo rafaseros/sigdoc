@@ -137,6 +137,7 @@ async def get_document_service(
         quota_service=quota_service,
         tier_id=tier_id,
         user_bulk_override=user_bulk_override,
+        preview_watermark_text=settings.preview_watermark_text,
     )
 
 

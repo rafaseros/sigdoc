@@ -34,6 +34,27 @@ from tests.fakes import (
 
 
 # ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def passthrough_watermark(monkeypatch):
+    """Make apply_watermark a no-op pass-through by default.
+
+    preview() now runs every PDF through apply_watermark(). Tests in this
+    file that predate the watermark feature assert on the RAW converter
+    output, so this autouse fixture keeps that behavior working. Tests that
+    specifically exercise the watermark wiring (TestPreviewWatermark below)
+    override this patch with their own mock.
+    """
+    monkeypatch.setattr(
+        "app.application.services.document_service.apply_watermark",
+        lambda pdf_bytes, text: pdf_bytes,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -380,3 +401,69 @@ class TestPreviewErrorHandling:
                 user_id=owner_id,
                 role="user",
             )
+
+
+# ---------------------------------------------------------------------------
+# preview() — server-side watermark wiring
+# ---------------------------------------------------------------------------
+
+
+class TestPreviewWatermark:
+    async def test_preview_applies_watermark_to_converter_output(
+        self,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        monkeypatch,
+    ):
+        """preview() must run the converter's output through apply_watermark
+        (imported into document_service) with the service's configured
+        watermark text, and return exactly what apply_watermark returns."""
+        engine = RecordingTemplateEngine()
+        pdf_converter = FakePdfConverter(convert_result=b"converter-output-bytes")
+        watermark_mock = MagicMock(return_value=b"watermarked-bytes")
+        monkeypatch.setattr(
+            "app.application.services.document_service.apply_watermark",
+            watermark_mock,
+        )
+        service = make_service(fake_template_repo, fake_storage, engine, pdf_converter)
+        _, version_id, _, owner_id = seed_version(fake_template_repo, fake_storage)
+
+        result = await service.preview(
+            template_version_id=version_id,
+            variables={"name": "Alice"},
+            user_id=owner_id,
+            role="user",
+        )
+
+        watermark_mock.assert_called_once_with(
+            b"converter-output-bytes", service._preview_watermark_text
+        )
+        assert result == b"watermarked-bytes"
+
+    async def test_generate_single_does_not_call_apply_watermark(
+        self,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        monkeypatch,
+    ):
+        """Final generation paths must remain untouched — no watermark
+        there, ever."""
+        engine = RecordingTemplateEngine()
+        pdf_converter = FakePdfConverter()
+        watermark_mock = MagicMock(return_value=b"should-not-be-used")
+        monkeypatch.setattr(
+            "app.application.services.document_service.apply_watermark",
+            watermark_mock,
+        )
+        service = make_service(fake_template_repo, fake_storage, engine, pdf_converter)
+        _, version_id, tenant_id, owner_id = seed_version(fake_template_repo, fake_storage)
+
+        await service.generate_single(
+            template_version_id=version_id,
+            variables={"name": "Alice"},
+            tenant_id=tenant_id,
+            created_by=owner_id,
+            role="user",
+        )
+
+        watermark_mock.assert_not_called()

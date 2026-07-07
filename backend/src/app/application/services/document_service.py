@@ -19,6 +19,7 @@ from app.domain.ports.document_repository import DocumentRepository
 from app.domain.ports.storage_service import StorageService
 from app.domain.ports.template_engine import TemplateEngine
 from app.domain.ports.template_repository import TemplateRepository
+from app.infrastructure.pdf.watermark import apply_watermark
 
 if TYPE_CHECKING:
     from app.application.services.audit_service import AuditService
@@ -55,6 +56,7 @@ class DocumentService:
         quota_service: QuotaService | None = None,
         tier_id: UUID | None = None,
         user_bulk_override: int | None = None,
+        preview_watermark_text: str | None = None,
     ):
         self._doc_repo = document_repository
         self._tpl_repo = template_repository
@@ -68,6 +70,16 @@ class DocumentService:
         self._quota_service = quota_service
         self._tier_id = tier_id
         self._user_bulk_override = user_bulk_override
+        # Preview-only watermark text — falls back to Settings so callers
+        # that don't wire it explicitly (e.g. tests) still get the
+        # configured default. See get_document_service() for the explicit
+        # DI wiring used in production.
+        if preview_watermark_text is not None:
+            self._preview_watermark_text = preview_watermark_text
+        else:
+            from app.config import get_settings
+
+            self._preview_watermark_text = get_settings().preview_watermark_text
 
     async def generate_single(
         self,
@@ -276,6 +288,15 @@ class DocumentService:
 
         async with _PREVIEW_SEMAPHORE:
             pdf_bytes = await self._pdf_converter.convert(rendered)
+
+        # 6. Stamp a diagonal semi-transparent watermark on every page so
+        # this preview can never be mistaken for (or used as) a final
+        # document. Watermarking is local CPU work — it runs AFTER the
+        # semaphore is released so it never holds a Gotenberg conversion
+        # slot. Offloaded to a thread since apply_watermark is sync/CPU-bound.
+        pdf_bytes = await asyncio.to_thread(
+            apply_watermark, pdf_bytes, self._preview_watermark_text
+        )
 
         return pdf_bytes
 

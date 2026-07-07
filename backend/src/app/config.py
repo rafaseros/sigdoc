@@ -49,6 +49,12 @@ class Settings(BaseSettings):
     gotenberg_url: str = "http://gotenberg:3000"
     gotenberg_timeout: int = 60  # seconds
 
+    # Preview watermark — stamped on every page of preview PDFs so a preview
+    # can never be mistaken for (or used as) a final document. User-facing
+    # text stays in Spanish; the "SigDoc" suffix is intentional branding.
+    # Operators can override via the PREVIEW_WATERMARK_TEXT env var.
+    preview_watermark_text: str = "VISTA PREVIA — SigDoc"
+
     # Dev recovery endpoint (NEVER enable in production)
     enable_dev_reset: bool = False
 
