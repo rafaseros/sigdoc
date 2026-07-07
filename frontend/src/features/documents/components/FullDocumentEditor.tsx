@@ -903,8 +903,11 @@ export function FullDocumentEditor({
 
       {/* Variables review panel */}
       <aside className="self-start lg:sticky lg:top-20">
-        <div className="rounded-xl bg-white p-4 shadow-[var(--shadow-sm)] ring-1 ring-[rgba(195,198,215,0.30)]">
-          <div className="mb-3">
+        {/* Cap the card to the viewport (below the sticky offset) so the
+            variable list scrolls inside the panel instead of forcing a
+            page scroll to reach the last variables. */}
+        <div className="flex flex-col rounded-xl bg-white p-4 shadow-[var(--shadow-sm)] ring-1 ring-[rgba(195,198,215,0.30)] lg:max-h-[calc(100vh-7rem)]">
+          <div className="mb-3 shrink-0">
             <div className="text-[13px] font-semibold text-[var(--fg-1)]">
               Variables
             </div>
@@ -913,7 +916,7 @@ export function FullDocumentEditor({
               {filledCount === 1 ? "" : "s"}
             </div>
           </div>
-          <ul className="flex flex-col gap-1">
+          <ul className="flex min-h-0 flex-col gap-1 overflow-y-auto">
             {distinctVarNames.map((name) => {
               const value = values[name] ?? "";
               const filled = value.trim().length > 0;
