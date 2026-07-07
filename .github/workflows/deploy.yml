@@ -80,33 +80,107 @@ jobs:
         working-directory: frontend
         run: pnpm build
 
-  deploy:
+  build-api:
+    name: Build & Push API Image
     runs-on: ubuntu-latest
     needs: [test-backend, test-frontend]
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push API image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.api.prod
+          push: true
+          tags: |
+            ghcr.io/rafaseros/sigdoc-api:latest
+            ghcr.io/rafaseros/sigdoc-api:sha-${{ github.sha }}
+          cache-from: type=gha,scope=sigdoc-api
+          cache-to: type=gha,mode=max,scope=sigdoc-api
+
+  build-frontend:
+    name: Build & Push Frontend Image
+    runs-on: ubuntu-latest
+    needs: [test-backend, test-frontend]
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.frontend.prod
+          push: true
+          tags: |
+            ghcr.io/rafaseros/sigdoc-frontend:latest
+            ghcr.io/rafaseros/sigdoc-frontend:sha-${{ github.sha }}
+          cache-from: type=gha,scope=sigdoc-frontend
+          cache-to: type=gha,mode=max,scope=sigdoc-frontend
+
+  deploy:
+    name: Deploy to Droplet
+    runs-on: ubuntu-latest
+    needs: [build-api, build-frontend]
     if: success()
     permissions:
       contents: read
+      packages: read
 
     steps:
-      - name: Deploy to VPS
+      - name: Deploy to droplet
         uses: appleboy/ssh-action@v1
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
+          envs: GHCR_TOKEN
           script: |
             set -e
 
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
             cd /opt/docker/apps/sigdoc
 
-            # Pull latest code
+            # Pull latest compose files and config (images themselves come from GHCR)
             git pull origin main
 
-            # Build services separately to catch failures
-            docker compose -f docker-compose.prod.yml build api
-            docker compose -f docker-compose.prod.yml build frontend
+            # Pull pre-built images — the droplet never builds, it only pulls
+            docker compose -f docker-compose.prod.yml pull api frontend
 
-            # Only restart after BOTH builds succeed
+            # Recreate containers with the freshly pulled images
             docker compose -f docker-compose.prod.yml up -d
 
             # Run migrations (idempotent — safe to run every deploy)
@@ -123,5 +197,6 @@ jobs:
             # Clean up old images
             docker image prune -f
 
-            echo "✅ SigDoc deployed successfully (API healthy)"
+            docker logout ghcr.io
 
+            echo "✅ SigDoc deployed successfully (API healthy)"

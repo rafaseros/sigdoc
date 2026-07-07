@@ -18,7 +18,7 @@ services:
       - sigdoc-network
 
   minio:
-    image: minio/minio:latest
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
     container_name: sigdoc-minio
     restart: unless-stopped
     command: server /data --console-address ":9001"
@@ -36,7 +36,7 @@ services:
       - sigdoc-network
 
   minio-init:
-    image: minio/mc:latest
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
     container_name: sigdoc-minio-init
     depends_on:
       minio:
@@ -69,9 +69,7 @@ services:
       - sigdoc-network
 
   api:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.api.prod
+    image: ghcr.io/rafaseros/sigdoc-api:latest
     container_name: sigdoc-api
     restart: unless-stopped
     # env_file forwards ALL variables from /opt/docker/apps/sigdoc/.env to the container.
@@ -117,9 +115,7 @@ services:
       - "traefik.http.services.sigdoc-api.loadbalancer.server.port=8000"
 
   frontend:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.frontend.prod
+    image: ghcr.io/rafaseros/sigdoc-frontend:latest
     container_name: sigdoc-frontend
     restart: unless-stopped
     healthcheck:
