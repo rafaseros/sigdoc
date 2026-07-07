@@ -705,7 +705,6 @@ export function FullDocumentEditor({
   };
 
   const handlePreview = () => {
-    if (!allFilled) return;
     setPreviewOpen(true);
     // Revoke + clear any previous preview FIRST so the dialog always shows
     // the loading placeholder while a new request is in flight — it must
@@ -874,12 +873,7 @@ export function FullDocumentEditor({
               variant="outline"
               size="sm"
               onClick={handlePreview}
-              disabled={!allFilled || previewMutation.isPending}
-              title={
-                allFilled
-                  ? undefined
-                  : "Complete todas las variables para ver la vista previa"
-              }
+              disabled={previewMutation.isPending}
             >
               <Eye className="size-3.5" />
               {previewMutation.isPending
@@ -967,7 +961,7 @@ export function FullDocumentEditor({
           {previewUrl ? (
             <iframe
               title="Vista previa del documento"
-              src={`${previewUrl}#toolbar=0&navpanes=0`}
+              src={previewUrl}
               className="h-[75vh] w-full rounded-lg"
             />
           ) : (
