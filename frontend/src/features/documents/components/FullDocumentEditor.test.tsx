@@ -406,6 +406,23 @@ describe("FullDocumentEditor — variables panel, sticky action bar, preview dia
     vi.restoreAllMocks();
   });
 
+  // Preview is gated behind allFilled — fill the whole fixture, riding the
+  // auto-advance chain (company_name → item_count → status → notes).
+  async function fillEveryVariable(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(screen.getAllByText("{{ company_name }}")[0]);
+    await user.type(screen.getByRole("textbox"), "Acme Corp");
+    await user.keyboard("{Enter}");
+    await user.type(screen.getByRole("textbox"), "5");
+    await user.keyboard("{Enter}");
+    await user.click(screen.getByRole("combobox"));
+    await user.click(await screen.findByRole("option", { name: "Open" }));
+    if (!screen.queryByRole("textbox")) {
+      await user.click(screen.getByText("notes"));
+    }
+    await user.type(screen.getByRole("textbox"), "All good");
+    await user.keyboard("{Enter}");
+  }
+
   it("13. the panel lists every distinct variable, shows a Pendiente badge for unfilled ones, and updates live after a commit", async () => {
     const user = userEvent.setup();
     renderEditor();
@@ -441,12 +458,12 @@ describe("FullDocumentEditor — variables panel, sticky action bar, preview dia
     expect(input).toHaveAttribute("inputmode", "numeric");
   });
 
-  it("15. the sticky bottom bar renders progress and both action buttons; Generar documento stays disabled until every variable is filled", () => {
+  it("15. the sticky bottom bar renders progress and both action buttons; both stay disabled until every variable is filled", () => {
     renderEditor();
 
     expect(
       screen.getByRole("button", { name: /vista previa/i }),
-    ).toBeEnabled();
+    ).toBeDisabled();
 
     const generateButton = screen.getByRole("button", {
       name: /generar documento/i,
@@ -457,26 +474,54 @@ describe("FullDocumentEditor — variables panel, sticky action bar, preview dia
     expect(screen.getAllByRole("progressbar").length).toBeGreaterThan(0);
   });
 
-  it("16. Vista previa triggers the preview request with the current partial values and opens the dialog", async () => {
+  it("16. Vista previa unlocks only when every variable is filled, then sends the complete values and opens the dialog", async () => {
     const user = userEvent.setup();
     renderEditor();
 
-    // Fill only "company_name" — the rest stays empty. Preview must accept
-    // partial values. Auto-advance opens the next (empty) field; back out of
-    // it with Escape so it stays untouched instead of blur-committing "".
+    // Partially filled — preview must stay locked.
     const pills = screen.getAllByText("{{ company_name }}");
     await user.click(pills[0]);
     await user.type(screen.getByRole("textbox"), "Acme Corp");
     await user.keyboard("{Enter}");
     await user.keyboard("{Escape}");
+    expect(
+      screen.getByRole("button", { name: /vista previa/i }),
+    ).toBeDisabled();
+    expect(apiClient.post).not.toHaveBeenCalled();
 
-    await user.click(screen.getByRole("button", { name: /vista previa/i }));
+    // item_count → status (select) → notes, via the panel rows.
+    await user.click(screen.getByText("item count"));
+    await user.type(screen.getByRole("textbox"), "5");
+    await user.keyboard("{Enter}");
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByText("status"));
+    await user.click(screen.getByRole("combobox"));
+    await user.click(await screen.findByRole("option", { name: "Open" }));
+    if (screen.queryByRole("textbox")) {
+      await user.type(screen.getByRole("textbox"), "All good");
+      await user.keyboard("{Enter}");
+    } else {
+      await user.click(screen.getByText("notes"));
+      await user.type(screen.getByRole("textbox"), "All good");
+      await user.keyboard("{Enter}");
+    }
+
+    const previewButton = screen.getByRole("button", {
+      name: /vista previa/i,
+    });
+    expect(previewButton).toBeEnabled();
+    await user.click(previewButton);
 
     expect(apiClient.post).toHaveBeenCalledWith(
       "/documents/preview",
       {
         template_version_id: "version-1",
-        variables: { company_name: "Acme Corp" },
+        variables: {
+          company_name: "Acme Corp",
+          item_count: "5",
+          status: "Open",
+          notes: "All good",
+        },
       },
       { responseType: "blob" },
     );
@@ -485,7 +530,7 @@ describe("FullDocumentEditor — variables panel, sticky action bar, preview dia
     await waitFor(() =>
       expect(
         screen.getByTitle("Vista previa del documento"),
-      ).toHaveAttribute("src", "blob:mock-url"),
+      ).toHaveAttribute("src", "blob:mock-url#toolbar=0&navpanes=0"),
     );
   });
 
@@ -493,11 +538,12 @@ describe("FullDocumentEditor — variables panel, sticky action bar, preview dia
     const user = userEvent.setup();
     renderEditor();
 
+    await fillEveryVariable(user);
     await user.click(screen.getByRole("button", { name: /vista previa/i }));
     await waitFor(() =>
       expect(
         screen.getByTitle("Vista previa del documento"),
-      ).toHaveAttribute("src", "blob:mock-url"),
+      ).toHaveAttribute("src", "blob:mock-url#toolbar=0&navpanes=0"),
     );
 
     await user.click(screen.getByRole("button", { name: /close/i }));
@@ -529,6 +575,7 @@ describe("FullDocumentEditor — variables panel, sticky action bar, preview dia
     });
 
     renderEditor();
+    await fillEveryVariable(user);
 
     // First preview request — dialog opens, request is still in flight.
     await user.click(screen.getByRole("button", { name: /vista previa/i }));
@@ -570,7 +617,7 @@ describe("FullDocumentEditor — variables panel, sticky action bar, preview dia
     await waitFor(() =>
       expect(
         screen.getByTitle("Vista previa del documento"),
-      ).toHaveAttribute("src", "blob:mock-url-2"),
+      ).toHaveAttribute("src", "blob:mock-url-2#toolbar=0&navpanes=0"),
     );
   });
 });
