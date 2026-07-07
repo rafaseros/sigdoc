@@ -33,6 +33,24 @@ export function useGenerateDocument() {
   });
 }
 
+interface PreviewRequest {
+  template_version_id: string;
+  variables: Record<string, string>;
+}
+
+export function usePreviewDocument() {
+  return useMutation({
+    mutationFn: async (request: PreviewRequest): Promise<Blob> => {
+      const { data } = await apiClient.post<Blob>(
+        "/documents/preview",
+        request,
+        { responseType: "blob" },
+      );
+      return data;
+    },
+  });
+}
+
 export function useDownloadExcelTemplate() {
   return useMutation({
     mutationFn: async (templateVersionId: string) => {

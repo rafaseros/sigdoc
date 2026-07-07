@@ -279,3 +279,38 @@ class TestContextVarLimitCallables:
             assert result == get_settings().rate_limit_generate_bulk
         finally:
             _current_tier.reset(token)
+
+
+# ---------------------------------------------------------------------------
+# Tests — tier_limit_preview (ephemeral document preview endpoint)
+#
+# No per-tier override: preview always reads Settings.rate_limit_preview
+# directly (there is no SubscriptionTier.rate_limit_preview column).
+# ---------------------------------------------------------------------------
+
+
+class TestTierLimitPreview:
+    """tier_limit_preview is a flat zero-arg resolver — always Settings, no tier."""
+
+    def test_returns_settings_rate_limit_preview(self):
+        from app.presentation.middleware.rate_limit import tier_limit_preview
+        from app.config import get_settings
+
+        result = tier_limit_preview()
+        assert result == get_settings().rate_limit_preview
+
+    def test_reflects_settings_change(self, monkeypatch):
+        """Confirms tier_limit_preview reads Settings dynamically (not a tier)."""
+        from app.presentation.middleware import rate_limit as rl_module
+        from app.config import Settings
+
+        custom_settings = Settings.model_construct(
+            rate_limit_preview="1/minute",
+            database_url="postgresql+asyncpg://test:test@localhost/test",
+            secret_key="test-secret-key-for-testing-only-not-real",
+            minio_access_key="minioadmin",
+            minio_secret_key="minioadmin",
+        )
+        monkeypatch.setattr(rl_module, "get_settings", lambda: custom_settings)
+
+        assert rl_module.tier_limit_preview() == "1/minute"

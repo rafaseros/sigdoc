@@ -23,13 +23,19 @@ from app.domain.services.permissions import (
     can_include_both_formats,
     can_view_all_documents,
 )
-from app.presentation.middleware.rate_limit import limiter, tier_limit_bulk, tier_limit_generate
+from app.presentation.middleware.rate_limit import (
+    limiter,
+    tier_limit_bulk,
+    tier_limit_generate,
+    tier_limit_preview,
+)
 from app.presentation.middleware.tenant import CurrentUser, get_current_user
 from app.presentation.schemas.document import (
     BulkGenerateResponse,
     DocumentListResponse,
     DocumentResponse,
     GenerateRequest,
+    PreviewRequest,
 )
 
 router = APIRouter()
@@ -85,6 +91,42 @@ async def generate_document(
         variables_snapshot=doc.variables_snapshot,
         created_at=doc.created_at,
     )
+
+
+@router.post("/preview")
+@limiter.limit(tier_limit_preview)
+async def preview_document(
+    request: Request,
+    body: PreviewRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    service: DocumentService = Depends(get_document_service),
+):
+    """Render a true-fidelity PDF preview from the CURRENT (possibly partial)
+    variable values. Nothing is persisted — no MinIO uploads, no Document
+    row, no usage/audit tracking, no quota check.
+
+    Missing variables render as blanks (docxtpl default Jinja2 Undefined).
+    """
+    try:
+        pdf_bytes = await service.preview(
+            template_version_id=body.template_version_id,
+            variables=body.variables,
+            user_id=str(current_user.user_id),
+            role=current_user.role,
+        )
+    except TemplateAccessDeniedError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except TemplateVersionNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template version not found")
+    except PdfConversionError:
+        # REQ-DDF-05: PdfConversionError → HTTP 503 — same mapping as the
+        # other document endpoints.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="El servicio de conversión a PDF no está disponible temporalmente. Por favor, intentá más tarde.",
+        )
+
+    return Response(content=pdf_bytes, media_type=_PDF_MIME)
 
 
 @router.get("/excel-template/{template_version_id}")

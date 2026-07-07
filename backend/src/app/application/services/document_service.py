@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from typing import TYPE_CHECKING
@@ -26,6 +27,14 @@ if TYPE_CHECKING:
     from app.domain.ports.pdf_converter import PdfConverter
 
 logger = logging.getLogger(__name__)
+
+# Concurrency insurance for the ephemeral preview endpoint ONLY — LibreOffice
+# (behind Gotenberg) is CPU-heavy and this service runs on a 1vCPU host.
+# Bounds preview() conversions to at most 2 concurrent regardless of how many
+# preview requests land. The generate paths (generate_single, generate_bulk)
+# are NOT gated by this semaphore — their concurrency is bounded separately
+# by their own per-tier rate limits (see tier_limit_generate / tier_limit_bulk).
+_PREVIEW_SEMAPHORE = asyncio.Semaphore(2)
 
 
 class DocumentService:
@@ -211,6 +220,64 @@ class DocumentService:
             "document": document,
             "download_url": download_url,
         }
+
+    async def preview(
+        self,
+        *,
+        template_version_id: str,
+        variables: dict[str, str],
+        user_id: str,
+        role: str = "user",
+    ) -> bytes:
+        """
+        Render a template with the CURRENT (possibly partial) variable
+        values and return the converted PDF bytes directly. Nothing is
+        persisted: no MinIO uploads, no Document row, no usage/audit
+        tracking, no quota check.
+
+        Missing variables render as blanks — this is the default Jinja2
+        Undefined behavior in docxtpl, so no extra handling is needed here.
+
+        Uses the same collaborators and access check as generate_single()
+        so version-not-found / access-denied map to identical exceptions.
+
+        Raises:
+            TemplateVersionNotFoundError: same as generate_single.
+            TemplateAccessDeniedError: same as generate_single.
+            PdfConversionError: propagated from the converter, uncaught.
+        """
+        # 1. Get template version — same check as generate_single
+        version = await self._tpl_repo.get_version_by_id(uuid.UUID(template_version_id))
+        if not version:
+            raise TemplateVersionNotFoundError(
+                f"Template version {template_version_id} not found"
+            )
+
+        # 2. Access check — same check as generate_single
+        user_uuid = uuid.UUID(user_id)
+        has_access = await self._tpl_repo.has_access(version.template_id, user_uuid, role)
+        if not has_access:
+            raise TemplateAccessDeniedError("No tenés acceso a esta plantilla")
+
+        # 3. Download template from MinIO (read-only — no upload_file calls below)
+        template_bytes = await self._storage.download_file(
+            bucket=self.TEMPLATES_BUCKET,
+            path=version.minio_path,
+        )
+
+        # 4. Render with the current (possibly partial) variables, verbatim
+        rendered = await self._engine.render(template_bytes, variables)
+
+        # 5. Convert to PDF, guarded by a module-level semaphore (concurrency
+        # insurance for LibreOffice on a 1vCPU host). PdfConversionError
+        # propagates uncaught — there is nothing to roll back (ephemeral).
+        if self._pdf_converter is None:
+            raise PdfConversionError("PdfConverter not configured — cannot preview")
+
+        async with _PREVIEW_SEMAPHORE:
+            pdf_bytes = await self._pdf_converter.convert(rendered)
+
+        return pdf_bytes
 
     async def get_document(self, document_id: uuid.UUID) -> dict:
         """Get document by ID with fresh presigned URL."""

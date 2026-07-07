@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     rate_limit_generate: str = "20/minute"
     rate_limit_generate_bulk: str = "5/minute"
     rate_limit_signup: str = "3/hour"
+    rate_limit_preview: str = "10/minute"
 
     # Database
     database_url: str

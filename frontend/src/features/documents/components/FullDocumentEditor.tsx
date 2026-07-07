@@ -32,13 +32,19 @@ import {
 } from "react";
 import type { RefObject } from "react";
 import { Select as BaseSelect } from "@base-ui/react/select";
-import { ChevronDown, FileText, Sparkles } from "lucide-react";
+import { Check, ChevronDown, Eye, FileText, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
 
-import { useGenerateDocument } from "../api/mutations";
+import { useGenerateDocument, usePreviewDocument } from "../api/mutations";
 import { DownloadButton } from "./DownloadButton";
 
 import type {
@@ -222,6 +228,7 @@ const PlaceholderPill = memo(function PlaceholderPill({
     return (
       <button
         type="button"
+        data-instance-key={key}
         onClick={() => onOpenChange(key, true)}
         className={`var-chip ${filled ? "var-chip-active" : "var-chip-muted"} cursor-pointer hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]`}
         title={helpText ?? `Editar: ${label}`}
@@ -234,6 +241,7 @@ const PlaceholderPill = memo(function PlaceholderPill({
   if (type === "select" && options && options.length > 0) {
     return (
       <InlineSelectInput
+        instanceKey={key}
         value={draft}
         options={options}
         placeholder={placeholder}
@@ -252,6 +260,7 @@ const PlaceholderPill = memo(function PlaceholderPill({
     <input
       ref={inputRef}
       type="text"
+      data-instance-key={key}
       value={draft}
       onChange={(e) => setDraft(e.target.value)}
       onKeyDown={(e) => {
@@ -289,6 +298,7 @@ const PlaceholderPill = memo(function PlaceholderPill({
 });
 
 function InlineSelectInput({
+  instanceKey: key,
   value,
   options,
   placeholder,
@@ -298,6 +308,7 @@ function InlineSelectInput({
   dropdownOpenRef,
   committedRef,
 }: {
+  instanceKey: string;
   value: string;
   options: string[];
   placeholder: string;
@@ -338,6 +349,7 @@ function InlineSelectInput({
     >
       <BaseSelect.Trigger
         ref={triggerRef}
+        data-instance-key={key}
         title={helpText ?? undefined}
         onKeyDown={(e) => {
           if (e.key === "Escape") {
@@ -576,6 +588,8 @@ export function FullDocumentEditor({
   const [values, setValues] = useState<Record<string, string>>({});
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [generated, setGenerated] = useState<GeneratedInfo | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
   const metaByName = useMemo(
     () => Object.fromEntries(variablesMeta.map((m) => [m.name, m])),
@@ -583,6 +597,34 @@ export function FullDocumentEditor({
   );
 
   const generateMutation = useGenerateDocument();
+  const previewMutation = usePreviewDocument();
+
+  // Blob URL lifecycle: keep a ref in sync with the latest URL so the
+  // unmount cleanup below always revokes the most recent one, without
+  // re-registering the cleanup effect on every preview.
+  const previewUrlRef = useRef<string | null>(null);
+  useEffect(() => {
+    previewUrlRef.current = previewUrl;
+  }, [previewUrl]);
+
+  // Preview request lifecycle guards:
+  // - previewRequestIdRef identifies the "current" preview request. Closing
+  //   the dialog (or starting a new preview) bumps it, so a stale in-flight
+  //   request's callbacks can detect they've been superseded and no-op
+  //   instead of flashing an outdated PDF into a reopened dialog.
+  // - isMountedRef guards against setState / object-URL creation after this
+  //   component has unmounted mid-request.
+  const previewRequestIdRef = useRef(0);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+      if (previewUrlRef.current) {
+        URL.revokeObjectURL(previewUrlRef.current);
+      }
+    };
+  }, []);
 
   // Keep a ref to the latest `values` so the memoized commit callback can
   // read the freshest state without invalidating its identity.
@@ -662,6 +704,72 @@ export function FullDocumentEditor({
     );
   };
 
+  const handlePreview = () => {
+    setPreviewOpen(true);
+    // Revoke + clear any previous preview FIRST so the dialog always shows
+    // the loading placeholder while a new request is in flight — it must
+    // never keep rendering a stale PDF from a prior request.
+    setPreviewUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+    const requestId = ++previewRequestIdRef.current;
+    previewMutation.mutate(
+      { template_version_id: templateVersionId, variables: values },
+      {
+        onSuccess: (data) => {
+          const newUrl = URL.createObjectURL(
+            new Blob([data], { type: "application/pdf" }),
+          );
+          // This request may have been superseded (dialog closed and/or a
+          // newer preview started) or the component may have unmounted
+          // while the request was in flight — either way, discard the blob
+          // without ever setting state.
+          if (
+            !isMountedRef.current ||
+            requestId !== previewRequestIdRef.current
+          ) {
+            URL.revokeObjectURL(newUrl);
+            return;
+          }
+          setPreviewUrl(newUrl);
+        },
+        onError: () => {
+          if (!isMountedRef.current) return;
+          toast.error("Error al generar la vista previa");
+          setPreviewOpen(false);
+        },
+      },
+    );
+  };
+
+  const handlePreviewOpenChange = (open: boolean) => {
+    setPreviewOpen(open);
+    if (!open) {
+      // Invalidate any preview request still in flight so its eventual
+      // onSuccess/onError treats itself as stale.
+      previewRequestIdRef.current++;
+      setPreviewUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return null;
+      });
+    }
+  };
+
+  const handleVariableRowClick = useCallback(
+    (varName: string) => {
+      const inst = instances.find((i) => i.varName === varName);
+      if (!inst) return;
+      setEditingKey(inst.key);
+      requestAnimationFrame(() => {
+        document
+          .querySelector<HTMLElement>(`[data-instance-key="${inst.key}"]`)
+          ?.scrollIntoView({ block: "center" });
+      });
+    },
+    [instances],
+  );
+
   const hasHeaders = structure.headers.length > 0;
   const hasFooters = structure.footers.length > 0;
 
@@ -674,11 +782,11 @@ export function FullDocumentEditor({
   };
 
   return (
-    <div className="flex flex-col gap-4">
-      {/* Top progress bar */}
-      <div className="rounded-xl bg-white p-4 shadow-[var(--shadow-sm)] ring-1 ring-[rgba(195,198,215,0.30)]">
-        <div className="mb-2 flex items-center justify-between gap-3">
-          <div>
+    <div className="grid gap-6 lg:grid-cols-[1fr_280px]">
+      <div className="flex min-w-0 flex-col gap-4">
+        {/* Top progress card */}
+        <div className="rounded-xl bg-white p-4 shadow-[var(--shadow-sm)] ring-1 ring-[rgba(195,198,215,0.30)]">
+          <div className="mb-2">
             <div className="text-[13px] font-semibold text-[var(--fg-1)]">
               Progreso de la generación
             </div>
@@ -688,81 +796,181 @@ export function FullDocumentEditor({
               {filledCount === 1 ? "" : "s"}
             </div>
           </div>
-          {generated ? (
-            <DownloadButton
-              documentId={generated.documentId}
-              baseFileName={generated.fileName}
-              via="direct"
-            />
-          ) : (
-            <Button
-              size="sm"
-              onClick={handleGenerate}
-              disabled={!allFilled || generateMutation.isPending}
-              className="bg-gradient-to-br from-[#004ac6] to-[#2563eb] font-semibold text-white shadow-[var(--shadow-brand-sm)] hover:shadow-[var(--shadow-brand-md)]"
-            >
-              <Sparkles className="size-3.5" />
-              {generateMutation.isPending ? "Generando…" : "Generar documento"}
-            </Button>
-          )}
+          <Progress value={progress} className="h-1.5" />
         </div>
-        <Progress value={progress} className="h-1.5" />
-      </div>
 
-      {/* Document card */}
-      <div className="overflow-hidden rounded-xl bg-white shadow-[var(--shadow-md)] ring-1 ring-[rgba(195,198,215,0.30)]">
-        <div className="border-b border-[rgba(195,198,215,0.20)] bg-[var(--bg-page)] px-6 py-3">
-          <div className="flex items-center gap-2 text-[12.5px] text-[var(--fg-3)]">
-            <FileText className="size-4 text-[var(--primary)]" />
-            <span className="font-medium text-[var(--fg-1)]">{templateName}</span>
+        {/* Document card */}
+        <div className="overflow-hidden rounded-xl bg-white shadow-[var(--shadow-md)] ring-1 ring-[rgba(195,198,215,0.30)]">
+          <div className="border-b border-[rgba(195,198,215,0.20)] bg-[var(--bg-page)] px-6 py-3">
+            <div className="flex items-center gap-2 text-[12.5px] text-[var(--fg-3)]">
+              <FileText className="size-4 text-[var(--primary)]" />
+              <span className="font-medium text-[var(--fg-1)]">{templateName}</span>
+            </div>
+          </div>
+
+          {/* pb-16 (instead of a symmetric py-5) leaves clearance so the
+              last content line can scroll clear of the sticky action bar
+              below, instead of ending flush against it. */}
+          <div className="px-6 pt-5 pb-16">
+            {hasHeaders && (
+              <DocumentSection label="Encabezado">
+                {structure.headers.map((node, i) => (
+                  <DocumentNode
+                    key={`h-${i}`}
+                    node={node}
+                    prefix={instanceKey("h", i)}
+                    {...sectionProps}
+                  />
+                ))}
+              </DocumentSection>
+            )}
+
+            <DocumentSection label="Contenido" emphasis>
+              {structure.body.length === 0 ? (
+                <p className="text-[12.5px] italic text-[var(--fg-3)]">
+                  Este documento no tiene contenido en el cuerpo.
+                </p>
+              ) : (
+                structure.body.map((node, i) => (
+                  <DocumentNode
+                    key={`b-${i}`}
+                    node={node}
+                    prefix={instanceKey("b", i)}
+                    {...sectionProps}
+                  />
+                ))
+              )}
+            </DocumentSection>
+
+            {hasFooters && (
+              <DocumentSection label="Pie de página">
+                {structure.footers.map((node, i) => (
+                  <DocumentNode
+                    key={`f-${i}`}
+                    node={node}
+                    prefix={instanceKey("f", i)}
+                    {...sectionProps}
+                  />
+                ))}
+              </DocumentSection>
+            )}
           </div>
         </div>
 
-        <div className="px-6 py-5">
-          {hasHeaders && (
-            <DocumentSection label="Encabezado">
-              {structure.headers.map((node, i) => (
-                <DocumentNode
-                  key={`h-${i}`}
-                  node={node}
-                  prefix={instanceKey("h", i)}
-                  {...sectionProps}
-                />
-              ))}
-            </DocumentSection>
-          )}
-
-          <DocumentSection label="Contenido" emphasis>
-            {structure.body.length === 0 ? (
-              <p className="text-[12.5px] italic text-[var(--fg-3)]">
-                Este documento no tiene contenido en el cuerpo.
-              </p>
+        {/* Sticky bottom action bar */}
+        <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-white/90 px-4 py-3 shadow-[var(--shadow-md)] ring-1 ring-[rgba(195,198,215,0.30)] backdrop-blur">
+          <div className="flex min-w-[180px] flex-1 items-center gap-3">
+            <div className="shrink-0 text-[12.5px] text-[var(--fg-3)]">
+              {filledCount} de {totalCount} variable
+              {totalCount === 1 ? "" : "s"} completada
+              {filledCount === 1 ? "" : "s"}
+            </div>
+            <Progress value={progress} className="h-1.5 max-w-[160px] flex-1" />
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handlePreview}
+              disabled={previewMutation.isPending}
+            >
+              <Eye className="size-3.5" />
+              {previewMutation.isPending
+                ? "Generando vista previa…"
+                : "Vista previa"}
+            </Button>
+            {generated ? (
+              <DownloadButton
+                documentId={generated.documentId}
+                baseFileName={generated.fileName}
+                via="direct"
+              />
             ) : (
-              structure.body.map((node, i) => (
-                <DocumentNode
-                  key={`b-${i}`}
-                  node={node}
-                  prefix={instanceKey("b", i)}
-                  {...sectionProps}
-                />
-              ))
+              <Button
+                size="sm"
+                onClick={handleGenerate}
+                disabled={!allFilled || generateMutation.isPending}
+                className="bg-gradient-to-br from-[#004ac6] to-[#2563eb] font-semibold text-white shadow-[var(--shadow-brand-sm)] hover:shadow-[var(--shadow-brand-md)]"
+              >
+                <Sparkles className="size-3.5" />
+                {generateMutation.isPending ? "Generando…" : "Generar documento"}
+              </Button>
             )}
-          </DocumentSection>
-
-          {hasFooters && (
-            <DocumentSection label="Pie de página">
-              {structure.footers.map((node, i) => (
-                <DocumentNode
-                  key={`f-${i}`}
-                  node={node}
-                  prefix={instanceKey("f", i)}
-                  {...sectionProps}
-                />
-              ))}
-            </DocumentSection>
-          )}
+          </div>
         </div>
       </div>
+
+      {/* Variables review panel */}
+      <aside className="self-start lg:sticky lg:top-20">
+        <div className="rounded-xl bg-white p-4 shadow-[var(--shadow-sm)] ring-1 ring-[rgba(195,198,215,0.30)]">
+          <div className="mb-3">
+            <div className="text-[13px] font-semibold text-[var(--fg-1)]">
+              Variables
+            </div>
+            <div className="text-[11.5px] text-[var(--fg-3)]">
+              {filledCount} de {totalCount} completada
+              {filledCount === 1 ? "" : "s"}
+            </div>
+          </div>
+          <ul className="flex flex-col gap-1">
+            {distinctVarNames.map((name) => {
+              const value = values[name] ?? "";
+              const filled = value.trim().length > 0;
+              return (
+                <li key={name}>
+                  <button
+                    type="button"
+                    onClick={() => handleVariableRowClick(name)}
+                    className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-[var(--bg-page)]"
+                  >
+                    <span className="flex min-w-0 items-center gap-1.5">
+                      {filled && (
+                        <Check className="size-3.5 shrink-0 text-[#059669]" />
+                      )}
+                      <span className="truncate text-[12.5px] font-medium text-[var(--fg-1)]">
+                        {humanLabel(name)}
+                      </span>
+                    </span>
+                    {filled ? (
+                      <span
+                        className="max-w-[110px] truncate text-[11.5px] text-[var(--fg-3)]"
+                        title={value}
+                      >
+                        {value}
+                      </span>
+                    ) : (
+                      <span className="shrink-0 rounded-full bg-[var(--bg-page)] px-2 py-0.5 text-[10.5px] font-medium text-[var(--fg-3)]">
+                        Pendiente
+                      </span>
+                    )}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      </aside>
+
+      {/* Preview dialog */}
+      <Dialog open={previewOpen} onOpenChange={handlePreviewOpenChange}>
+        <DialogContent className="sm:max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>Vista previa del documento</DialogTitle>
+          </DialogHeader>
+          {previewUrl ? (
+            <iframe
+              title="Vista previa del documento"
+              src={previewUrl}
+              className="h-[75vh] w-full rounded-lg"
+            />
+          ) : (
+            <div className="flex h-[75vh] w-full items-center justify-center text-[13px] text-[var(--fg-3)]">
+              Generando vista previa…
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

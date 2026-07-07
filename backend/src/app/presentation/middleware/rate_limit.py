@@ -124,6 +124,16 @@ def tier_limit_refresh() -> str:
     return get_settings().rate_limit_refresh
 
 
+def tier_limit_preview() -> str:
+    """Return the rate limit for the ephemeral document preview endpoint.
+
+    Unlike tier_limit_generate/bulk/refresh, this has NO per-tier override —
+    there is no SubscriptionTier.rate_limit_preview column. Always reads
+    Settings.rate_limit_preview directly.
+    """
+    return get_settings().rate_limit_preview
+
+
 # ---------------------------------------------------------------------------
 # Helper for tests — read tier from request state with attribute fallback
 # The test functions use request.state.tier directly (passed as argument)

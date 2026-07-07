@@ -16,6 +16,20 @@ class GenerateRequest(BaseModel):
     variables: dict[str, str]
 
 
+class PreviewRequest(BaseModel):
+    """Request schema for POST /documents/preview.
+
+    Deliberately kept separate from GenerateRequest: the preview path is
+    ephemeral (nothing persisted) and must never inherit generation's
+    completeness/quota semantics if GenerateRequest grows those later.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    template_version_id: str
+    variables: dict[str, str]
+
+
 class DocumentResponse(BaseModel):
     """Response schema for a generated document.
 
