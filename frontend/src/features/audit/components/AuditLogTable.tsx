@@ -65,8 +65,8 @@ const ACTION_META: Record<string, ActionMeta> = {
 
 const TONE_STYLES: Record<ActionTone, { wrap: string; pill: string }> = {
   template: {
-    wrap: "bg-[#dbe1ff] text-[#004ac6]",
-    pill: "bg-[#dbe1ff] text-[#004ac6]",
+    wrap: "bg-[var(--bg-accent)] text-[var(--primary)]",
+    pill: "bg-[var(--bg-accent)] text-[var(--primary)]",
   },
   document: {
     wrap: "bg-[#d1fae5] text-[#059669]",
@@ -251,9 +251,9 @@ export function AuditLogTable() {
           ))}
         </div>
       ) : isError ? (
-        <div className="flex items-start gap-3 rounded-xl border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
-          <CircleAlert className="size-4 shrink-0" />
-          <div>
+        <div className="flex items-start gap-2.5 rounded-[10px] bg-[#ffdad6] px-3.5 py-3 text-[13px] leading-[1.45] text-[#93000a]">
+          <CircleAlert className="mt-px size-4 shrink-0 text-[var(--destructive)]" />
+          <div className="flex-1">
             Error al cargar el registro de auditoría:{" "}
             {error?.message ?? "Error desconocido"}
           </div>

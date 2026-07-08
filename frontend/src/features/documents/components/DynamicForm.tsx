@@ -236,7 +236,7 @@ function ContextPreview({
   }
 
   return (
-    <p className="text-xs text-[#434655] bg-[#f2f4f6] rounded-lg px-3 py-2 font-mono leading-relaxed">
+    <p className="text-xs text-[var(--fg-2)] bg-[var(--bg-muted)] rounded-lg px-3 py-2 font-mono leading-relaxed">
       {parts.map((part, i) =>
         part.isVariable ? (
           <span
@@ -244,7 +244,7 @@ function ContextPreview({
             className={
               value
                 ? "bg-[#d1fae5] text-[#065f46] px-1 rounded font-sans font-medium"
-                : "bg-[#dbe1ff] text-[#004ac6] px-1 rounded"
+                : "bg-[var(--bg-accent)] text-[var(--primary)] px-1 rounded"
             }
           >
             {value || part.text}

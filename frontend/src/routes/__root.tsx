@@ -6,7 +6,7 @@ function NotFoundComponent() {
   return (
     <div className="flex min-h-screen flex-col items-center justify-center gap-4">
       <h1 className="text-4xl font-bold">404</h1>
-      <p className="text-muted-foreground">Página no encontrada</p>
+      <p className="text-[var(--fg-3)]">Página no encontrada</p>
       <button
         className="text-sm underline"
         onClick={() => router.navigate({ to: "/" })}

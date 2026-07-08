@@ -64,7 +64,7 @@ export function DocumentsTab({ templateId }: DocumentsTabProps) {
           ))}
         </div>
       ) : isError ? (
-        <div className="m-5 rounded-lg border border-destructive/50 bg-destructive/5 p-4 text-sm text-destructive">
+        <div className="m-5 rounded-[10px] bg-[#ffdad6] px-3.5 py-3 text-[13px] leading-[1.45] text-[#93000a]">
           Error al cargar documentos: {error?.message ?? "Error desconocido"}
         </div>
       ) : !data?.items.length ? (

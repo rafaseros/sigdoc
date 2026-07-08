@@ -18,12 +18,12 @@ function TemplatesPage() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div>
-            <h2 className="text-2xl font-bold">Plantillas</h2>
-            <p className="text-muted-foreground">
+            <h2 className="text-2xl font-bold tracking-tight text-[var(--fg-1)]">Plantillas</h2>
+            <p className="text-sm text-[var(--fg-3)]">
               Gestione sus plantillas de documentos
             </p>
           </div>
-          <Badge className="bg-[#dbe1ff] text-[#004ac6] border-0 rounded-full">
+          <Badge className="bg-[var(--bg-accent)] text-[var(--primary)] border-0 rounded-full">
             {templateCount} plantillas
           </Badge>
         </div>

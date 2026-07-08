@@ -58,6 +58,13 @@ shadcn `--destructive`/`--success` tokens, for status pills and banners:
 | Warning | `#fef3c7` | `#78350f` (or `#b45309`) |
 | Danger / inactive | `#ffdad6` | `#93000a` |
 
+**Gotcha — `--muted` is not `--bg-muted`**: shadcn ships its own `--muted`
+(`#eceef0`, dark-mode-aware) alongside SigDoc's semantic `--bg-muted`
+(`#f2f4f6`). They're visually close but NOT the same token — always use
+`var(--bg-muted)` for SigDoc surfaces (table headers, secondary backgrounds).
+`var(--muted)` slipping into a `className` is a deviation, not a legitimate
+alternate.
+
 **Computed-variable violet** (new — see §12) — tokenized as `--fg-computed:
 #5b21b6` in `index.css`, paired with the existing `.var-chip-computed` class
 (`background: linear-gradient(135deg, #ede9fe, #ddd6fe); border: 1px solid
@@ -88,6 +95,28 @@ default scale is NOT used for body/meta text):
 
 Rule of thumb: **mono font (`font-mono`) for anything that is data, not
 prose** — emails, variable names/placeholders, ids.
+
+**List-page header** (top of a resource's index page, e.g. `/usuarios`,
+`/plantillas`): `<h2 className="text-2xl font-bold tracking-tight
+text-[var(--fg-1)]">` + `<p className="text-sm text-[var(--fg-3)]">` for the
+subtitle, optionally preceded by an `sd-meta` eyebrow line (`UsersPage` is the
+canonical reference). This is distinct from the `text-[22px]` entity-detail
+`<h1>` above — index pages use `text-2xl` (24px), a single record's detail
+page uses `text-[22px]`.
+
+**Two legitimate `<h3>` section-heading sizes — don't conflate them**:
+1. **Tab-root heading** (sits directly on the tab/page background, no card
+   wrapper around it; a separate card/table follows below): `text-lg`. E.g.
+   `PresetsTab`'s "Datos guardados", `TemplateDetail`'s "Historial de
+   versiones".
+2. **Card-internal header title** (lives inside the header row of a single
+   unified `bg-white` card that also contains the body — table/list rows
+   directly below, same card, no gap): `text-base`. E.g. `DocumentsTab`,
+   `SharesTab`, `DocumentList`, `DynamicForm`'s "Complete las variables".
+   This card variant also legitimately skips the ring
+   (`shadow-[var(--shadow-md)]` alone, no `ring-1`) — don't "fix" it to add
+   one; it's a different, consistently-used recipe from the table-wrapper
+   card in §3/§8, not a deviation.
 
 ---
 

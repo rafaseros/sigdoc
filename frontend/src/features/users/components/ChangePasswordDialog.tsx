@@ -81,7 +81,7 @@ export function ChangePasswordDialog({ open: openProp, onOpenChange }: ChangePas
       <DialogContent className="sm:max-w-md">
         <form onSubmit={handleSubmit}>
           <DialogHeader>
-            <DialogTitle>Cambiar Contraseña</DialogTitle>
+            <DialogTitle className="text-xl font-bold tracking-tight">Cambiar Contraseña</DialogTitle>
             <DialogDescription>
               Ingrese su contraseña actual y la nueva contraseña.
             </DialogDescription>
@@ -89,7 +89,7 @@ export function ChangePasswordDialog({ open: openProp, onOpenChange }: ChangePas
 
           <div className="grid gap-4 py-4">
             <div className="grid gap-2">
-              <Label htmlFor="current-password">Contraseña Actual *</Label>
+              <Label htmlFor="current-password" className="text-xs font-semibold uppercase tracking-[0.04em] text-[var(--fg-3)]">Contraseña Actual *</Label>
               <Input
                 id="current-password"
                 type="password"
@@ -100,7 +100,7 @@ export function ChangePasswordDialog({ open: openProp, onOpenChange }: ChangePas
             </div>
 
             <div className="grid gap-2">
-              <Label htmlFor="new-password">Nueva Contraseña *</Label>
+              <Label htmlFor="new-password" className="text-xs font-semibold uppercase tracking-[0.04em] text-[var(--fg-3)]">Nueva Contraseña *</Label>
               <Input
                 id="new-password"
                 type="password"
@@ -113,7 +113,7 @@ export function ChangePasswordDialog({ open: openProp, onOpenChange }: ChangePas
             </div>
 
             <div className="grid gap-2">
-              <Label htmlFor="confirm-password">
+              <Label htmlFor="confirm-password" className="text-xs font-semibold uppercase tracking-[0.04em] text-[var(--fg-3)]">
                 Confirmar Nueva Contraseña *
               </Label>
               <Input
@@ -142,6 +142,7 @@ export function ChangePasswordDialog({ open: openProp, onOpenChange }: ChangePas
             <Button
               type="submit"
               disabled={changePasswordMutation.isPending}
+              className="bg-gradient-to-br from-[#004ac6] to-[#2563eb] font-semibold text-white shadow-[var(--shadow-brand-sm)] hover:shadow-[var(--shadow-brand-md)]"
             >
               {changePasswordMutation.isPending
                 ? "Actualizando..."

@@ -105,7 +105,7 @@ function GuideDialogContent() {
           </p>
           <div className="overflow-hidden rounded-lg ring-1 ring-[rgba(195,198,215,0.30)]">
             <table className="w-full text-sm">
-              <thead className="bg-[var(--muted)]">
+              <thead className="bg-[var(--bg-muted)]">
                 <tr>
                   <th className="px-3 py-2 text-left font-semibold text-[var(--fg-1)]">Campo</th>
                   <th className="px-3 py-2 text-left font-semibold text-[var(--fg-1)]">Valor</th>

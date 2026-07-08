@@ -220,7 +220,7 @@ export function UploadTemplateDialog() {
 
               <div className="grid gap-2 sm:grid-cols-2">
                 <div className="grid gap-1.5">
-                  <Label htmlFor="template-name" className="text-[12.5px] font-medium text-[var(--fg-2)]">
+                  <Label htmlFor="template-name" className="text-xs font-semibold uppercase tracking-[0.04em] text-[var(--fg-3)]">
                     Nombre <span className="text-[var(--destructive)]">*</span>
                   </Label>
                   <Input
@@ -232,7 +232,7 @@ export function UploadTemplateDialog() {
                   />
                 </div>
                 <div className="grid gap-1.5 sm:col-span-1">
-                  <Label className="text-[12.5px] font-medium text-[var(--fg-2)]">
+                  <Label className="text-xs font-semibold uppercase tracking-[0.04em] text-[var(--fg-3)]">
                     Variables detectadas
                   </Label>
                   <div className="flex h-9 items-center rounded-lg bg-[var(--bg-muted)] px-3 text-sm text-[var(--fg-2)]">
@@ -243,7 +243,7 @@ export function UploadTemplateDialog() {
               </div>
 
               <div className="grid gap-1.5">
-                <Label htmlFor="template-description" className="text-[12.5px] font-medium text-[var(--fg-2)]">
+                <Label htmlFor="template-description" className="text-xs font-semibold uppercase tracking-[0.04em] text-[var(--fg-3)]">
                   Descripción (opcional)
                 </Label>
                 <Textarea
@@ -450,7 +450,7 @@ function ExpandableVariablesTable({ variables }: { variables: VariableSummary[] 
   return (
     <div className="max-h-64 overflow-hidden overflow-y-auto rounded-lg bg-white ring-1 ring-[rgba(195,198,215,0.30)]">
       <table className="w-full text-sm">
-        <thead className="sticky top-0 bg-[var(--muted)]">
+        <thead className="sticky top-0 bg-[var(--bg-muted)]">
           <tr>
             <th className="w-6" />
             <th className="px-3 py-2 text-left font-semibold text-[var(--fg-1)]">Variable</th>
@@ -553,7 +553,7 @@ function IssuesTable({
   return (
     <div className="max-h-64 overflow-hidden overflow-y-auto rounded-lg bg-white ring-1 ring-[rgba(195,198,215,0.30)]">
       <table className="w-full text-sm">
-        <thead className="sticky top-0 bg-[var(--muted)]">
+        <thead className="sticky top-0 bg-[var(--bg-muted)]">
           <tr>
             <th className="w-6" />
             <th className="w-20 px-3 py-2 text-left font-semibold text-[var(--fg-1)]">Tipo</th>

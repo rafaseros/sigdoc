@@ -117,7 +117,7 @@ export function ShareTemplateDialog({
 
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Compartir plantilla</DialogTitle>
+          <DialogTitle className="text-xl font-bold tracking-tight">Compartir plantilla</DialogTitle>
           <DialogDescription>
             Comparta "{templateName}" con otros usuarios de su organización. Podrán ver y generar documentos, pero no modificar la plantilla.
           </DialogDescription>
@@ -125,7 +125,7 @@ export function ShareTemplateDialog({
 
         {/* Add new share */}
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="share-email" className="text-[12.5px] font-medium text-[var(--fg-2)]">
+          <Label htmlFor="share-email" className="text-xs font-semibold uppercase tracking-[0.04em] text-[var(--fg-3)]">
             Agregar usuario por correo
           </Label>
           <div className="flex gap-2">

@@ -80,7 +80,7 @@ export function SharesTab({ templateId, templateName }: SharesTabProps) {
           ))}
         </div>
       ) : isError ? (
-        <div className="m-5 rounded-lg border border-destructive/50 bg-destructive/5 p-4 text-sm text-destructive">
+        <div className="m-5 rounded-[10px] bg-[#ffdad6] px-3.5 py-3 text-[13px] leading-[1.45] text-[#93000a]">
           Error al cargar compartidos: {error?.message ?? "Error desconocido"}
         </div>
       ) : !shares || shares.length === 0 ? (

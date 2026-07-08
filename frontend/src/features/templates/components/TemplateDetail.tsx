@@ -464,12 +464,12 @@ export function VariablesTab({ templateId, versionId, variablesMeta, isOwner }: 
                     </span>
                     <Badge
                       variant="outline"
-                      className="rounded-full border-[rgba(195,198,215,0.40)] px-1.5 text-[10px] text-[var(--fg-3)]"
+                      className="rounded-full border-[rgba(195,198,215,0.40)] px-1.5 text-[10.5px] text-[var(--fg-3)]"
                     >
                       {m.contexts.length}×
                     </Badge>
                     <Badge
-                      className={`rounded-full border-0 px-1.5 text-[10px] font-semibold ${
+                      className={`rounded-full border-0 px-1.5 text-[10.5px] font-semibold ${
                         isSelected
                           ? "bg-white text-[var(--primary)]"
                           : "bg-[var(--bg-muted)] text-[var(--fg-3)]"
@@ -928,7 +928,7 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
   if (!template) {
     return (
       <div className="flex flex-col items-center justify-center gap-4 py-12">
-        <p className="text-muted-foreground">Plantilla no encontrada</p>
+        <p className="text-[var(--fg-2)]">Plantilla no encontrada</p>
         <Button variant="outline" onClick={() => navigate({ to: "/templates" })}>
           <ArrowLeft />
           Volver a Plantillas
@@ -1238,7 +1238,7 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
                     </DialogTrigger>
                     <DialogContent>
                       <DialogHeader>
-                        <DialogTitle>Subir nueva versión</DialogTitle>
+                        <DialogTitle className="text-xl font-bold tracking-tight">Subir nueva versión</DialogTitle>
                         <DialogDescription>
                           Suba un nuevo archivo .docx para crear la versión v
                           {template.current_version + 1} de "{template.name}".
@@ -1399,7 +1399,7 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
         >
           <DialogContent className="sm:max-w-md">
             <DialogHeader>
-              <DialogTitle>Eliminar plantilla</DialogTitle>
+              <DialogTitle className="text-xl font-bold tracking-tight">Eliminar plantilla</DialogTitle>
             </DialogHeader>
             <div className="flex items-start gap-2.5 rounded-[10px] bg-[#ffdad6] px-3.5 py-3 text-[13px] leading-[1.45] text-[#93000a]">
               <CircleAlert className="mt-px size-4 shrink-0 text-[var(--destructive)]" />
@@ -1413,7 +1413,7 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
               <strong className="text-[var(--fg-1)]">"{template.name}"</strong>?
             </p>
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="delete-confirm" className="text-[12.5px] font-medium text-[var(--fg-2)]">
+              <Label htmlFor="delete-confirm" className="text-xs font-semibold uppercase tracking-[0.04em] text-[var(--fg-3)]">
                 Para confirmar, escriba{" "}
                 <span className="font-mono text-[var(--destructive)]">ELIMINAR</span>
               </Label>

@@ -148,7 +148,7 @@ export function PresetFormDialog({
             <div className="grid gap-1.5">
               <Label
                 htmlFor="preset-form-name"
-                className="text-[12.5px] font-medium text-[var(--fg-2)]"
+                className="text-xs font-semibold uppercase tracking-[0.04em] text-[var(--fg-3)]"
               >
                 Nombre
               </Label>
