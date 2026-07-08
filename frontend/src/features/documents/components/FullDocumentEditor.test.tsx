@@ -19,11 +19,22 @@ import type {
 // The "Vista previa" flow (Feature C) hits POST /documents/preview via the
 // shared apiClient — mock it at the module boundary so no live request is
 // ever attempted. Tests that exercise that flow configure the resolved
-// value explicitly; other tests never touch this mock.
+// value explicitly; other tests never touch this mock. GET is used by the
+// presets picker (Feature A) — defaulted to an empty list in the top-level
+// beforeEach below.
 vi.mock("@/shared/lib/api-client", () => ({
   apiClient: {
     post: vi.fn(),
     get: vi.fn(),
+  },
+}));
+
+const toastSuccessMock = vi.fn();
+const toastErrorMock = vi.fn();
+vi.mock("sonner", () => ({
+  toast: {
+    success: (...args: unknown[]) => toastSuccessMock(...args),
+    error: (...args: unknown[]) => toastErrorMock(...args),
   },
 }));
 
@@ -133,7 +144,7 @@ function createDeferred<T>() {
   return { promise, resolve, reject };
 }
 
-function renderEditor() {
+function renderEditor(overrides: { variablesMeta?: VariableMeta[] } = {}) {
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
@@ -143,14 +154,25 @@ function renderEditor() {
   return render(
     <QueryClientProvider client={queryClient}>
       <FullDocumentEditor
+        templateId="template-1"
         templateVersionId="version-1"
         templateName="Test Template"
-        variablesMeta={variablesMeta}
+        variablesMeta={overrides.variablesMeta ?? variablesMeta}
         structure={structure}
       />
     </QueryClientProvider>,
   );
 }
+
+// Presets (Feature A) are fetched via GET on mount in every test in this
+// file — default to an empty list so the preset picker stays hidden and no
+// test needs to know about it unless it explicitly exercises presets.
+beforeEach(() => {
+  vi.mocked(apiClient.get).mockReset();
+  vi.mocked(apiClient.get).mockResolvedValue({ data: { presets: [] } });
+  toastSuccessMock.mockReset();
+  toastErrorMock.mockReset();
+});
 
 describe("FullDocumentEditor — inline pill editing", () => {
   it("1. swaps a pill for an inline input on click, with no dialog/popup role, and focuses the input", async () => {
@@ -571,6 +593,186 @@ describe("FullDocumentEditor — variables panel, sticky action bar, preview dia
       expect(
         screen.getByTitle("Vista previa del documento"),
       ).toHaveAttribute("src", "blob:mock-url-2"),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Computed variables (formula/function) + preset picker fixture — one plain
+// numeric source variable, one formula computed from it, one function
+// computed from it. Used by both the "computed variables" and "preset
+// picker" describe blocks below.
+// ---------------------------------------------------------------------------
+
+const computedStructure: TemplateStructure = {
+  headers: [],
+  footers: [],
+  body: [
+    {
+      kind: "paragraph",
+      level: 0,
+      spans: [
+        { text: "Monto base: ", variable: null },
+        { text: "{{ amount }}", variable: "amount" },
+        { text: ", con recargo: ", variable: null },
+        {
+          text: "{{ amount_with_surcharge }}",
+          variable: "amount_with_surcharge",
+        },
+      ],
+      rows: [],
+    },
+    {
+      kind: "paragraph",
+      level: 0,
+      spans: [
+        { text: "En letras: ", variable: null },
+        { text: "{{ amount_in_words }}", variable: "amount_in_words" },
+      ],
+      rows: [],
+    },
+  ],
+};
+
+const computedVariablesMeta: VariableMeta[] = [
+  { name: "amount", contexts: [], type: "decimal" },
+  {
+    name: "amount_with_surcharge",
+    contexts: [],
+    type: "decimal",
+    computed: { kind: "formula", source: "amount", operator: "+", operand: 50 },
+  },
+  {
+    name: "amount_in_words",
+    contexts: [],
+    type: "text",
+    computed: {
+      kind: "function",
+      function: "number_to_words",
+      source: "amount",
+    },
+  },
+];
+
+function renderComputedEditor() {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <FullDocumentEditor
+        templateId="template-1"
+        templateVersionId="version-1"
+        templateName="Test Template"
+        variablesMeta={computedVariablesMeta}
+        structure={computedStructure}
+      />
+    </QueryClientProvider>,
+  );
+}
+
+describe("FullDocumentEditor — computed variables", () => {
+  it("a formula pill computes live from its source and is not clickable (no textbox opens)", async () => {
+    const user = userEvent.setup();
+    renderComputedEditor();
+
+    // Source is empty at first — the formula pill shows the em dash fallback.
+    expect(screen.getByText("—")).toBeInTheDocument();
+
+    const sourcePill = screen.getByText("{{ amount }}");
+    await user.click(sourcePill);
+    await user.type(screen.getByRole("textbox"), "100");
+    await user.keyboard("{Enter}");
+
+    // 100 + 50 = 150.00
+    expect(screen.getByText("150.00")).toBeInTheDocument();
+
+    // The computed pill itself must never become editable.
+    await user.click(screen.getByText("150.00"));
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+  });
+
+  it("a function-kind computed variable renders an automatic placeholder instead of an editable pill", () => {
+    renderComputedEditor();
+    expect(screen.getByText("(automático)")).toBeInTheDocument();
+  });
+
+  it("computed variables are excluded from the progress count and from the generate/preview payloads", async () => {
+    const user = userEvent.setup();
+    vi.mocked(apiClient.post).mockResolvedValue({
+      data: new Blob(["pdf-bytes"], { type: "application/pdf" }),
+    });
+    renderComputedEditor();
+
+    // Only "amount" is editable — the button starts disabled because it's
+    // still empty, NOT because the two computed variables are unfilled.
+    const generateButton = screen.getByRole("button", {
+      name: /generar documento/i,
+    });
+    expect(generateButton).toBeDisabled();
+
+    const sourcePill = screen.getByText("{{ amount }}");
+    await user.click(sourcePill);
+    await user.type(screen.getByRole("textbox"), "100");
+    await user.keyboard("{Enter}");
+
+    // Filling the SINGLE non-computed variable is enough to enable
+    // generation — proves the two computed variables never counted toward
+    // filledCount/totalCount/allFilled.
+    expect(generateButton).toBeEnabled();
+
+    await user.click(screen.getByRole("button", { name: /vista previa/i }));
+    expect(apiClient.post).toHaveBeenCalledWith(
+      "/documents/preview",
+      {
+        template_version_id: "version-1",
+        variables: { amount: "100" },
+      },
+      { responseType: "blob" },
+    );
+  });
+});
+
+describe("FullDocumentEditor — preset picker", () => {
+  it("hides the preset picker while there are no presets for the template", () => {
+    renderComputedEditor();
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+  });
+
+  it("merges a chosen preset's values into the pills/panel, ignoring computed keys, and toasts", async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: {
+        presets: [
+          {
+            id: "preset-1",
+            name: "Cliente Acme",
+            // "amount_with_surcharge" is computed — must never be applied.
+            values: { amount: "250", amount_with_surcharge: "999" },
+            created_by: "user-1",
+            created_at: "2026-01-01T00:00:00Z",
+          },
+        ],
+      },
+    });
+    const user = userEvent.setup();
+    renderComputedEditor();
+
+    const trigger = await screen.findByRole("combobox");
+    await user.click(trigger);
+    const option = await screen.findByRole("option", { name: "Cliente Acme" });
+    await user.click(option);
+
+    // Prefilled without any explicit commit — both the document pill and the
+    // panel echo show the merged value straight away.
+    expect(await screen.findAllByText("250")).toHaveLength(2);
+    // The computed key from the preset must never have been merged in —
+    // the formula still evaluates from the just-applied "amount" (250 + 50).
+    expect(screen.getByText("300.00")).toBeInTheDocument();
+    expect(toastSuccessMock).toHaveBeenCalledWith(
+      "Datos de «Cliente Acme» cargados",
     );
   });
 });

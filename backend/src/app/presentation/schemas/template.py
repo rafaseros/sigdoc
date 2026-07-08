@@ -1,11 +1,60 @@
+import math
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal, Union
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 VariableType = Literal["text", "integer", "decimal", "select"]
+
+ComputedOperator = Literal["+", "-", "*", "/"]
+
+# Registry pattern: adding a new computed function is a one-line change to
+# this Literal plus the `_FUNCTION_REGISTRY` dict in
+# app.domain.services.computed_variables.
+ComputedFunctionName = Literal["number_to_words"]
+
+
+class ComputedFormula(BaseModel):
+    """A computed variable derived by applying an arithmetic operator to
+    another variable's value and a constant operand."""
+
+    kind: Literal["formula"] = "formula"
+    source: str
+    operator: ComputedOperator
+    operand: float
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("operand")
+    @classmethod
+    def _validate_operand_is_finite(cls, v: float) -> float:
+        if not math.isfinite(v):
+            raise ValueError("El operando debe ser un número finito")
+        return v
+
+    @model_validator(mode="after")
+    def _validate_division_operand_not_zero(self) -> "ComputedFormula":
+        if self.operator == "/" and self.operand == 0:
+            raise ValueError("El operando de una división no puede ser 0")
+        return self
+
+
+class ComputedFunctionSpec(BaseModel):
+    """A computed variable derived by applying a named pure function to
+    another variable's value."""
+
+    kind: Literal["function"] = "function"
+    function: ComputedFunctionName
+    source: str
+
+    model_config = ConfigDict(extra="forbid")
+
+
+ComputedSpec = Annotated[
+    Union[ComputedFormula, ComputedFunctionSpec], Field(discriminator="kind")
+]
 
 
 class VariableMeta(BaseModel):
@@ -14,6 +63,7 @@ class VariableMeta(BaseModel):
     type: VariableType = "text"
     options: list[str] | None = None
     help_text: str | None = None
+    computed: ComputedSpec | None = None
 
 
 class VariableTypeOverride(BaseModel):
@@ -21,6 +71,7 @@ class VariableTypeOverride(BaseModel):
     type: VariableType
     options: list[str] | None = None
     help_text: str | None = None
+    computed: ComputedSpec | None = None
 
     @model_validator(mode="after")
     def validate_select_has_options(self) -> "VariableTypeOverride":

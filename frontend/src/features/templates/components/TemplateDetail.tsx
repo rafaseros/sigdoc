@@ -4,6 +4,8 @@ import { toast } from "sonner";
 import { useDropzone } from "react-dropzone";
 import {
   ArrowLeft,
+  Bookmark,
+  Calculator,
   FileText,
   Files,
   Trash2,
@@ -27,7 +29,13 @@ import {
   useTemplateShares,
 } from "@/features/templates/api";
 import { useDocuments } from "@/features/documents/api/queries";
-import type { VariableMeta, VariableType } from "@/features/templates/api/queries";
+import type {
+  ComputedConfig,
+  ComputedFunctionName,
+  ComputedOperator,
+  VariableMeta,
+  VariableType,
+} from "@/features/templates/api/queries";
 import {
   useUpdateVariableTypes,
   type VariableTypeOverrideInput,
@@ -62,6 +70,7 @@ import { ShareTemplateDialog } from "./ShareTemplateDialog";
 import { RenameTemplateDialog } from "./RenameTemplateDialog";
 import { MoveToFolderDialog } from "./MoveToFolderDialog";
 import { SharesTab } from "./SharesTab";
+import { PresetsTab } from "./PresetsTab";
 
 function formatFileSize(bytes: number): string {
   if (bytes === 0) return "0 B";
@@ -91,17 +100,45 @@ const TYPE_LABELS: Record<VariableType, string> = {
   select: "Selección",
 };
 
-interface VariableRowState {
+const OPERATOR_LABELS: Record<ComputedOperator, string> = {
+  "+": "+",
+  "-": "−",
+  "*": "×",
+  "/": "÷",
+};
+
+const COMPUTED_FUNCTION_LABELS: Record<ComputedFunctionName, string> = {
+  number_to_words: "Número a literal",
+};
+
+export interface VariableRowState {
   type: VariableType;
   optionsText: string;
   helpText: string;
+  computedEnabled: boolean;
+  computedKind: "formula" | "function";
+  computedSource: string;
+  computedOperator: ComputedOperator;
+  /** Kept as a string so the operand <Input> can hold intermediate/invalid
+   * text (e.g. "-", "1.") without being clobbered on every keystroke. */
+  computedOperand: string;
+  computedFunction: ComputedFunctionName;
 }
 
-function initRow(meta: VariableMeta): VariableRowState {
+export function initRow(meta: VariableMeta): VariableRowState {
+  const computed = meta.computed ?? null;
   return {
     type: meta.type ?? "text",
     optionsText: meta.options ? meta.options.join("\n") : "",
     helpText: meta.help_text ?? "",
+    computedEnabled: computed != null,
+    computedKind: computed?.kind ?? "formula",
+    computedSource: computed?.source ?? "",
+    computedOperator: computed?.kind === "formula" ? computed.operator : "+",
+    computedOperand:
+      computed?.kind === "formula" ? String(computed.operand) : "",
+    computedFunction:
+      computed?.kind === "function" ? computed.function : "number_to_words",
   };
 }
 
@@ -110,6 +147,61 @@ function optionsTextToList(raw: string): string[] {
     .split("\n")
     .map((l) => l.trim())
     .filter((l) => l.length > 0);
+}
+
+/** True when `raw` (the operand <Input>'s current string value) trims to a
+ * non-empty string that parses to a finite number. Used to BLOCK Save (and
+ * show an inline hint) for an empty or non-numeric formula operand — for
+ * EVERY operator, not just "/" — since an unparseable operand would
+ * otherwise silently fall back to 0 via `buildComputedConfig` below (e.g.
+ * "*" with a blank operand would compute `total * 0` without warning). */
+export function isValidComputedOperand(raw: string): boolean {
+  const trimmed = raw.trim();
+  if (trimmed === "") return false;
+  return Number.isFinite(Number(trimmed));
+}
+
+/** Pure payload builder — kept separate from the component so it stays
+ * testable in isolation without mounting `VariablesTab` (see
+ * VariablesTab.test.tsx). */
+export function buildComputedConfig(row: VariableRowState): ComputedConfig {
+  if (!row.computedEnabled) return null;
+  if (row.computedKind === "function") {
+    return {
+      kind: "function",
+      function: row.computedFunction,
+      source: row.computedSource,
+    };
+  }
+  const operand = parseFloat(row.computedOperand);
+  return {
+    kind: "formula",
+    source: row.computedSource,
+    operator: row.computedOperator,
+    operand: Number.isFinite(operand) ? operand : 0,
+  };
+}
+
+/** Builds the `variables-meta` PATCH payload from the current row state.
+ * Options are only ever sent for non-computed "select" variables — the
+ * server forces decimal/text for computed variables. */
+export function buildVariableOverrides(
+  variablesMeta: VariableMeta[],
+  rows: Record<string, VariableRowState>,
+): VariableTypeOverrideInput[] {
+  return variablesMeta.map((m) => {
+    const row = rows[m.name] ?? initRow(m);
+    const computed = buildComputedConfig(row);
+    const options =
+      !computed && row.type === "select" ? optionsTextToList(row.optionsText) : null;
+    return {
+      name: m.name,
+      type: row.type,
+      options,
+      help_text: row.helpText.trim() !== "" ? row.helpText.trim() : null,
+      computed,
+    };
+  });
 }
 
 interface VariablesTabProps {
@@ -148,7 +240,7 @@ function ParagraphPreview({ text, active }: { text: string; active: string }) {
   );
 }
 
-function VariablesTab({ templateId, versionId, variablesMeta, isOwner }: VariablesTabProps) {
+export function VariablesTab({ templateId, versionId, variablesMeta, isOwner }: VariablesTabProps) {
   const [rows, setRows] = useState<Record<string, VariableRowState>>(() =>
     Object.fromEntries(variablesMeta.map((m) => [m.name, initRow(m)]))
   );
@@ -175,29 +267,95 @@ function VariablesTab({ templateId, versionId, variablesMeta, isOwner }: Variabl
     setIsDirty(true);
   }
 
+  function setRowComputedEnabled(name: string, enabled: boolean) {
+    setRows((prev) => ({
+      ...prev,
+      [name]: { ...prev[name], computedEnabled: enabled },
+    }));
+    setIsDirty(true);
+  }
+
+  function setRowComputedKind(name: string, kind: "formula" | "function") {
+    setRows((prev) => ({ ...prev, [name]: { ...prev[name], computedKind: kind } }));
+    setIsDirty(true);
+  }
+
+  function setRowComputedSource(name: string, source: string) {
+    setRows((prev) => ({
+      ...prev,
+      [name]: { ...prev[name], computedSource: source },
+    }));
+    setIsDirty(true);
+  }
+
+  function setRowComputedOperator(name: string, operator: ComputedOperator) {
+    setRows((prev) => ({
+      ...prev,
+      [name]: { ...prev[name], computedOperator: operator },
+    }));
+    setIsDirty(true);
+  }
+
+  function setRowComputedOperand(name: string, operand: string) {
+    setRows((prev) => ({
+      ...prev,
+      [name]: { ...prev[name], computedOperand: operand },
+    }));
+    setIsDirty(true);
+  }
+
+  function setRowComputedFunction(name: string, fn: ComputedFunctionName) {
+    setRows((prev) => ({
+      ...prev,
+      [name]: { ...prev[name], computedFunction: fn },
+    }));
+    setIsDirty(true);
+  }
+
   function handleDiscard() {
     setRows(Object.fromEntries(variablesMeta.map((m) => [m.name, initRow(m)])));
     setIsDirty(false);
   }
 
   function handleSave() {
-    const overrides: VariableTypeOverrideInput[] = variablesMeta.map((m) => {
-      const row = rows[m.name] ?? initRow(m);
-      const options = row.type === "select" ? optionsTextToList(row.optionsText) : null;
-      return {
-        name: m.name,
-        type: row.type,
-        options,
-        help_text: row.helpText.trim() !== "" ? row.helpText.trim() : null,
-      };
-    });
+    const overrides = buildVariableOverrides(variablesMeta, rows);
 
-    for (const o of overrides) {
-      if (o.type === "select" && (!o.options || o.options.length === 0)) {
+    for (const m of variablesMeta) {
+      const row = rows[m.name] ?? initRow(m);
+      const o = overrides.find((ov) => ov.name === m.name);
+      if (!o) continue;
+
+      if (!o.computed && o.type === "select" && (!o.options || o.options.length === 0)) {
         toast.error(
           `La variable "${o.name}" es de tipo Selección pero no tiene opciones. Ingrese al menos una opción.`
         );
         return;
+      }
+
+      if (row.computedEnabled) {
+        if (!row.computedSource) {
+          toast.error(
+            `La variable calculada "${m.name}" necesita una variable de origen.`
+          );
+          return;
+        }
+        if (
+          row.computedKind === "formula" &&
+          !isValidComputedOperand(row.computedOperand)
+        ) {
+          toast.error("El operando debe ser un número válido.");
+          return;
+        }
+        if (
+          o.computed?.kind === "formula" &&
+          o.computed.operator === "/" &&
+          o.computed.operand === 0
+        ) {
+          toast.error(
+            `La variable calculada "${m.name}" no puede dividir por 0.`
+          );
+          return;
+        }
       }
     }
 
@@ -225,6 +383,24 @@ function VariablesTab({ templateId, versionId, variablesMeta, isOwner }: Variabl
   const activeRow = activeMeta
     ? rows[activeMeta.name] ?? initRow(activeMeta)
     : null;
+
+  // Candidates for a computed variable's source: numeric (integer/decimal),
+  // not computed itself, and not the variable being configured — matches
+  // the backend contract ("Source is always a NON-computed variable of type
+  // integer/decimal"). Derived from the LIVE row state so a type change made
+  // earlier in this same editing session is immediately reflected.
+  const numericSourceCandidates = useMemo(
+    () =>
+      variablesMeta.filter((m) => {
+        if (m.name === activeMeta?.name) return false;
+        const row = rows[m.name] ?? initRow(m);
+        return (
+          (row.type === "integer" || row.type === "decimal") &&
+          !row.computedEnabled
+        );
+      }),
+    [variablesMeta, rows, activeMeta]
+  );
 
   if (variablesMeta.length === 0) {
     return (
@@ -341,6 +517,7 @@ function VariablesTab({ templateId, versionId, variablesMeta, isOwner }: Variabl
                         onValueChange={(v) =>
                           setRowType(activeMeta.name, v as VariableType)
                         }
+                        disabled={activeRow.computedEnabled}
                       >
                         <SelectTrigger>
                           <SelectValue />
@@ -355,6 +532,12 @@ function VariablesTab({ templateId, versionId, variablesMeta, isOwner }: Variabl
                           )}
                         </SelectContent>
                       </Select>
+                      {activeRow.computedEnabled && (
+                        <p className="text-[11px] text-[var(--fg-3)]">
+                          El servidor define el tipo automáticamente para
+                          variables calculadas.
+                        </p>
+                      )}
                     </div>
                     <div className="grid gap-1.5">
                       <Label className="text-[12.5px] font-medium text-[var(--fg-2)]">
@@ -369,7 +552,7 @@ function VariablesTab({ templateId, versionId, variablesMeta, isOwner }: Variabl
                       />
                     </div>
                   </div>
-                  {activeRow.type === "select" && (
+                  {activeRow.type === "select" && !activeRow.computedEnabled && (
                     <div className="mt-3 grid gap-1.5">
                       <Label className="text-[12.5px] font-medium text-[var(--fg-2)]">
                         Opciones (una por línea)
@@ -384,9 +567,209 @@ function VariablesTab({ templateId, versionId, variablesMeta, isOwner }: Variabl
                       />
                     </div>
                   )}
+
+                  {/* Computed configuration */}
+                  <div className="mt-4 border-t border-[rgba(195,198,215,0.20)] pt-4">
+                    <div className="flex items-start gap-3">
+                      <input
+                        id={`computed-toggle-${activeMeta.name}`}
+                        type="checkbox"
+                        checked={activeRow.computedEnabled}
+                        onChange={(e) =>
+                          setRowComputedEnabled(activeMeta.name, e.target.checked)
+                        }
+                        className="mt-0.5 size-4 rounded border-input"
+                      />
+                      <div className="flex-1">
+                        <Label
+                          htmlFor={`computed-toggle-${activeMeta.name}`}
+                          className="text-sm font-semibold text-[var(--fg-1)]"
+                        >
+                          Variable calculada
+                        </Label>
+                        <p className="text-[11.5px] text-[var(--fg-3)]">
+                          El servidor calcula el valor automáticamente a
+                          partir de otra variable numérica; no podrá
+                          ingresarse manualmente.
+                        </p>
+                      </div>
+                    </div>
+
+                    {activeRow.computedEnabled && (
+                      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                        <div className="grid gap-1.5">
+                          <Label className="text-[12.5px] font-medium text-[var(--fg-2)]">
+                            Tipo de cálculo
+                          </Label>
+                          <Select
+                            value={activeRow.computedKind}
+                            onValueChange={(v) =>
+                              setRowComputedKind(
+                                activeMeta.name,
+                                v as "formula" | "function"
+                              )
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="formula">Fórmula</SelectItem>
+                              <SelectItem value="function">Función</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div className="grid gap-1.5">
+                          <Label className="text-[12.5px] font-medium text-[var(--fg-2)]">
+                            Variable de origen
+                          </Label>
+                          <Select
+                            value={activeRow.computedSource || null}
+                            onValueChange={(v) =>
+                              setRowComputedSource(
+                                activeMeta.name,
+                                (v as string) ?? ""
+                              )
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Elegir variable…">
+                                {(v: unknown) => (v as string) ?? ""}
+                              </SelectValue>
+                            </SelectTrigger>
+                            <SelectContent>
+                              {numericSourceCandidates.map((c) => (
+                                <SelectItem key={c.name} value={c.name}>
+                                  {c.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          {numericSourceCandidates.length === 0 && (
+                            <p className="text-[11px] text-[#93000a]">
+                              No hay variables numéricas disponibles como
+                              origen. El campo seleccionado debe ser de tipo
+                              número.
+                            </p>
+                          )}
+                        </div>
+
+                        {activeRow.computedKind === "formula" ? (
+                          <>
+                            <div className="grid gap-1.5">
+                              <Label className="text-[12.5px] font-medium text-[var(--fg-2)]">
+                                Operador
+                              </Label>
+                              <Select
+                                value={activeRow.computedOperator}
+                                onValueChange={(v) =>
+                                  setRowComputedOperator(
+                                    activeMeta.name,
+                                    v as ComputedOperator
+                                  )
+                                }
+                              >
+                                <SelectTrigger>
+                                  <SelectValue>
+                                    {(v: unknown) =>
+                                      OPERATOR_LABELS[v as ComputedOperator] ??
+                                      String(v)
+                                    }
+                                  </SelectValue>
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {(
+                                    Object.entries(OPERATOR_LABELS) as [
+                                      ComputedOperator,
+                                      string,
+                                    ][]
+                                  ).map(([val, label]) => (
+                                    <SelectItem key={val} value={val}>
+                                      {label}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div className="grid gap-1.5">
+                              <Label className="text-[12.5px] font-medium text-[var(--fg-2)]">
+                                Operando
+                              </Label>
+                              <Input
+                                type="number"
+                                value={activeRow.computedOperand}
+                                onChange={(e) =>
+                                  setRowComputedOperand(
+                                    activeMeta.name,
+                                    e.target.value
+                                  )
+                                }
+                                placeholder="ej. 1.10"
+                              />
+                              {activeRow.computedOperator === "/" &&
+                                parseFloat(activeRow.computedOperand) === 0 && (
+                                  <p className="text-[11px] text-[#93000a]">
+                                    El operando no puede ser 0 cuando el
+                                    operador es ÷.
+                                  </p>
+                                )}
+                              {!isValidComputedOperand(
+                                activeRow.computedOperand
+                              ) && (
+                                <p className="text-[11px] text-[#93000a]">
+                                  El operando debe ser un número válido.
+                                </p>
+                              )}
+                            </div>
+                          </>
+                        ) : (
+                          <div className="grid gap-1.5 sm:col-span-2">
+                            <Label className="text-[12.5px] font-medium text-[var(--fg-2)]">
+                              Función
+                            </Label>
+                            <Select
+                              value={activeRow.computedFunction}
+                              onValueChange={(v) =>
+                                setRowComputedFunction(
+                                  activeMeta.name,
+                                  v as ComputedFunctionName
+                                )
+                              }
+                            >
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {(
+                                  Object.entries(COMPUTED_FUNCTION_LABELS) as [
+                                    ComputedFunctionName,
+                                    string,
+                                  ][]
+                                ).map(([val, label]) => (
+                                  <SelectItem key={val} value={val}>
+                                    {label}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <p className="text-[11px] text-[var(--fg-3)]">
+                              El campo seleccionado debe ser de tipo número.
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </>
               ) : (
                 <div className="space-y-2">
+                  {activeMeta.computed && (
+                    <div className="flex items-center gap-1.5 text-[12.5px] font-medium text-[#5b21b6]">
+                      <Calculator className="size-3.5" />
+                      Variable calculada automáticamente
+                    </div>
+                  )}
                   {activeMeta.help_text && (
                     <p className="m-0 text-[13px] italic text-[var(--fg-2)]">
                       {activeMeta.help_text}
@@ -500,7 +883,13 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
   const [moveDialogOpen, setMoveDialogOpen] = useState(false);
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  type DetailTab = "info" | "variables" | "versions" | "shares" | "documents";
+  type DetailTab =
+    | "info"
+    | "variables"
+    | "versions"
+    | "shares"
+    | "documents"
+    | "presets";
   const [activeTab, setActiveTab] = useState<DetailTab>("info");
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
@@ -730,6 +1119,13 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
             >
               Documentos
             </SidebarItem>
+            <SidebarItem
+              icon={<Bookmark className="size-4" />}
+              active={activeTab === "presets"}
+              onClick={() => setActiveTab("presets")}
+            >
+              Datos guardados
+            </SidebarItem>
           </nav>
         </aside>
 
@@ -950,6 +1346,13 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
           )}
 
           {activeTab === "documents" && <DocumentsTab templateId={templateId} />}
+
+          {activeTab === "presets" && (
+            <PresetsTab
+              templateId={templateId}
+              variablesMeta={currentVersion?.variables_meta ?? []}
+            />
+          )}
         </div>
       </div>
 

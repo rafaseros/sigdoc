@@ -156,6 +156,7 @@ function GeneratePage() {
         <Skeleton className="h-96 w-full rounded-xl" />
       ) : structure && !structureError ? (
         <FullDocumentEditor
+          templateId={templateId}
           templateVersionId={versionId}
           templateName={template.name}
           variablesMeta={variablesMeta}

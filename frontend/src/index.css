@@ -231,6 +231,13 @@
   color: var(--fg-3);
   border: 1px solid rgba(195, 198, 215, 0.30);
 }
+/* Computed variables (formula/function) — server-owned, never editable.
+   Violet tint keeps it visually distinct from the active/muted states. */
+.var-chip-computed {
+  background: linear-gradient(135deg, #ede9fe, #ddd6fe);
+  color: #5b21b6;
+  border: 1px solid #a78bfa;
+}
 
 /* Uppercase meta label (eyebrow) */
 .sd-meta {

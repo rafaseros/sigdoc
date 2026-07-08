@@ -12,6 +12,7 @@ from app.application.services import get_document_service
 from app.application.services.document_service import DocumentService
 from app.domain.exceptions import (
     BulkLimitExceededError,
+    ComputedVariableError,
     DocumentNotFoundError,
     PdfConversionError,
     TemplateAccessDeniedError,
@@ -72,6 +73,8 @@ async def generate_document(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
     except TemplateVersionNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template version not found")
+    except ComputedVariableError as e:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
     except PdfConversionError:
         # REQ-DDF-05 / W-03: map to 503 — do NOT leak internal details
         raise HTTPException(
@@ -118,6 +121,8 @@ async def preview_document(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
     except TemplateVersionNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template version not found")
+    except ComputedVariableError as e:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
     except PdfConversionError:
         # REQ-DDF-05: PdfConversionError → HTTP 503 — same mapping as the
         # other document endpoints.
@@ -216,6 +221,8 @@ async def generate_bulk(
         )
     except TemplateAccessDeniedError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except ComputedVariableError as e:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
     except PdfConversionError:
         # REQ-DDF-05 / W-04: atomic rollback already done in service — map to 503
         raise HTTPException(

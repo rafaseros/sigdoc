@@ -1708,6 +1708,311 @@ class TestUpdateVariableTypes:
 
 
 # ---------------------------------------------------------------------------
+# update_variable_types — computed variables (formulas + functions)
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateVariableTypesComputed:
+    """Computed-variable validation and normalization in the PATCH
+    variables-meta endpoint's service layer."""
+
+    async def _seed(
+        self,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+        variables: list[str],
+    ):
+        service = make_service(fake_template_repo, fake_storage, fake_template_engine)
+        tenant_id = str(uuid.uuid4())
+        owner_id = str(uuid.uuid4())
+        fake_template_engine.variables_to_return = variables
+        tpl = await service.upload_template(
+            name=f"Plantilla Computed {uuid.uuid4()}",
+            file_bytes=b"fake-docx",
+            file_size=9,
+            tenant_id=tenant_id,
+            created_by=owner_id,
+        )
+        return service, tpl
+
+    async def test_formula_override_normalizes_type_to_decimal(
+        self,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        service, tpl = await self._seed(
+            fake_template_repo, fake_storage, fake_template_engine, ["monto", "total"]
+        )
+        version = tpl.versions[0]
+
+        from app.presentation.schemas.template import ComputedFormula, VariableTypeOverride
+
+        overrides = [
+            VariableTypeOverride(name="monto", type="decimal"),
+            VariableTypeOverride(
+                name="total",
+                type="text",  # deliberately wrong — must be normalized to "decimal"
+                computed=ComputedFormula(source="monto", operator="+", operand=100),
+            ),
+        ]
+        updated = await service.update_variable_types(
+            template_id=tpl.id,
+            version_id=version.id,
+            overrides=overrides,
+            current_user_id=tpl.created_by,
+        )
+        meta_by_name = {m["name"]: m for m in updated.variables_meta}
+        assert meta_by_name["total"]["type"] == "decimal"
+        assert meta_by_name["total"]["computed"]["kind"] == "formula"
+
+    async def test_function_override_normalizes_type_to_text(
+        self,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        service, tpl = await self._seed(
+            fake_template_repo, fake_storage, fake_template_engine, ["monto", "monto_en_letras"]
+        )
+        version = tpl.versions[0]
+
+        from app.presentation.schemas.template import ComputedFunctionSpec, VariableTypeOverride
+
+        overrides = [
+            VariableTypeOverride(name="monto", type="decimal"),
+            VariableTypeOverride(
+                name="monto_en_letras",
+                type="integer",  # deliberately wrong — must be normalized to "text"
+                computed=ComputedFunctionSpec(function="number_to_words", source="monto"),
+            ),
+        ]
+        updated = await service.update_variable_types(
+            template_id=tpl.id,
+            version_id=version.id,
+            overrides=overrides,
+            current_user_id=tpl.created_by,
+        )
+        meta_by_name = {m["name"]: m for m in updated.variables_meta}
+        assert meta_by_name["monto_en_letras"]["type"] == "text"
+        assert meta_by_name["monto_en_letras"]["computed"]["function"] == "number_to_words"
+
+    async def test_unknown_source_raises_validation_error(
+        self,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        service, tpl = await self._seed(
+            fake_template_repo, fake_storage, fake_template_engine, ["total"]
+        )
+        version = tpl.versions[0]
+
+        from app.presentation.schemas.template import ComputedFormula, VariableTypeOverride
+
+        overrides = [
+            VariableTypeOverride(
+                name="total",
+                type="decimal",
+                computed=ComputedFormula(source="no_existe", operator="+", operand=1),
+            ),
+        ]
+
+        from app.domain.exceptions import ComputedVariableValidationError
+
+        with pytest.raises(ComputedVariableValidationError):
+            await service.update_variable_types(
+                template_id=tpl.id,
+                version_id=version.id,
+                overrides=overrides,
+                current_user_id=tpl.created_by,
+            )
+
+    async def test_non_numeric_source_raises_validation_error(
+        self,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        service, tpl = await self._seed(
+            fake_template_repo, fake_storage, fake_template_engine, ["nombre", "total"]
+        )
+        version = tpl.versions[0]
+
+        from app.presentation.schemas.template import ComputedFormula, VariableTypeOverride
+
+        overrides = [
+            VariableTypeOverride(name="nombre", type="text"),
+            VariableTypeOverride(
+                name="total",
+                type="decimal",
+                computed=ComputedFormula(source="nombre", operator="+", operand=1),
+            ),
+        ]
+
+        from app.domain.exceptions import ComputedVariableValidationError
+
+        with pytest.raises(ComputedVariableValidationError):
+            await service.update_variable_types(
+                template_id=tpl.id,
+                version_id=version.id,
+                overrides=overrides,
+                current_user_id=tpl.created_by,
+            )
+
+    async def test_chained_computed_source_raises_validation_error(
+        self,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        """A computed variable's source must NOT itself be computed (v1: no chaining)."""
+        service, tpl = await self._seed(
+            fake_template_repo,
+            fake_storage,
+            fake_template_engine,
+            ["monto", "total", "total_en_letras"],
+        )
+        version = tpl.versions[0]
+
+        from app.presentation.schemas.template import (
+            ComputedFormula,
+            ComputedFunctionSpec,
+            VariableTypeOverride,
+        )
+
+        overrides = [
+            VariableTypeOverride(name="monto", type="decimal"),
+            VariableTypeOverride(
+                name="total",
+                type="decimal",
+                computed=ComputedFormula(source="monto", operator="+", operand=1),
+            ),
+            VariableTypeOverride(
+                name="total_en_letras",
+                type="text",
+                computed=ComputedFunctionSpec(function="number_to_words", source="total"),
+            ),
+        ]
+
+        from app.domain.exceptions import ComputedVariableValidationError
+
+        with pytest.raises(ComputedVariableValidationError):
+            await service.update_variable_types(
+                template_id=tpl.id,
+                version_id=version.id,
+                overrides=overrides,
+                current_user_id=tpl.created_by,
+            )
+
+    async def test_self_referencing_source_raises_validation_error(
+        self,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        service, tpl = await self._seed(
+            fake_template_repo, fake_storage, fake_template_engine, ["total"]
+        )
+        version = tpl.versions[0]
+
+        from app.presentation.schemas.template import ComputedFormula, VariableTypeOverride
+
+        overrides = [
+            VariableTypeOverride(
+                name="total",
+                type="decimal",
+                computed=ComputedFormula(source="total", operator="+", operand=1),
+            ),
+        ]
+
+        from app.domain.exceptions import ComputedVariableValidationError
+
+        with pytest.raises(ComputedVariableValidationError):
+            await service.update_variable_types(
+                template_id=tpl.id,
+                version_id=version.id,
+                overrides=overrides,
+                current_user_id=tpl.created_by,
+            )
+
+    async def test_clearing_computed_by_omitting_it_in_override(
+        self,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        """Submitting an override without `computed` clears any previously
+        stored computed spec (full-replace semantics, matching type/options)."""
+        service, tpl = await self._seed(
+            fake_template_repo, fake_storage, fake_template_engine, ["monto", "total"]
+        )
+        version = tpl.versions[0]
+
+        from app.presentation.schemas.template import ComputedFormula, VariableTypeOverride
+
+        first_overrides = [
+            VariableTypeOverride(name="monto", type="decimal"),
+            VariableTypeOverride(
+                name="total",
+                type="decimal",
+                computed=ComputedFormula(source="monto", operator="+", operand=1),
+            ),
+        ]
+        await service.update_variable_types(
+            template_id=tpl.id,
+            version_id=version.id,
+            overrides=first_overrides,
+            current_user_id=tpl.created_by,
+        )
+
+        second_overrides = [VariableTypeOverride(name="total", type="decimal")]
+        updated = await service.update_variable_types(
+            template_id=tpl.id,
+            version_id=version.id,
+            overrides=second_overrides,
+            current_user_id=tpl.created_by,
+        )
+        meta_by_name = {m["name"]: m for m in updated.variables_meta}
+        assert meta_by_name["total"].get("computed") is None
+
+    async def test_source_validated_against_merged_meta_including_other_overrides(
+        self,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        """A source variable being retyped to integer/decimal IN THE SAME
+        request must satisfy the computed variable that depends on it."""
+        service, tpl = await self._seed(
+            fake_template_repo, fake_storage, fake_template_engine, ["monto", "total"]
+        )
+        version = tpl.versions[0]
+
+        from app.presentation.schemas.template import ComputedFormula, VariableTypeOverride
+
+        # 'monto' starts as default type "text"; this same batch retypes it
+        # to "integer" AND introduces a computed variable depending on it.
+        overrides = [
+            VariableTypeOverride(name="monto", type="integer"),
+            VariableTypeOverride(
+                name="total",
+                type="decimal",
+                computed=ComputedFormula(source="monto", operator="+", operand=1),
+            ),
+        ]
+        updated = await service.update_variable_types(
+            template_id=tpl.id,
+            version_id=version.id,
+            overrides=overrides,
+            current_user_id=tpl.created_by,
+        )
+        meta_by_name = {m["name"]: m for m in updated.variables_meta}
+        assert meta_by_name["total"]["computed"]["source"] == "monto"
+
+
+# ---------------------------------------------------------------------------
 # update_template
 # ---------------------------------------------------------------------------
 

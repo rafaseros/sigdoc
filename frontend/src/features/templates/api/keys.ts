@@ -19,3 +19,9 @@ export const folderKeys = {
   all: ["folders"] as const,
   lists: () => [...folderKeys.all, "list"] as const,
 };
+
+export const presetKeys = {
+  all: ["presets"] as const,
+  lists: () => [...presetKeys.all, "list"] as const,
+  list: (templateId: string) => [...presetKeys.lists(), templateId] as const,
+};

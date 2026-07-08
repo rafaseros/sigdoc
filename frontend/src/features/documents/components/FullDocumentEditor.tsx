@@ -32,9 +32,18 @@ import {
 } from "react";
 import type { RefObject } from "react";
 import { Select as BaseSelect } from "@base-ui/react/select";
-import { Check, ChevronDown, Eye, FileText, Sparkles } from "lucide-react";
+import {
+  Calculator,
+  Check,
+  ChevronDown,
+  Eye,
+  FileText,
+  Save,
+  Sparkles,
+} from "lucide-react";
 import { toast } from "sonner";
 
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -42,11 +51,22 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 import { useGenerateDocument, usePreviewDocument } from "../api/mutations";
+import { computeFormulaValue } from "../lib/computed";
 import { DownloadButton } from "./DownloadButton";
+import { SavePresetDialog } from "./SavePresetDialog";
 
+import { usePresets } from "@/features/templates/api/presets";
 import type {
   StructureNode,
   StructureSpan,
@@ -54,6 +74,7 @@ import type {
   TemplateStructure,
 } from "@/features/templates/api/queries";
 import type {
+  ComputedConfig,
   VariableMeta,
   VariableType,
 } from "@/features/templates/api/queries";
@@ -63,6 +84,7 @@ import type {
 // ---------------------------------------------------------------------------
 
 interface FullDocumentEditorProps {
+  templateId: string;
   templateVersionId: string;
   templateName: string;
   variablesMeta: VariableMeta[];
@@ -389,6 +411,49 @@ function InlineSelectInput({
 }
 
 // ---------------------------------------------------------------------------
+// ComputedPill — not clickable, never enters edit mode. The server owns the
+// real value on generate/preview; this only renders a live client-side
+// preview (formula) or a placeholder label (function).
+// ---------------------------------------------------------------------------
+
+interface ComputedPillProps {
+  varName: string;
+  computed: NonNullable<ComputedConfig>;
+  /** Current value of the computed config's source variable (formula only). */
+  sourceValue: string;
+}
+
+const ComputedPill = memo(function ComputedPill({
+  varName,
+  computed,
+  sourceValue,
+}: ComputedPillProps) {
+  const title = `Variable calculada automáticamente: ${humanLabel(varName)}`;
+
+  if (computed.kind === "function") {
+    return (
+      <span className="var-chip var-chip-computed cursor-default" title={title}>
+        <Calculator aria-hidden="true" className="mr-1 inline size-3" />
+        (automático)
+      </span>
+    );
+  }
+
+  const result = computeFormulaValue(
+    sourceValue,
+    computed.operator,
+    computed.operand,
+  );
+
+  return (
+    <span className="var-chip var-chip-computed cursor-default" title={title}>
+      <Calculator aria-hidden="true" className="mr-1 inline size-3" />
+      {result}
+    </span>
+  );
+});
+
+// ---------------------------------------------------------------------------
 // Block renderers — text, list, table
 // ---------------------------------------------------------------------------
 
@@ -428,13 +493,27 @@ function renderSpans(
       return <Fragment key={spanIdx}>{span.text}</Fragment>;
     }
     const key = instanceKey(prefix, spanIdx);
+    const meta = metaByName[span.variable];
+    const computed = meta?.computed;
+    if (computed) {
+      return (
+        <ComputedPill
+          key={key}
+          varName={span.variable}
+          computed={computed}
+          sourceValue={
+            computed.kind === "formula" ? values[computed.source] ?? "" : ""
+          }
+        />
+      );
+    }
     return (
       <PlaceholderPill
         key={key}
         instanceKey={key}
         varName={span.variable}
         value={values[span.variable] ?? ""}
-        meta={metaByName[span.variable]}
+        meta={meta}
         isEditing={editingKey === key}
         onOpenChange={onOpenChange}
         onCommit={onCommit}
@@ -579,6 +658,7 @@ function TableNode({
 // ---------------------------------------------------------------------------
 
 export function FullDocumentEditor({
+  templateId,
   templateVersionId,
   templateName,
   variablesMeta,
@@ -590,11 +670,22 @@ export function FullDocumentEditor({
   const [generated, setGenerated] = useState<GeneratedInfo | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [savePresetOpen, setSavePresetOpen] = useState(false);
 
   const metaByName = useMemo(
     () => Object.fromEntries(variablesMeta.map((m) => [m.name, m])),
     [variablesMeta],
   );
+
+  const isComputed = useCallback(
+    (name: string) => !!metaByName[name]?.computed,
+    [metaByName],
+  );
+
+  // Presets are per-template, additive to the editor — loading them must
+  // never block rendering the document (no isLoading gate below).
+  const { data: presetsData } = usePresets(templateId);
+  const presets = presetsData ?? [];
 
   const generateMutation = useGenerateDocument();
   const previewMutation = usePreviewDocument();
@@ -633,18 +724,36 @@ export function FullDocumentEditor({
     valuesRef.current = values;
   }, [values]);
 
+  // `distinctVarNames` includes computed variables — the panel still lists
+  // them (with an "Auto" badge). Progress counts and submitted payloads use
+  // `editableVarNames`/`nonComputedValues` below instead, which exclude them.
   const distinctVarNames = useMemo(() => {
     const seen = new Set<string>();
     for (const inst of instances) seen.add(inst.varName);
     return Array.from(seen);
   }, [instances]);
 
-  const filledCount = distinctVarNames.filter(
+  const editableVarNames = useMemo(
+    () => distinctVarNames.filter((n) => !isComputed(n)),
+    [distinctVarNames, isComputed],
+  );
+
+  const filledCount = editableVarNames.filter(
     (n) => (values[n] ?? "").trim().length > 0,
   ).length;
-  const totalCount = distinctVarNames.length;
+  const totalCount = editableVarNames.length;
   const allFilled = filledCount === totalCount && totalCount > 0;
   const progress = totalCount === 0 ? 100 : (filledCount / totalCount) * 100;
+
+  // Computed variables are server-owned — the frontend must never send a
+  // value for them, even if one leaked into `values` via a preset merge.
+  const nonComputedValues = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const [name, value] of Object.entries(values)) {
+      if (!isComputed(name)) out[name] = value;
+    }
+    return out;
+  }, [values, isComputed]);
 
   const handleOpenChange = useCallback<OpenChangeHandler>((key, open) => {
     setEditingKey((current) => {
@@ -663,12 +772,14 @@ export function FullDocumentEditor({
       }
 
       // Find next pending instance using the post-commit values snapshot.
+      // Computed instances are never "pending" — the user cannot fill them.
       const nextValues = { ...valuesRef.current, [varName]: value };
       const startIdx = instances.findIndex((i) => i.key === key);
       let nextKey: string | null = null;
       if (startIdx !== -1) {
         for (let i = startIdx + 1; i < instances.length; i++) {
           const inst = instances[i];
+          if (isComputed(inst.varName)) continue;
           if (!nextValues[inst.varName] || nextValues[inst.varName].trim() === "") {
             nextKey = inst.key;
             break;
@@ -677,7 +788,24 @@ export function FullDocumentEditor({
       }
       setEditingKey(nextKey);
     },
-    [instances],
+    [instances, isComputed],
+  );
+
+  const handleApplyPreset = useCallback(
+    (presetId: string) => {
+      const preset = presets.find((p) => p.id === presetId);
+      if (!preset) return;
+      const editableNames = new Set(editableVarNames);
+      setValues((prev) => {
+        const next = { ...prev };
+        for (const [name, value] of Object.entries(preset.values)) {
+          if (editableNames.has(name)) next[name] = value;
+        }
+        return next;
+      });
+      toast.success(`Datos de «${preset.name}» cargados`);
+    },
+    [presets, editableVarNames],
   );
 
   const handleGenerate = () => {
@@ -688,7 +816,7 @@ export function FullDocumentEditor({
       return;
     }
     generateMutation.mutate(
-      { template_version_id: templateVersionId, variables: values },
+      { template_version_id: templateVersionId, variables: nonComputedValues },
       {
         onSuccess: (doc) => {
           toast.success("Documento generado");
@@ -715,7 +843,7 @@ export function FullDocumentEditor({
     });
     const requestId = ++previewRequestIdRef.current;
     previewMutation.mutate(
-      { template_version_id: templateVersionId, variables: values },
+      { template_version_id: templateVersionId, variables: nonComputedValues },
       {
         onSuccess: (data) => {
           const newUrl = URL.createObjectURL(
@@ -786,15 +914,45 @@ export function FullDocumentEditor({
       <div className="flex min-w-0 flex-col gap-4">
         {/* Top progress card */}
         <div className="rounded-xl bg-white p-4 shadow-[var(--shadow-sm)] ring-1 ring-[rgba(195,198,215,0.30)]">
-          <div className="mb-2">
-            <div className="text-[13px] font-semibold text-[var(--fg-1)]">
-              Progreso de la generación
+          <div className="mb-2 flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="text-[13px] font-semibold text-[var(--fg-1)]">
+                Progreso de la generación
+              </div>
+              <div className="text-[11.5px] text-[var(--fg-3)]">
+                {filledCount} de {totalCount} variable
+                {totalCount === 1 ? "" : "s"} completada
+                {filledCount === 1 ? "" : "s"}
+              </div>
             </div>
-            <div className="text-[11.5px] text-[var(--fg-3)]">
-              {filledCount} de {totalCount} variable
-              {totalCount === 1 ? "" : "s"} completada
-              {filledCount === 1 ? "" : "s"}
-            </div>
+            {/* Preset picker — always controlled back to `null` so the
+                trigger keeps showing the placeholder instead of needing an
+                explicit id→label resolver (see MoveToFolderDialog for that
+                pattern when a persistent selection is actually needed). */}
+            {presets.length > 0 && (
+              <div className="flex items-center gap-2">
+                <Label className="shrink-0 text-[11.5px] text-[var(--fg-3)]">
+                  Datos guardados
+                </Label>
+                <Select
+                  value={null}
+                  onValueChange={(v) => {
+                    if (v) handleApplyPreset(v as string);
+                  }}
+                >
+                  <SelectTrigger size="sm" className="w-[200px]">
+                    <SelectValue placeholder="Elegir…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {presets.map((preset) => (
+                      <SelectItem key={preset.id} value={preset.id}>
+                        {preset.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
           </div>
           <Progress value={progress} className="h-1.5" />
         </div>
@@ -880,6 +1038,15 @@ export function FullDocumentEditor({
                 ? "Generando vista previa…"
                 : "Vista previa"}
             </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setSavePresetOpen(true)}
+            >
+              <Save className="size-3.5" />
+              Guardar datos
+            </Button>
             {generated ? (
               <DownloadButton
                 documentId={generated.documentId}
@@ -918,6 +1085,26 @@ export function FullDocumentEditor({
           </div>
           <ul className="flex min-h-0 flex-col gap-1 overflow-y-auto">
             {distinctVarNames.map((name) => {
+              if (isComputed(name)) {
+                return (
+                  <li key={name}>
+                    <div className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5">
+                      <span className="flex min-w-0 items-center gap-1.5">
+                        <Calculator className="size-3.5 shrink-0 text-[var(--fg-3)]" />
+                        <span className="truncate text-[12.5px] font-medium text-[var(--fg-1)]">
+                          {humanLabel(name)}
+                        </span>
+                      </span>
+                      <Badge
+                        variant="outline"
+                        className="shrink-0 rounded-full border-[rgba(195,198,215,0.40)] px-2 py-0.5 text-[10.5px] font-medium text-[var(--fg-3)]"
+                      >
+                        Auto
+                      </Badge>
+                    </div>
+                  </li>
+                );
+              }
               const value = values[name] ?? "";
               const filled = value.trim().length > 0;
               return (
@@ -974,6 +1161,14 @@ export function FullDocumentEditor({
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Save preset dialog */}
+      <SavePresetDialog
+        templateId={templateId}
+        values={nonComputedValues}
+        open={savePresetOpen}
+        onOpenChange={setSavePresetOpen}
+      />
     </div>
   );
 }

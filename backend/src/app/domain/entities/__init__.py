@@ -2,6 +2,7 @@ from .tenant import Tenant
 from .user import User
 from .template import Template, TemplateVersion
 from .template_folder import TemplateFolder
+from .template_preset import TemplatePreset
 from .document import Document
 from .template_share import TemplateShare
 from .usage_event import UsageEvent
@@ -14,6 +15,7 @@ __all__ = [
     "Template",
     "TemplateVersion",
     "TemplateFolder",
+    "TemplatePreset",
     "Document",
     "TemplateShare",
     "UsageEvent",

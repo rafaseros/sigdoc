@@ -3,14 +3,21 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response
 
-from app.application.services import get_template_service, get_user_repository
+from app.application.services import (
+    get_template_preset_service,
+    get_template_service,
+    get_user_repository,
+)
+from app.application.services.template_preset_service import TemplatePresetService
 from app.application.services.template_service import TemplateService
 from app.domain.exceptions import (
+    ComputedVariableValidationError,
     DomainError,
     InvalidTemplateError,
     TemplateAccessDeniedError,
     TemplateFolderNotFoundError,
     TemplateNotFoundError,
+    TemplatePresetNotFoundError,
     TemplateSharingError,
     TemplateVersionNotFoundError,
 )
@@ -19,6 +26,12 @@ from app.domain.services.permissions import can_view_all_templates
 from app.infrastructure.templating import get_template_engine
 from app.presentation.api.dependencies import require_template_manager
 from app.presentation.middleware.tenant import CurrentUser, get_current_user
+from app.presentation.schemas.preset import (
+    PresetCreateRequest,
+    PresetListResponse,
+    PresetResponse,
+    PresetUpdateRequest,
+)
 from app.presentation.schemas.template import (
     ShareTemplateRequest,
     TemplateListResponse,
@@ -642,6 +655,8 @@ async def update_variable_types(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
     except TemplateNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template or version not found")
+    except ComputedVariableValidationError as e:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
 
     return TemplateVersionResponse(
         id=str(updated_version.id),
@@ -688,3 +703,144 @@ async def list_template_shares(
             )
         )
     return result
+
+
+# ---------------------------------------------------------------------------
+# Template presets — recurring-client stored values
+#
+# Permission for ALL preset operations: template ACCESS (owner,
+# shared-with-user, or admin) — the same rule as GET /templates/{id}.
+# Presets are shared by everyone with access to the template (explicit
+# product decision — both creators and document generators manage them).
+# ---------------------------------------------------------------------------
+
+
+@router.get("/{template_id}/presets", response_model=PresetListResponse)
+async def list_presets(
+    template_id: UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+    service: TemplatePresetService = Depends(get_template_preset_service),
+):
+    """List a template's presets, ordered by name."""
+    try:
+        presets = await service.list_presets(
+            template_id, user_id=current_user.user_id, role=current_user.role
+        )
+    except TemplateAccessDeniedError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except TemplateNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template not found")
+
+    return PresetListResponse(
+        presets=[
+            PresetResponse(
+                id=str(p.id),
+                name=p.name,
+                values=p.values,
+                created_by=str(p.created_by),
+                created_at=p.created_at,
+            )
+            for p in presets
+        ]
+    )
+
+
+@router.post(
+    "/{template_id}/presets", response_model=PresetResponse, status_code=status.HTTP_201_CREATED
+)
+async def create_preset(
+    template_id: UUID,
+    body: PresetCreateRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    service: TemplatePresetService = Depends(get_template_preset_service),
+):
+    """Create a preset for a template. Keys in `values` are NOT validated
+    against the version's variables — versions evolve; the client
+    intersects at load time."""
+    try:
+        preset = await service.create_preset(
+            template_id=template_id,
+            user_id=current_user.user_id,
+            role=current_user.role,
+            tenant_id=current_user.tenant_id,
+            name=body.name,
+            values=body.values,
+        )
+    except TemplateAccessDeniedError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except TemplateNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template not found")
+    except DomainError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+
+    return PresetResponse(
+        id=str(preset.id),
+        name=preset.name,
+        values=preset.values,
+        created_by=str(preset.created_by),
+        created_at=preset.created_at,
+    )
+
+
+@router.patch("/{template_id}/presets/{preset_id}", response_model=PresetResponse)
+async def update_preset(
+    template_id: UUID,
+    preset_id: UUID,
+    body: PresetUpdateRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    service: TemplatePresetService = Depends(get_template_preset_service),
+):
+    """Rename a preset and/or replace its values. 404 if the preset doesn't
+    exist OR belongs to a different template — this never reveals the
+    existence of a preset under a foreign template_id."""
+    try:
+        preset = await service.update_preset(
+            template_id=template_id,
+            preset_id=preset_id,
+            user_id=current_user.user_id,
+            role=current_user.role,
+            name=body.name,
+            name_provided="name" in body.model_fields_set,
+            values=body.values,
+            values_provided="values" in body.model_fields_set,
+        )
+    except TemplateAccessDeniedError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except TemplateNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template not found")
+    except TemplatePresetNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Preset no encontrado")
+    except DomainError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+
+    return PresetResponse(
+        id=str(preset.id),
+        name=preset.name,
+        values=preset.values,
+        created_by=str(preset.created_by),
+        created_at=preset.created_at,
+    )
+
+
+@router.delete("/{template_id}/presets/{preset_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_preset(
+    template_id: UUID,
+    preset_id: UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+    service: TemplatePresetService = Depends(get_template_preset_service),
+):
+    """Delete a preset. 404 if it doesn't exist OR belongs to a different
+    template — non-leaking, same rule as update_preset."""
+    try:
+        await service.delete_preset(
+            template_id=template_id,
+            preset_id=preset_id,
+            user_id=current_user.user_id,
+            role=current_user.role,
+        )
+    except TemplateAccessDeniedError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except TemplateNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template not found")
+    except TemplatePresetNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Preset no encontrado")

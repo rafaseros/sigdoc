@@ -6,6 +6,7 @@ from uuid import UUID
 
 from app.domain.entities import Template, TemplateShare, TemplateVersion
 from app.domain.exceptions import (
+    ComputedVariableValidationError,
     DomainError,
     InvalidTemplateError,
     TemplateAccessDeniedError,
@@ -601,6 +602,17 @@ class TemplateService:
         Strict owner-only: only the template creator can update variable types.
         Admin bypass is intentionally absent (matching share/unshare pattern).
         Overrides for unknown variable names are silently ignored.
+
+        A `computed` spec on an override is validated against the FULL
+        merged variables_meta (including other overrides in the same
+        batch) — see `_validate_computed_meta`. A computed override's own
+        `type` is normalized on save: "formula" -> "decimal", "function"
+        -> "text", regardless of whatever `type` was submitted.
+
+        Raises:
+            ComputedVariableValidationError: a computed spec's `source`
+                does not exist, is not numeric, is itself computed
+                (chaining is unsupported in v1), or refers to itself.
         """
         template = await self._repository.get_by_id(template_id)
         if template is None:
@@ -627,12 +639,24 @@ class TemplateService:
             if name in override_map:
                 override = override_map[name]
                 new_entry = dict(entry) if isinstance(entry, dict) else {"name": entry.name, "contexts": entry.contexts}
-                new_entry["type"] = override.type
+                if override.computed is not None:
+                    # Server-normalized type: computed variables' displayed
+                    # type is derived from their computation kind, not from
+                    # whatever the client submitted.
+                    new_entry["type"] = (
+                        "decimal" if override.computed.kind == "formula" else "text"
+                    )
+                    new_entry["computed"] = override.computed.model_dump()
+                else:
+                    new_entry["type"] = override.type
+                    new_entry["computed"] = None
                 new_entry["options"] = override.options
                 new_entry["help_text"] = override.help_text
                 updated_meta.append(new_entry)
             else:
                 updated_meta.append(dict(entry) if isinstance(entry, dict) else {"name": entry.name, "contexts": entry.contexts})
+
+        _validate_computed_meta(updated_meta)
 
         updated_version = await self._repository.update_variables_meta(version_id, updated_meta)
 
@@ -650,3 +674,63 @@ class TemplateService:
             )
 
         return updated_version
+
+
+def _validate_computed_meta(variables_meta: list[dict]) -> None:
+    """Validate every `computed` spec in `variables_meta` against the FULL
+    merged meta (cross-variable rules that a single-field pydantic
+    validator cannot express):
+
+    - `source` must reference another variable that exists in this meta.
+    - `source` must have type "integer" or "decimal".
+    - `source` must NOT itself be computed (v1: no chaining).
+    - `source` must not be the computed variable itself.
+
+    Raises ComputedVariableValidationError (Spanish message) on the first
+    violation found.
+    """
+    by_name = {
+        (entry.get("name") if isinstance(entry, dict) else entry.name): entry
+        for entry in variables_meta
+    }
+
+    for entry in variables_meta:
+        computed = entry.get("computed") if isinstance(entry, dict) else getattr(entry, "computed", None)
+        if not computed:
+            continue
+
+        name = entry.get("name") if isinstance(entry, dict) else entry.name
+        source = computed.get("source") if isinstance(computed, dict) else computed.source
+
+        if source == name:
+            raise ComputedVariableValidationError(
+                f"La variable '{name}' no puede depender de sí misma"
+            )
+
+        source_entry = by_name.get(source)
+        if source_entry is None:
+            raise ComputedVariableValidationError(
+                f"La variable de origen '{source}' no existe en esta versión"
+            )
+
+        source_type = (
+            source_entry.get("type")
+            if isinstance(source_entry, dict)
+            else getattr(source_entry, "type", None)
+        )
+        if source_type not in ("integer", "decimal"):
+            raise ComputedVariableValidationError(
+                f"La variable de origen '{source}' debe ser de tipo numérico "
+                "(integer o decimal)"
+            )
+
+        source_computed = (
+            source_entry.get("computed")
+            if isinstance(source_entry, dict)
+            else getattr(source_entry, "computed", None)
+        )
+        if source_computed:
+            raise ComputedVariableValidationError(
+                f"La variable de origen '{source}' no puede ser a su vez una "
+                "variable calculada"
+            )

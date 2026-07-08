@@ -5,6 +5,7 @@ from app.application.services.audit_service import AuditService
 from app.application.services.document_service import DocumentService
 from app.application.services.quota_service import QuotaService
 from app.application.services.template_folder_service import TemplateFolderService
+from app.application.services.template_preset_service import TemplatePresetService
 from app.application.services.template_service import TemplateService
 from app.application.services.usage_service import UsageService
 from app.config import get_settings
@@ -13,6 +14,9 @@ from app.infrastructure.pdf import get_pdf_converter
 from app.infrastructure.persistence.database import async_session_factory
 from app.infrastructure.persistence.repositories.template_folder_repository import (
     SQLAlchemyTemplateFolderRepository,
+)
+from app.infrastructure.persistence.repositories.template_preset_repository import (
+    SQLAlchemyTemplatePresetRepository,
 )
 from app.infrastructure.persistence.repositories.template_repository import (
     SQLAlchemyTemplateRepository,
@@ -99,6 +103,17 @@ async def get_template_folder_service(
     """Return a TemplateFolderService backed by the current tenant session."""
     return TemplateFolderService(
         repository=SQLAlchemyTemplateFolderRepository(session),
+        audit_service=get_audit_service(),
+    )
+
+
+async def get_template_preset_service(
+    session: AsyncSession = Depends(get_tenant_session),
+) -> TemplatePresetService:
+    """Return a TemplatePresetService backed by the current tenant session."""
+    return TemplatePresetService(
+        preset_repository=SQLAlchemyTemplatePresetRepository(session),
+        template_repository=SQLAlchemyTemplateRepository(session),
         audit_service=get_audit_service(),
     )
 

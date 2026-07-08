@@ -74,6 +74,49 @@ class FolderNameCollisionError(DomainError):
         self.name = name
 
 
+class PresetNameCollisionError(DomainError):
+    """A preset create/rename collided with an existing (template_id, name) pair.
+
+    Raised by repository implementations instead of leaking the underlying
+    persistence exception (e.g. sqlalchemy.exc.IntegrityError). The service
+    layer is expected to catch this and map it to a non-leaking, user-facing
+    message. Mirrors TemplateNameCollisionError / FolderNameCollisionError.
+    """
+
+    def __init__(self, name: str | None = None) -> None:
+        super().__init__(f"Preset name collision for '{name}'")
+        self.name = name
+
+
+class TemplatePresetNotFoundError(DomainError):
+    """Template preset not found, or does not belong to the given template.
+
+    Never distinguishes between "does not exist" and "belongs to a
+    different template" — the 404 never leaks the existence of a preset
+    under a foreign template_id.
+    """
+
+
+class ComputedVariableValidationError(DomainError):
+    """A computed-variable spec failed cross-variable validation when saving
+    variables_meta (e.g. unknown/non-numeric/self-referencing/chained source).
+
+    Raised by the service layer (not pydantic) because these rules require
+    full context of the version's merged variables_meta, not just the shape
+    of a single field.
+    """
+
+
+class ComputedVariableError(DomainError):
+    """A computed variable failed to resolve at generation/preview time.
+
+    Distinct from ComputedVariableValidationError (raised at save-time):
+    this is raised when the source value is present and parseable but is
+    out of the supported domain for the configured function (e.g.
+    number_to_words with a negative or too-large source).
+    """
+
+
 class QuotaExceededError(DomainError):
     """Subscription quota exceeded for the tenant."""
 

@@ -4,12 +4,34 @@ import { templateKeys } from "./keys";
 
 export type VariableType = "text" | "integer" | "decimal" | "select";
 
+export type ComputedOperator = "+" | "-" | "*" | "/";
+export type ComputedFunctionName = "number_to_words";
+
+export interface ComputedFormula {
+  kind: "formula";
+  source: string;
+  operator: ComputedOperator;
+  operand: number;
+}
+
+export interface ComputedFunctionConfig {
+  kind: "function";
+  function: ComputedFunctionName;
+  source: string;
+}
+
+/** A variable's computed configuration — `null` means it is a plain,
+ * user-editable variable. Set server-side on generate/preview; the frontend
+ * must never send a value for a computed variable. */
+export type ComputedConfig = ComputedFormula | ComputedFunctionConfig | null;
+
 export interface VariableMeta {
   name: string;
   contexts: string[];
   type?: VariableType;
   options?: string[] | null;
   help_text?: string | null;
+  computed?: ComputedConfig;
 }
 
 export interface TemplateVersion {

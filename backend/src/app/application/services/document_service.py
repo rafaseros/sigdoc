@@ -9,6 +9,7 @@ from uuid import UUID
 from app.domain.entities import Document
 from app.domain.exceptions import (
     BulkLimitExceededError,
+    ComputedVariableError,
     DocumentNotFoundError,
     PdfConversionError,
     TemplateAccessDeniedError,
@@ -19,6 +20,7 @@ from app.domain.ports.document_repository import DocumentRepository
 from app.domain.ports.storage_service import StorageService
 from app.domain.ports.template_engine import TemplateEngine
 from app.domain.ports.template_repository import TemplateRepository
+from app.domain.services.computed_variables import computed_variable_names, resolve_computed
 from app.infrastructure.pdf.watermark import apply_watermark
 
 if TYPE_CHECKING:
@@ -119,6 +121,12 @@ class DocumentService:
         has_access = await self._tpl_repo.has_access(version.template_id, user_uuid, role)
         if not has_access:
             raise TemplateAccessDeniedError("No tenés acceso a esta plantilla")
+
+        # 2b. Resolve computed variables (server-authoritative) — AFTER
+        # receiving the caller-supplied variables, BEFORE rendering, so both
+        # the rendered document and the persisted variables_snapshot below
+        # reflect the resolved value.
+        variables = resolve_computed(version.variables_meta, variables)
 
         # 2. Download template from MinIO
         template_bytes = await self._storage.download_file(
@@ -271,6 +279,11 @@ class DocumentService:
         if not has_access:
             raise TemplateAccessDeniedError("No tenés acceso a esta plantilla")
 
+        # 2b. Resolve computed variables — same server-authoritative rule as
+        # generate_single. Missing/unparseable sources resolve to "" so a
+        # partially-filled preview never crashes.
+        variables = resolve_computed(version.variables_meta, variables)
+
         # 3. Download template from MinIO (read-only — no upload_file calls below)
         template_bytes = await self._storage.download_file(
             bucket=self.TEMPLATES_BUCKET,
@@ -419,7 +432,10 @@ class DocumentService:
         ws = wb.active
         ws.title = "Data"
 
-        variables = version.variables  # list of variable names
+        # Computed variables are server-resolved, never supplied by the
+        # user — exclude them from the bulk data-entry columns.
+        computed_names = computed_variable_names(version.variables_meta)
+        variables = [v for v in version.variables if v not in computed_names]
 
         # Header row with styling
         header_font = Font(bold=True, color="FFFFFF")
@@ -489,8 +505,12 @@ class DocumentService:
         # Read headers from first row
         headers = [cell.value for cell in ws[1] if cell.value is not None]
 
-        # Validate headers match template variables
-        expected = set(version.variables)
+        # Validate headers match template variables. Computed variables are
+        # server-resolved, never supplied by the user — excluded from the
+        # expected set so bulk uploads don't need (and can't provide) a
+        # column for them.
+        computed_names = computed_variable_names(version.variables_meta)
+        expected = set(version.variables) - computed_names
         actual = set(headers)
         if expected != actual:
             missing = expected - actual
@@ -587,6 +607,27 @@ class DocumentService:
 
         with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
             for i, row_data in enumerate(rows):
+                # Resolve computed variables (server-authoritative) — same
+                # rule as generate_single/preview, applied per row so both
+                # the rendered document and the persisted variables_snapshot
+                # reflect resolved values. A ComputedVariableError mid-batch
+                # rolls back every file uploaded for prior rows, mirroring
+                # the PdfConversionError rollback below (no partial batches).
+                try:
+                    row_data = resolve_computed(version.variables_meta, row_data)
+                except ComputedVariableError:
+                    for path in uploaded_minio_paths:
+                        try:
+                            await self._storage.delete_file(
+                                self.DOCUMENTS_BUCKET, path
+                            )
+                        except Exception:
+                            logger.warning(
+                                "Failed to delete bulk upload %s during rollback",
+                                path,
+                            )
+                    raise  # propagate — no DB rows persisted
+
                 # Render document (fresh DocxTemplate per render — handled by engine)
                 rendered_bytes = await self._engine.render(template_bytes, row_data)
 

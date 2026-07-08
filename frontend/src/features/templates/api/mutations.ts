@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/shared/lib/api-client";
 import { folderKeys, templateKeys } from "./keys";
-import type { VariableType } from "./queries";
+import type { ComputedConfig, VariableType } from "./queries";
 
 export interface ValidationError {
   type: string;
@@ -227,6 +227,8 @@ export interface VariableTypeOverrideInput {
   type: VariableType;
   options?: string[] | null;
   help_text?: string | null;
+  /** `null` clears any computed config; omitted leaves it untouched server-side. */
+  computed?: ComputedConfig;
 }
 
 export function useUpdateVariableTypes(templateId: string, versionId: string) {

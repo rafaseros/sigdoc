@@ -922,6 +922,240 @@ async def test_partial_override_preserves_other_variables(
     assert meta_by_name["fecha"]["type"] == "text"
 
 
+# ── computed variables (formulas + functions) ────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_owner_can_save_formula_computed_variable(
+    async_client, auth_headers, fake_template_repo: FakeTemplateRepository
+):
+    """Owner can PATCH a formula computed variable; type is normalized to decimal."""
+    tpl_id, ver_id = _seed_template_with_variables(
+        ["monto", "total_con_iva"], CONFTEST_USER_ID, fake_template_repo, "ComputedFormulaOwner"
+    )
+
+    response = await async_client.patch(
+        f"/api/v1/templates/{tpl_id}/versions/{ver_id}/variables-meta",
+        headers=auth_headers,
+        json={
+            "overrides": [
+                {"name": "monto", "type": "decimal"},
+                {
+                    "name": "total_con_iva",
+                    "type": "text",  # deliberately wrong — server normalizes to decimal
+                    "computed": {
+                        "kind": "formula",
+                        "source": "monto",
+                        "operator": "+",
+                        "operand": 100,
+                    },
+                },
+            ]
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    meta_by_name = {m["name"]: m for m in data["variables_meta"]}
+    assert meta_by_name["total_con_iva"]["type"] == "decimal"
+    assert meta_by_name["total_con_iva"]["computed"]["kind"] == "formula"
+
+
+@pytest.mark.asyncio
+async def test_owner_can_save_function_computed_variable(
+    async_client, auth_headers, fake_template_repo: FakeTemplateRepository
+):
+    """Owner can PATCH a number_to_words computed variable; type normalizes to text."""
+    tpl_id, ver_id = _seed_template_with_variables(
+        ["monto", "monto_en_letras"],
+        CONFTEST_USER_ID,
+        fake_template_repo,
+        "ComputedFunctionOwner",
+    )
+
+    response = await async_client.patch(
+        f"/api/v1/templates/{tpl_id}/versions/{ver_id}/variables-meta",
+        headers=auth_headers,
+        json={
+            "overrides": [
+                {"name": "monto", "type": "decimal"},
+                {
+                    "name": "monto_en_letras",
+                    "type": "integer",  # deliberately wrong — server normalizes to text
+                    "computed": {
+                        "kind": "function",
+                        "function": "number_to_words",
+                        "source": "monto",
+                    },
+                },
+            ]
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    meta_by_name = {m["name"]: m for m in data["variables_meta"]}
+    assert meta_by_name["monto_en_letras"]["type"] == "text"
+    assert meta_by_name["monto_en_letras"]["computed"]["function"] == "number_to_words"
+
+
+@pytest.mark.asyncio
+async def test_computed_with_unknown_source_returns_422(
+    async_client, auth_headers, fake_template_repo: FakeTemplateRepository
+):
+    tpl_id, ver_id = _seed_template_with_variables(
+        ["total"], CONFTEST_USER_ID, fake_template_repo, "ComputedUnknownSource"
+    )
+
+    response = await async_client.patch(
+        f"/api/v1/templates/{tpl_id}/versions/{ver_id}/variables-meta",
+        headers=auth_headers,
+        json={
+            "overrides": [
+                {
+                    "name": "total",
+                    "type": "decimal",
+                    "computed": {
+                        "kind": "formula",
+                        "source": "no_existe",
+                        "operator": "+",
+                        "operand": 1,
+                    },
+                }
+            ]
+        },
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_computed_with_non_numeric_source_returns_422(
+    async_client, auth_headers, fake_template_repo: FakeTemplateRepository
+):
+    tpl_id, ver_id = _seed_template_with_variables(
+        ["nombre", "total"], CONFTEST_USER_ID, fake_template_repo, "ComputedNonNumericSource"
+    )
+
+    response = await async_client.patch(
+        f"/api/v1/templates/{tpl_id}/versions/{ver_id}/variables-meta",
+        headers=auth_headers,
+        json={
+            "overrides": [
+                {"name": "nombre", "type": "text"},
+                {
+                    "name": "total",
+                    "type": "decimal",
+                    "computed": {
+                        "kind": "formula",
+                        "source": "nombre",
+                        "operator": "+",
+                        "operand": 1,
+                    },
+                },
+            ]
+        },
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_computed_division_by_zero_operand_returns_422(
+    async_client, auth_headers, fake_template_repo: FakeTemplateRepository
+):
+    tpl_id, ver_id = _seed_template_with_variables(
+        ["monto", "total"], CONFTEST_USER_ID, fake_template_repo, "ComputedDivByZero"
+    )
+
+    response = await async_client.patch(
+        f"/api/v1/templates/{tpl_id}/versions/{ver_id}/variables-meta",
+        headers=auth_headers,
+        json={
+            "overrides": [
+                {
+                    "name": "total",
+                    "type": "decimal",
+                    "computed": {
+                        "kind": "formula",
+                        "source": "monto",
+                        "operator": "/",
+                        "operand": 0,
+                    },
+                }
+            ]
+        },
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_computed_unknown_function_returns_422(
+    async_client, auth_headers, fake_template_repo: FakeTemplateRepository
+):
+    tpl_id, ver_id = _seed_template_with_variables(
+        ["monto", "total"], CONFTEST_USER_ID, fake_template_repo, "ComputedUnknownFunction"
+    )
+
+    response = await async_client.patch(
+        f"/api/v1/templates/{tpl_id}/versions/{ver_id}/variables-meta",
+        headers=auth_headers,
+        json={
+            "overrides": [
+                {
+                    "name": "total",
+                    "type": "text",
+                    "computed": {
+                        "kind": "function",
+                        "function": "not_a_real_function",
+                        "source": "monto",
+                    },
+                }
+            ]
+        },
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_computed_chained_source_returns_422(
+    async_client, auth_headers, fake_template_repo: FakeTemplateRepository
+):
+    """A computed variable's source must not itself be computed (v1: no chaining)."""
+    tpl_id, ver_id = _seed_template_with_variables(
+        ["monto", "total", "total_en_letras"],
+        CONFTEST_USER_ID,
+        fake_template_repo,
+        "ComputedChained",
+    )
+
+    response = await async_client.patch(
+        f"/api/v1/templates/{tpl_id}/versions/{ver_id}/variables-meta",
+        headers=auth_headers,
+        json={
+            "overrides": [
+                {"name": "monto", "type": "decimal"},
+                {
+                    "name": "total",
+                    "type": "decimal",
+                    "computed": {
+                        "kind": "formula",
+                        "source": "monto",
+                        "operator": "+",
+                        "operand": 1,
+                    },
+                },
+                {
+                    "name": "total_en_letras",
+                    "type": "text",
+                    "computed": {
+                        "kind": "function",
+                        "function": "number_to_words",
+                        "source": "total",
+                    },
+                },
+            ]
+        },
+    )
+    assert response.status_code == 422
+
+
 # ── help_text tests ──────────────────────────────────────────────────────────
 
 

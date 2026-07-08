@@ -18,6 +18,10 @@ class AuditAction:
     FOLDER_UPDATE = "folder.update"
     FOLDER_DELETE = "folder.delete"
 
+    PRESET_CREATE = "preset.create"
+    PRESET_UPDATE = "preset.update"
+    PRESET_DELETE = "preset.delete"
+
     DOCUMENT_GENERATE = "document.generate"
     DOCUMENT_GENERATE_BULK = "document.generate_bulk"
     DOCUMENT_DELETE = "document.delete"

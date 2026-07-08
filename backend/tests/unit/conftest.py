@@ -7,6 +7,7 @@ from tests.fakes import (
     FakeTemplateEngine,
     FakeTemplateRepository,
     FakeTemplateFolderRepository,
+    FakeTemplatePresetRepository,
     FakeUserRepository,
     FakeUsageRepository,
     FakeAuditRepository,
@@ -47,6 +48,12 @@ def fake_template_folder_repo(
     """Fresh FakeTemplateFolderRepository, linked to fake_template_repo so
     delete() can emulate the real DB's ON DELETE SET NULL FK behavior."""
     return FakeTemplateFolderRepository(template_repo=fake_template_repo)
+
+
+@pytest.fixture
+def fake_template_preset_repo() -> FakeTemplatePresetRepository:
+    """Fresh FakeTemplatePresetRepository with an empty store."""
+    return FakeTemplatePresetRepository()
 
 
 @pytest.fixture

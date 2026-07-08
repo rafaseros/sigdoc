@@ -2,6 +2,7 @@ from .fake_storage_service import FakeStorageService
 from .fake_template_engine import FakeTemplateEngine
 from .fake_template_repository import FakeTemplateRepository
 from .fake_template_folder_repository import FakeTemplateFolderRepository
+from .fake_template_preset_repository import FakeTemplatePresetRepository
 from .fake_document_repository import FakeDocumentRepository
 from .fake_user_repository import FakeUserRepository
 from .fake_usage_repository import FakeUsageRepository
@@ -17,6 +18,7 @@ __all__ = [
     "FakeTemplateEngine",
     "FakeTemplateRepository",
     "FakeTemplateFolderRepository",
+    "FakeTemplatePresetRepository",
     "FakeDocumentRepository",
     "FakeUserRepository",
     "FakeUsageRepository",
