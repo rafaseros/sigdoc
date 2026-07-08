@@ -444,6 +444,79 @@ dismissed.
 
 ---
 
+## 17. Action-overflow menu ("Más acciones")
+
+When a page's header action row accumulates **more than 3 secondary
+actions** (management actions that aren't the page's primary task), collapse
+them into a single "Más acciones" overflow menu instead of letting the row
+wrap to a second line. `TemplateDetail`'s header is the canonical reference:
+"Generar Documento" (primary) and "Generación Masiva" (secondary,
+task-relevant) stay inline; "Renombrar", "Mover a carpeta", "Compartir" move
+into the menu.
+
+```tsx
+{hasMenuActions && (
+  <DropdownMenu>
+    <DropdownMenuTrigger
+      render={
+        <Button
+          variant="outline"
+          size="icon-sm"
+          aria-label="Más acciones"
+          title="Más acciones"
+        />
+      }
+    >
+      <MoreHorizontal className="size-4" />
+    </DropdownMenuTrigger>
+    <DropdownMenuContent align="end">
+      {canRename && (
+        <DropdownMenuItem onClick={...}>
+          <Pencil className="size-4" />
+          Renombrar
+        </DropdownMenuItem>
+      )}
+      {/* ...other non-destructive items... */}
+      {canDelete && (
+        <>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem variant="destructive" onClick={...}>
+            <Trash2 className="size-4" />
+            Eliminar
+          </DropdownMenuItem>
+        </>
+      )}
+    </DropdownMenuContent>
+  </DropdownMenu>
+)}
+```
+
+**Rules:**
+
+- Trigger is always `variant="outline" size="icon-sm"` with a
+  `MoreHorizontal` (or `Ellipsis`) icon, `aria-label="Más acciones"` **and**
+  `title="Más acciones"` — the label backs the accessible name, the title
+  backs the hover tooltip.
+- Each item keeps the exact same permission gating it had as a standalone
+  button — the item simply doesn't render when the current user isn't
+  permitted. Compute one boolean per action (`canRename`, `canMove`, ...)
+  and OR them into a single `hasMenuActions` guard.
+- **If every item would be hidden for the current user, don't render the
+  trigger at all** — an overflow button that opens an empty menu is a dead
+  end, not an affordance.
+- The destructive action (delete/remove/deactivate) is always **last**,
+  preceded by a `DropdownMenuSeparator`, and uses
+  `<DropdownMenuItem variant="destructive">` — never the default variant
+  with manually red text.
+- The dialogs a menu item opens are unchanged — the menu only replaces how
+  they're triggered, controlled `open`/`onOpenChange` state stays on the
+  parent exactly as it was for the old standalone buttons.
+- The header row that contains the action area must never wrap: give the
+  action-area wrapper `shrink-0` and let the title/meta block truncate
+  (`min-w-0` up the flex chain + `truncate` on the `<h1>`/description).
+
+---
+
 ## Copy register (Spanish)
 
 - Neutral, professional Spanish — no regional slang, no *voseo* in UI copy.

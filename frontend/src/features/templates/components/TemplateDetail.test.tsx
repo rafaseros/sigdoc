@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
@@ -51,7 +51,7 @@ const template: Template = {
   folder_id: null,
 };
 
-function mockDetailResponses() {
+function mockDetailResponses(templateOverride: Template = template) {
   vi.mocked(apiClient.get).mockImplementation(async (url: string) => {
     if (typeof url === "string" && url.includes("/shares")) {
       return { data: [] };
@@ -62,7 +62,7 @@ function mockDetailResponses() {
     if (typeof url === "string" && url.includes("/presets")) {
       return { data: { presets: [] } };
     }
-    return { data: template };
+    return { data: templateOverride };
   });
 }
 
@@ -120,5 +120,164 @@ describe("TemplateDetail — help center mount", () => {
     expect(
       screen.getByRole("tab", { name: /variables calculadas/i }),
     ).toHaveAttribute("aria-selected", "true");
+  });
+});
+
+describe("TemplateDetail — action row reorganization", () => {
+  beforeEach(() => {
+    vi.mocked(apiClient.get).mockReset();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("defaults to the Documentos tab and never wraps the action row to a second line", async () => {
+    mockDetailResponses();
+    renderDetail();
+
+    await waitFor(() =>
+      expect(screen.getByText("Contrato de Servicios")).toBeInTheDocument(),
+    );
+
+    // "Documentos" content ("Documentos generados") is visible by default —
+    // "Información" content ("Información de la plantilla") is not.
+    expect(screen.getByText("Documentos generados")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Información de la plantilla"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("orders the sidebar nav generation-first, with Información last", async () => {
+    mockDetailResponses();
+    renderDetail();
+
+    await waitFor(() =>
+      expect(screen.getByText("Contrato de Servicios")).toBeInTheDocument(),
+    );
+
+    const nav = screen.getByRole("navigation");
+    const itemNames = within(nav)
+      .getAllByRole("button")
+      .map((btn) => btn.textContent);
+
+    expect(itemNames).toEqual([
+      expect.stringMatching(/^Documentos/),
+      expect.stringMatching(/^Datos guardados/),
+      expect.stringMatching(/^Variables/),
+      expect.stringMatching(/^Versiones/),
+      expect.stringMatching(/^Compartido/),
+      expect.stringMatching(/^Información/),
+    ]);
+  });
+
+  it("collapses owner management actions into the 'Más acciones' menu, with Eliminar destructive and last", async () => {
+    mockDetailResponses();
+    const user = userEvent.setup();
+    renderDetail();
+
+    await waitFor(() =>
+      expect(screen.getByText("Contrato de Servicios")).toBeInTheDocument(),
+    );
+
+    // Renombrar/Mover/Compartir/Eliminar no longer render as standalone
+    // buttons in the action row.
+    expect(
+      screen.queryByRole("button", { name: /^renombrar$/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^mover a carpeta$/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^compartir$/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^eliminar$/i }),
+    ).not.toBeInTheDocument();
+
+    const trigger = screen.getByRole("button", { name: /más acciones/i });
+    await user.click(trigger);
+
+    expect(
+      await screen.findByRole("menuitem", { name: /renombrar/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitem", { name: /mover a carpeta/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitem", { name: /compartir/i }),
+    ).toBeInTheDocument();
+
+    const deleteItem = screen.getByRole("menuitem", { name: /eliminar/i });
+    expect(deleteItem).toBeInTheDocument();
+    expect(deleteItem).toHaveAttribute("data-variant", "destructive");
+
+    const menuItems = screen.getAllByRole("menuitem");
+    expect(menuItems[menuItems.length - 1]).toBe(deleteItem);
+  });
+
+  it("opens the rename dialog from the 'Más acciones' menu", async () => {
+    mockDetailResponses();
+    const user = userEvent.setup();
+    renderDetail();
+
+    await waitFor(() =>
+      expect(screen.getByText("Contrato de Servicios")).toBeInTheDocument(),
+    );
+
+    await user.click(screen.getByRole("button", { name: /más acciones/i }));
+    await user.click(await screen.findByRole("menuitem", { name: /renombrar/i }));
+
+    expect(
+      screen.getByRole("dialog", { name: /renombrar plantilla/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("hides the 'Más acciones' trigger entirely for a viewer with no permitted actions", async () => {
+    const viewerTemplate: Template = {
+      ...template,
+      access_type: "shared",
+      is_owner: false,
+    };
+    mockDetailResponses(viewerTemplate);
+    renderDetail();
+
+    await waitFor(() =>
+      expect(screen.getByText("Contrato de Servicios")).toBeInTheDocument(),
+    );
+
+    expect(
+      screen.queryByRole("button", { name: /más acciones/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows only the permitted 'Renombrar' item for an admin non-owner", async () => {
+    const adminTemplate: Template = {
+      ...template,
+      access_type: "admin",
+      is_owner: false,
+    };
+    mockDetailResponses(adminTemplate);
+    const user = userEvent.setup();
+    renderDetail();
+
+    await waitFor(() =>
+      expect(screen.getByText("Contrato de Servicios")).toBeInTheDocument(),
+    );
+
+    await user.click(screen.getByRole("button", { name: /más acciones/i }));
+
+    expect(
+      await screen.findByRole("menuitem", { name: /renombrar/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("menuitem", { name: /mover a carpeta/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("menuitem", { name: /compartir/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("menuitem", { name: /eliminar/i }),
+    ).not.toBeInTheDocument();
   });
 });

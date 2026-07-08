@@ -20,6 +20,7 @@ import {
   BookOpen,
   Pencil,
   FolderInput,
+  MoreHorizontal,
   X,
 } from "lucide-react";
 
@@ -63,6 +64,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -920,7 +928,7 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
     | "shares"
     | "documents"
     | "presets";
-  const [activeTab, setActiveTab] = useState<DetailTab>("info");
+  const [activeTab, setActiveTab] = useState<DetailTab>("documents");
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     if (acceptedFiles.length > 0) {
@@ -995,6 +1003,15 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
   const isOwnerOrAdmin =
     template.is_owner || template.access_type === "admin";
 
+  // "Más acciones" overflow menu — same permission gating as the individual
+  // actions below, just collapsed. The trigger itself only renders when at
+  // least one item would be visible (see §Action-overflow in STYLE_GUIDE.md).
+  const canRename = isOwnerOrAdmin;
+  const canMove = template.is_owner;
+  const canShare = template.is_owner;
+  const canDelete = template.is_owner;
+  const hasMenuActions = canRename || canMove || canShare || canDelete;
+
   return (
     <div className="space-y-5">
       {/* Back link */}
@@ -1008,7 +1025,7 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
 
       {/* Header */}
       <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-        <div className="flex items-start gap-3.5">
+        <div className="flex min-w-0 items-start gap-3.5">
           <span className="inline-flex size-12 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[#dbe1ff] to-[#b4c5ff] text-[var(--primary)]">
             <FileText className="size-5" />
           </span>
@@ -1023,11 +1040,11 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
                 </Badge>
               )}
             </div>
-            <h1 className="m-0 max-w-[680px] text-[22px] font-bold tracking-tight text-[var(--fg-1)]">
+            <h1 className="m-0 max-w-[680px] truncate text-[22px] font-bold tracking-tight text-[var(--fg-1)]">
               {template.name}
             </h1>
             {template.description && (
-              <p className="mt-1.5 text-[13px] text-[var(--fg-3)]">{template.description}</p>
+              <p className="mt-1.5 truncate text-[13px] text-[var(--fg-3)]">{template.description}</p>
             )}
             {template.shared_by_email && (
               <p className="mt-1.5 text-xs text-[var(--fg-3)]">
@@ -1037,8 +1054,10 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
           </div>
         </div>
 
-        {/* Action row */}
-        <div className="flex flex-wrap items-center gap-1.5">
+        {/* Action row — kept to a single line: primary generation actions,
+            the Guía button, and a "Más acciones" overflow menu for
+            management actions. See STYLE_GUIDE.md §17 (action-overflow). */}
+        <div className="flex shrink-0 items-center gap-1.5">
           <TemplateGuideButton
             initialTopic={activeTab === "variables" ? "computed" : "upload"}
           />
@@ -1074,37 +1093,56 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
               </Button>
             </>
           )}
-          {isOwnerOrAdmin && (
-            <Button variant="outline" size="sm" onClick={() => setRenameDialogOpen(true)}>
-              <Pencil className="size-3.5" />
-              Renombrar
-            </Button>
-          )}
-          {template.is_owner && (
-            <Button variant="outline" size="sm" onClick={() => setMoveDialogOpen(true)}>
-              <FolderInput className="size-3.5" />
-              Mover a carpeta
-            </Button>
-          )}
-          {template.is_owner && (
-            <Button variant="outline" size="sm" onClick={() => setShareDialogOpen(true)}>
-              <Share2 className="size-3.5" />
-              Compartir
-            </Button>
-          )}
-          {template.is_owner && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                setDeleteConfirm("");
-                setDeleteDialogOpen(true);
-              }}
-              className="border-[rgba(186,26,26,0.25)] text-[var(--destructive)] hover:bg-[#ffdad6]/50 hover:text-[var(--destructive)]"
-            >
-              <Trash2 className="size-3.5" />
-              Eliminar
-            </Button>
+          {hasMenuActions && (
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <Button
+                    variant="outline"
+                    size="icon-sm"
+                    aria-label="Más acciones"
+                    title="Más acciones"
+                  />
+                }
+              >
+                <MoreHorizontal className="size-4" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {canRename && (
+                  <DropdownMenuItem onClick={() => setRenameDialogOpen(true)}>
+                    <Pencil className="size-4" />
+                    Renombrar
+                  </DropdownMenuItem>
+                )}
+                {canMove && (
+                  <DropdownMenuItem onClick={() => setMoveDialogOpen(true)}>
+                    <FolderInput className="size-4" />
+                    Mover a carpeta
+                  </DropdownMenuItem>
+                )}
+                {canShare && (
+                  <DropdownMenuItem onClick={() => setShareDialogOpen(true)}>
+                    <Share2 className="size-4" />
+                    Compartir
+                  </DropdownMenuItem>
+                )}
+                {canDelete && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      variant="destructive"
+                      onClick={() => {
+                        setDeleteConfirm("");
+                        setDeleteDialogOpen(true);
+                      }}
+                    >
+                      <Trash2 className="size-4" />
+                      Eliminar
+                    </DropdownMenuItem>
+                  </>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
           )}
         </div>
       </div>
@@ -1113,13 +1151,25 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
       <div className="grid gap-6 lg:grid-cols-[220px_1fr]">
         <aside className="self-start lg:sticky lg:top-20">
           <nav className="flex flex-col gap-0.5">
+            {/* Primary pair — the daily flow: generate & review documents. */}
             <SidebarItem
-              icon={<Info className="size-4" />}
-              active={activeTab === "info"}
-              onClick={() => setActiveTab("info")}
+              icon={<Files className="size-4" />}
+              active={activeTab === "documents"}
+              onClick={() => setActiveTab("documents")}
             >
-              Información
+              Documentos
             </SidebarItem>
+            <SidebarItem
+              icon={<Bookmark className="size-4" />}
+              active={activeTab === "presets"}
+              onClick={() => setActiveTab("presets")}
+            >
+              Datos guardados
+            </SidebarItem>
+
+            <div className="my-1.5 border-t border-[rgba(195,198,215,0.20)]" />
+
+            {/* Secondary group — occasional configuration. */}
             <SidebarItem
               icon={<Variable className="size-4" />}
               active={activeTab === "variables"}
@@ -1146,18 +1196,11 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
               </SidebarItem>
             )}
             <SidebarItem
-              icon={<Files className="size-4" />}
-              active={activeTab === "documents"}
-              onClick={() => setActiveTab("documents")}
+              icon={<Info className="size-4" />}
+              active={activeTab === "info"}
+              onClick={() => setActiveTab("info")}
             >
-              Documentos
-            </SidebarItem>
-            <SidebarItem
-              icon={<Bookmark className="size-4" />}
-              active={activeTab === "presets"}
-              onClick={() => setActiveTab("presets")}
-            >
-              Datos guardados
+              Información
             </SidebarItem>
           </nav>
         </aside>
