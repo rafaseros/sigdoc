@@ -14,6 +14,10 @@ class AuditAction:
     TEMPLATE_UNSHARE = "template.unshare"
     TEMPLATE_VARIABLE_TYPES_UPDATED = "template.variable_types_updated"
 
+    FOLDER_CREATE = "folder.create"
+    FOLDER_UPDATE = "folder.update"
+    FOLDER_DELETE = "folder.delete"
+
     DOCUMENT_GENERATE = "document.generate"
     DOCUMENT_GENERATE_BULK = "document.generate_bulk"
     DOCUMENT_DELETE = "document.delete"

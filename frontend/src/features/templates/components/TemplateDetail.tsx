@@ -17,6 +17,7 @@ import {
   CircleAlert,
   BookOpen,
   Pencil,
+  FolderInput,
 } from "lucide-react";
 
 import {
@@ -59,6 +60,7 @@ import { TemplateDetailSkeleton } from "./TemplateDetailSkeleton";
 import { DocumentsTab } from "./DocumentsTab";
 import { ShareTemplateDialog } from "./ShareTemplateDialog";
 import { RenameTemplateDialog } from "./RenameTemplateDialog";
+import { MoveToFolderDialog } from "./MoveToFolderDialog";
 import { SharesTab } from "./SharesTab";
 
 function formatFileSize(bytes: number): string {
@@ -495,6 +497,7 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
   const [deleteConfirm, setDeleteConfirm] = useState("");
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const [renameDialogOpen, setRenameDialogOpen] = useState(false);
+  const [moveDialogOpen, setMoveDialogOpen] = useState(false);
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   type DetailTab = "info" | "variables" | "versions" | "shares" | "documents";
@@ -653,6 +656,12 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
             <Button variant="outline" size="sm" onClick={() => setRenameDialogOpen(true)}>
               <Pencil className="size-3.5" />
               Renombrar
+            </Button>
+          )}
+          {template.is_owner && (
+            <Button variant="outline" size="sm" onClick={() => setMoveDialogOpen(true)}>
+              <FolderInput className="size-3.5" />
+              Mover a carpeta
             </Button>
           )}
           {template.is_owner && (
@@ -952,6 +961,17 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
           currentDescription={template.description}
           open={renameDialogOpen}
           onOpenChange={setRenameDialogOpen}
+        />
+      )}
+
+      {/* Move to folder dialog (controlled from action row) */}
+      {template.is_owner && (
+        <MoveToFolderDialog
+          templateId={templateId}
+          templateName={template.name}
+          currentFolderId={template.folder_id}
+          open={moveDialogOpen}
+          onOpenChange={setMoveDialogOpen}
         />
       )}
 

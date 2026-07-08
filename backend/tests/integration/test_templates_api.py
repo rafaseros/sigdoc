@@ -1409,3 +1409,314 @@ async def test_get_version_structure_returns_404_on_path_mismatch(
     )
 
     assert response.status_code == 404
+
+
+# ── folder_id integration (GET /templates filter + PATCH assignment) ─────────
+
+FOLDER_OWNER_ID = uuid.UUID("55555555-5555-5555-5555-555555555555")
+FOLDER_STRANGER_ID = uuid.UUID("44444444-4444-4444-4444-444444444444")
+
+
+async def _create_folder_via_api(async_client, auth_headers, name: str) -> str:
+    response = await async_client.post(
+        "/api/v1/folders", headers=auth_headers, json={"name": name}
+    )
+    assert response.status_code == 201, response.text
+    return response.json()["id"]
+
+
+@pytest.mark.asyncio
+async def test_template_response_includes_folder_id_field(
+    async_client, auth_headers, fake_template_repo: FakeTemplateRepository
+):
+    tpl_id = _upload_template_as_user(
+        "FolderIdFieldPresent", CONFTEST_USER_ID, fake_template_repo
+    )
+    response = await async_client.get(f"/api/v1/templates/{tpl_id}", headers=auth_headers)
+    assert response.status_code == 200
+    assert "folder_id" in response.json()
+    assert response.json()["folder_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_owner_can_assign_template_to_own_folder(
+    async_client, auth_headers, fake_template_repo: FakeTemplateRepository
+):
+    folder_id = await _create_folder_via_api(async_client, auth_headers, "OwnFolderAssign")
+    tpl_id = _upload_template_as_user(
+        "AssignToOwnFolder", CONFTEST_USER_ID, fake_template_repo
+    )
+
+    response = await async_client.patch(
+        f"/api/v1/templates/{tpl_id}",
+        headers=auth_headers,
+        json={"folder_id": folder_id},
+    )
+    assert response.status_code == 200
+    assert response.json()["folder_id"] == folder_id
+
+
+@pytest.mark.asyncio
+async def test_assign_to_foreign_folder_returns_404_non_leaking(
+    async_client, app, auth_headers, fake_template_repo: FakeTemplateRepository
+):
+    """A folder owned by another user cannot be used as a target — 404, and
+    the error must not reveal anything about the foreign folder."""
+    stranger = CurrentUser(
+        user_id=FOLDER_STRANGER_ID,
+        tenant_id=CONFTEST_TENANT_ID,
+        role="document_generator",
+    )
+
+    async def override_as_stranger():
+        return stranger
+
+    original = app.dependency_overrides.get(get_current_user)
+    app.dependency_overrides[get_current_user] = override_as_stranger
+    try:
+        foreign_folder_id = await _create_folder_via_api(
+            async_client, auth_headers, "StrangerOwnedFolder"
+        )
+    finally:
+        if original is not None:
+            app.dependency_overrides[get_current_user] = original
+        else:
+            app.dependency_overrides.pop(get_current_user, None)
+
+    tpl_id = _upload_template_as_user(
+        "AssignToForeignFolder", CONFTEST_USER_ID, fake_template_repo
+    )
+
+    response = await async_client.patch(
+        f"/api/v1/templates/{tpl_id}",
+        headers=auth_headers,
+        json={"folder_id": foreign_folder_id},
+    )
+    assert response.status_code == 404
+    assert "Stranger" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_non_owner_admin_cannot_refile_someone_elses_template(
+    async_client, auth_headers, fake_template_repo: FakeTemplateRepository
+):
+    """Admins can rename another user's template but must NOT be able to
+    re-file it into a folder — folders are strictly personal."""
+    folder_id = await _create_folder_via_api(
+        async_client, auth_headers, "AdminOwnFolderForRefileTest"
+    )
+    tpl_id = _upload_template_as_user(
+        "AdminCannotRefile", USER_B_ID, fake_template_repo
+    )
+
+    # Conftest user is admin but not the owner of this template.
+    response = await async_client.patch(
+        f"/api/v1/templates/{tpl_id}",
+        headers=auth_headers,
+        json={"folder_id": folder_id},
+    )
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_owner_can_unfile_template_with_explicit_null(
+    async_client, auth_headers, fake_template_repo: FakeTemplateRepository
+):
+    folder_id = await _create_folder_via_api(async_client, auth_headers, "UnfileMeFolder")
+    tpl_id = _upload_template_as_user("ToBeUnfiled", CONFTEST_USER_ID, fake_template_repo)
+
+    assign_response = await async_client.patch(
+        f"/api/v1/templates/{tpl_id}",
+        headers=auth_headers,
+        json={"folder_id": folder_id},
+    )
+    assert assign_response.json()["folder_id"] == folder_id
+
+    unfile_response = await async_client.patch(
+        f"/api/v1/templates/{tpl_id}",
+        headers=auth_headers,
+        json={"folder_id": None},
+    )
+    assert unfile_response.status_code == 200
+    assert unfile_response.json()["folder_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_list_templates_filter_by_folder_id_returns_only_that_folder(
+    async_client, auth_headers, fake_template_repo: FakeTemplateRepository
+):
+    folder_a = await _create_folder_via_api(async_client, auth_headers, "FilterFolderA")
+    folder_b = await _create_folder_via_api(async_client, auth_headers, "FilterFolderB")
+
+    tpl_in_a = _upload_template_as_user(
+        "InFilterFolderA", CONFTEST_USER_ID, fake_template_repo
+    )
+    tpl_in_b = _upload_template_as_user(
+        "InFilterFolderB", CONFTEST_USER_ID, fake_template_repo
+    )
+
+    await async_client.patch(
+        f"/api/v1/templates/{tpl_in_a}", headers=auth_headers, json={"folder_id": folder_a}
+    )
+    await async_client.patch(
+        f"/api/v1/templates/{tpl_in_b}", headers=auth_headers, json={"folder_id": folder_b}
+    )
+
+    response = await async_client.get(
+        "/api/v1/templates", headers=auth_headers, params={"folder_id": folder_a}
+    )
+    assert response.status_code == 200
+    ids = [item["id"] for item in response.json()["items"]]
+    assert str(tpl_in_a) in ids
+    assert str(tpl_in_b) not in ids
+
+
+@pytest.mark.asyncio
+async def test_list_templates_folder_id_none_returns_only_unfiled(
+    async_client, auth_headers, fake_template_repo: FakeTemplateRepository
+):
+    folder_id = await _create_folder_via_api(async_client, auth_headers, "UnfiledFilterFolder")
+
+    # Unique shared search term: the fake template repo is session-scoped and
+    # shared across the whole test file, so without narrowing via `search`
+    # the default page size (20) could push these templates past page 1 in a
+    # full suite run — same caveat documented on
+    # test_upload_template_appears_in_list above.
+    unique_prefix = f"UnfiledOnlyProbe{uuid.uuid4().hex[:8]}"
+    tpl_filed = _upload_template_as_user(
+        f"{unique_prefix}Filed", CONFTEST_USER_ID, fake_template_repo
+    )
+    tpl_unfiled = _upload_template_as_user(
+        f"{unique_prefix}Unfiled", CONFTEST_USER_ID, fake_template_repo
+    )
+    await async_client.patch(
+        f"/api/v1/templates/{tpl_filed}", headers=auth_headers, json={"folder_id": folder_id}
+    )
+
+    response = await async_client.get(
+        "/api/v1/templates",
+        headers=auth_headers,
+        params={"folder_id": "none", "search": unique_prefix},
+    )
+    assert response.status_code == 200
+    ids = [item["id"] for item in response.json()["items"]]
+    assert str(tpl_unfiled) in ids
+    assert str(tpl_filed) not in ids
+
+
+@pytest.mark.asyncio
+async def test_folder_filter_does_not_leak_shared_templates_across_owners(
+    async_client, app, auth_headers, fake_template_repo: FakeTemplateRepository
+):
+    """Regression: user B shares a template with user A (the conftest admin
+    user). User A creates their own folder and filters by it — user B's
+    shared template (even if user B also has a folder with the same
+    conceptual grouping) must NEVER surface just because it's accessible to
+    user A. The folder filter must intersect with owned+shared visibility,
+    never bypass it."""
+    # User A (conftest admin) creates their own folder.
+    folder_a = await _create_folder_via_api(
+        async_client, auth_headers, "LeakRegressionFolderA"
+    )
+
+    # User B owns and shares a template with user A.
+    shared_tpl_id = _upload_template_as_user(
+        "LeakRegressionSharedTpl", USER_B_ID, fake_template_repo
+    )
+    await fake_template_repo.add_share(
+        template_id=shared_tpl_id,
+        user_id=CONFTEST_USER_ID,
+        tenant_id=CONFTEST_TENANT_ID,
+        shared_by=USER_B_ID,
+    )
+
+    # A template genuinely filed in user A's own folder.
+    own_filed_tpl_id = _upload_template_as_user(
+        "LeakRegressionOwnFiled", CONFTEST_USER_ID, fake_template_repo
+    )
+    await async_client.patch(
+        f"/api/v1/templates/{own_filed_tpl_id}",
+        headers=auth_headers,
+        json={"folder_id": folder_a},
+    )
+
+    response = await async_client.get(
+        "/api/v1/templates", headers=auth_headers, params={"folder_id": folder_a}
+    )
+    assert response.status_code == 200
+    ids = [item["id"] for item in response.json()["items"]]
+    assert str(own_filed_tpl_id) in ids
+    assert str(shared_tpl_id) not in ids
+
+
+@pytest.mark.asyncio
+async def test_folder_id_none_filter_does_not_leak_unshared_unfiled_templates(
+    async_client, app, auth_headers, fake_template_repo: FakeTemplateRepository
+):
+    """Regression for the `folder_id=none` (unfiled) branch specifically.
+
+    User B owns an UNFILED template in the same tenant that is NOT shared
+    with user A. User A (a non-admin `document_generator`, NOT the
+    conftest admin — admins legitimately see every tenant template via
+    `can_view_all_templates`, so this scenario must use a role that is
+    actually subject to owned/shared visibility) lists with
+    `folder_id=none` (their own unfiled templates) — user B's unfiled
+    template must never appear.
+
+    Reasoning on the code path (why this test would catch a regression):
+    in `SQLAlchemyTemplateRepository.list_accessible`
+    (template_repository.py), the owned/shared accessible-ids filter is
+    applied to `stmt`/`count_stmt` first (building the visibility scope),
+    and the `folder_filter_unfiled` clause (`TemplateModel.folder_id.is_(None)`)
+    is then `.where(...)`-chained onto that SAME statement — so the two
+    conditions are ANDed together. If the unfiled branch were instead built
+    as a standalone query (e.g. `select(TemplateModel).where(folder_id.is_(None))`
+    without also filtering by owned/shared ids), it would return every
+    unfiled template in the tenant regardless of ownership, and user B's
+    unfiled template would leak into user A's result — which is exactly
+    what this test asserts never happens. The fake repository mirrors this
+    by filtering `items` down to owned+shared FIRST, then applying the
+    unfiled filter on that already-narrowed list (see
+    `FakeTemplateRepository.list_accessible`).
+    """
+    unique_prefix = f"UnfiledLeakProbe{uuid.uuid4().hex[:8]}"
+
+    user_a_id = uuid.uuid4()
+
+    # User B's unfiled template — never shared with user A.
+    other_owner_unfiled_tpl_id = _upload_template_as_user(
+        f"{unique_prefix}OtherOwnerUnfiled", USER_B_ID, fake_template_repo
+    )
+
+    # User A's own unfiled template, for a positive control.
+    own_unfiled_tpl_id = _upload_template_as_user(
+        f"{unique_prefix}OwnUnfiled", user_a_id, fake_template_repo
+    )
+
+    user_a = CurrentUser(
+        user_id=user_a_id,
+        tenant_id=CONFTEST_TENANT_ID,
+        role="document_generator",
+    )
+
+    async def override_as_user_a():
+        return user_a
+
+    original = app.dependency_overrides.get(get_current_user)
+    app.dependency_overrides[get_current_user] = override_as_user_a
+    try:
+        response = await async_client.get(
+            "/api/v1/templates",
+            headers=auth_headers,
+            params={"folder_id": "none", "search": unique_prefix},
+        )
+    finally:
+        if original is not None:
+            app.dependency_overrides[get_current_user] = original
+        else:
+            app.dependency_overrides.pop(get_current_user, None)
+
+    assert response.status_code == 200
+    ids = [item["id"] for item in response.json()["items"]]
+    assert str(own_unfiled_tpl_id) in ids
+    assert str(other_owner_unfiled_tpl_id) not in ids

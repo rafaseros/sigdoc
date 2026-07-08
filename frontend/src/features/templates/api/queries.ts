@@ -35,6 +35,7 @@ export interface Template {
   is_owner: boolean;
   shared_by_email: string | null;
   owner_name: string | null;
+  folder_id: string | null;
 }
 
 interface TemplateListResponse {
@@ -55,7 +56,12 @@ export interface TemplateShare {
 }
 
 export function useTemplates(
-  filters: { page?: number; size?: number; search?: string } = {}
+  filters: {
+    page?: number;
+    size?: number;
+    search?: string;
+    folder_id?: string;
+  } = {}
 ) {
   return useQuery({
     queryKey: templateKeys.list(filters),
@@ -64,6 +70,7 @@ export function useTemplates(
       if (filters.page) params.set("page", String(filters.page));
       if (filters.size) params.set("size", String(filters.size));
       if (filters.search) params.set("search", filters.search);
+      if (filters.folder_id) params.set("folder_id", filters.folder_id);
       const { data } = await apiClient.get<TemplateListResponse>(
         `/templates?${params}`
       );

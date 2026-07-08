@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import {
   Search,
   FileText,
   Folder,
+  FolderInput,
   Share2,
   Code,
   LayoutGrid,
@@ -22,7 +23,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { useTemplates, type Template } from "../api";
+import { useTemplates, useFolders, type Template } from "../api";
+import { FolderSidebar, type FolderFilter } from "./FolderSidebar";
+import { MoveToFolderDialog } from "./MoveToFolderDialog";
 
 type ViewMode = "cards" | "table";
 
@@ -56,6 +59,8 @@ export function TemplateList() {
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [page, setPage] = useState(1);
   const [viewMode, setViewMode] = useState<ViewMode>(readStoredViewMode);
+  const [activeFolder, setActiveFolder] = useState<FolderFilter>(undefined);
+  const [movingTemplate, setMovingTemplate] = useState<Template | null>(null);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -68,6 +73,12 @@ export function TemplateList() {
   useEffect(() => {
     setPage(1);
   }, [debouncedSearch]);
+
+  // Switching folders is the same kind of filter change as search — the
+  // previous page number no longer means anything for the new filter.
+  useEffect(() => {
+    setPage(1);
+  }, [activeFolder]);
 
   useEffect(() => {
     try {
@@ -82,7 +93,14 @@ export function TemplateList() {
     search: debouncedSearch || undefined,
     page,
     size: PAGE_SIZE,
+    folder_id: activeFolder,
   });
+  const { data: folders } = useFolders();
+
+  const folderNameById = useMemo(
+    () => new Map((folders ?? []).map((f) => [f.id, f.name])),
+    [folders],
+  );
 
   const items = data?.items ?? [];
   const total = data?.total ?? items.length;
@@ -108,7 +126,14 @@ export function TemplateList() {
   }
 
   return (
-    <div className="space-y-5">
+    <div className="grid gap-5 lg:grid-cols-[240px_1fr]">
+      <FolderSidebar
+        activeFolder={activeFolder}
+        onSelectFolder={setActiveFolder}
+        totalCount={activeFolder === undefined ? data?.total : undefined}
+      />
+
+      <div className="min-w-0 space-y-5">
       {/* Stat cards */}
       <div className="grid gap-3 sm:grid-cols-3">
         <StatCard
@@ -261,6 +286,17 @@ export function TemplateList() {
                   </TableCell>
                   <TableCell>
                     <div className="flex justify-end">
+                      {template.is_owner && (
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          title="Mover a carpeta"
+                          onClick={() => setMovingTemplate(template)}
+                          className="text-[var(--fg-2)] hover:bg-[var(--bg-accent)]/60 hover:text-[var(--primary)]"
+                        >
+                          <FolderInput className="size-4" />
+                        </Button>
+                      )}
                       <Button
                         variant="ghost"
                         size="icon-sm"
@@ -283,6 +319,11 @@ export function TemplateList() {
             <TemplateCard
               key={template.id}
               template={template}
+              folderName={
+                template.folder_id
+                  ? folderNameById.get(template.folder_id)
+                  : undefined
+              }
               onOpen={() => goToDetail(template.id)}
             />
           ))}
@@ -318,6 +359,19 @@ export function TemplateList() {
           </div>
         </div>
       )}
+      </div>
+
+      {movingTemplate && (
+        <MoveToFolderDialog
+          templateId={movingTemplate.id}
+          templateName={movingTemplate.name}
+          currentFolderId={movingTemplate.folder_id}
+          open={!!movingTemplate}
+          onOpenChange={(open) => {
+            if (!open) setMovingTemplate(null);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -351,9 +405,14 @@ function StatCard({
 
 function TemplateCard({
   template,
+  folderName,
   onOpen,
 }: {
   template: Template;
+  /** Resolved folder name for this template's `folder_id`. Omitted entirely
+   * (no chip) when the template is unfiled or the folders list hasn't
+   * loaded yet — never renders a raw uuid. */
+  folderName?: string;
   onOpen: () => void;
 }) {
   const formattedDate = formatDate(template.updated_at ?? template.created_at);
@@ -379,6 +438,15 @@ function TemplateCard({
           {template.access_type === "shared" && (
             <Badge className="rounded-full border-0 bg-[var(--bg-accent)] text-[var(--primary)] hover:bg-[var(--bg-accent)]">
               Compartida
+            </Badge>
+          )}
+          {folderName && (
+            <Badge
+              variant="outline"
+              className="rounded-full border-[rgba(195,198,215,0.40)] text-[var(--fg-3)]"
+            >
+              <Folder className="mr-1 size-3" />
+              {folderName}
             </Badge>
           )}
         </div>

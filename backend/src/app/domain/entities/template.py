@@ -25,5 +25,6 @@ class Template:
     description: str | None = None
     current_version: int = 1
     versions: list[TemplateVersion] = field(default_factory=list)
+    folder_id: UUID | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None

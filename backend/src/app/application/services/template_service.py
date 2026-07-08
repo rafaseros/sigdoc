@@ -9,6 +9,7 @@ from app.domain.exceptions import (
     DomainError,
     InvalidTemplateError,
     TemplateAccessDeniedError,
+    TemplateFolderNotFoundError,
     TemplateNameCollisionError,
     TemplateNotFoundError,
     TemplateSharingError,
@@ -16,6 +17,7 @@ from app.domain.exceptions import (
 )
 from app.domain.ports.storage_service import StorageService
 from app.domain.ports.template_engine import TemplateEngine
+from app.domain.ports.template_folder_repository import TemplateFolderRepository
 from app.domain.ports.template_repository import TemplateRepository
 from app.domain.services.permissions import can_view_all_templates
 
@@ -36,6 +38,7 @@ class TemplateService:
         ip_address: str | None = None,
         quota_service: QuotaService | None = None,
         tier_id: UUID | None = None,
+        folder_repository: TemplateFolderRepository | None = None,
     ):
         self._repository = repository
         self._storage = storage
@@ -44,6 +47,7 @@ class TemplateService:
         self._ip_address = ip_address
         self._quota_service = quota_service
         self._tier_id = tier_id
+        self._folder_repository = folder_repository
 
     @property
     def repository(self) -> TemplateRepository:
@@ -336,12 +340,26 @@ class TemplateService:
         search: str | None = None,
         user_id: str | UUID | None = None,
         role: str = "user",
+        folder_id: UUID | None = None,
+        folder_filter_unfiled: bool = False,
     ) -> tuple[list, int]:
-        """List templates accessible to the requesting user (owned + shared + admin)."""
+        """List templates accessible to the requesting user (owned + shared + admin).
+
+        `folder_filter_unfiled=True` restricts results to unfiled templates
+        (folder_id IS NULL); `folder_id` restricts to that specific folder.
+        Both are forwarded as-is to the repository, which is responsible for
+        intersecting the filter with the owner/shared visibility rule.
+        """
         if user_id is not None:
             uid = uuid.UUID(str(user_id)) if isinstance(user_id, str) else user_id
             return await self._repository.list_accessible(
-                user_id=uid, role=role, page=page, size=size, search=search
+                user_id=uid,
+                role=role,
+                page=page,
+                size=size,
+                search=search,
+                folder_id=folder_id,
+                folder_filter_unfiled=folder_filter_unfiled,
             )
         # Fallback for callers that don't pass user_id (e.g. internal/admin bulk queries)
         return await self._repository.list_paginated(page=page, size=size, search=search)
@@ -392,22 +410,47 @@ class TemplateService:
         name: str | None = None,
         description: str | None = None,
         description_provided: bool = False,
+        folder_id: UUID | None = None,
+        folder_id_provided: bool = False,
     ) -> Template:
-        """Rename and/or update the description of a template.
+        """Rename, update the description, and/or re-file a template.
 
-        Access rule mirrors delete_template — owner or admin only.
-        `name` is applied when not None. `description` is applied whenever
-        `description_provided` is True — this allows explicitly clearing the
-        description (`description=None, description_provided=True`), which
-        is distinct from omitting it (`description_provided=False`, left
-        unchanged). On a (tenant_id, name) collision, raises the same
-        non-leaking DomainError message pattern used by upload_template.
+        Access rule for name/description mirrors delete_template — owner or
+        admin only. `name` is applied when not None. `description` is
+        applied whenever `description_provided` is True — this allows
+        explicitly clearing the description (`description=None,
+        description_provided=True`), which is distinct from omitting it
+        (`description_provided=False`, left unchanged). On a (tenant_id,
+        name) collision, raises the same non-leaking DomainError message
+        pattern used by upload_template.
+
+        `folder_id` follows the same explicit-null pattern via
+        `folder_id_provided`: setting it to None while `folder_id_provided`
+        is True unfiles the template. Folders are strictly personal — unlike
+        name/description, re-filing or unfiling a template has NO admin
+        bypass; only the template's owner may change folder_id. When
+        assigning a non-null folder_id, the target folder must exist AND
+        belong to the caller, or TemplateFolderNotFoundError is raised
+        (mapped by the caller to a non-leaking 404).
         """
         template = await self._repository.get_by_id(template_id)
         if not template:
             raise TemplateNotFoundError(f"Template {template_id} not found")
 
         await self._check_access(template_id, user_id, role, require_owner=True)
+
+        if folder_id_provided:
+            # Strict ownership check — no admin bypass for folder assignment.
+            if template.created_by != user_id:
+                raise TemplateAccessDeniedError(
+                    "Solo el propietario puede mover esta plantilla de carpeta"
+                )
+            if folder_id is not None:
+                if self._folder_repository is None:
+                    raise TemplateFolderNotFoundError("Carpeta no encontrada")
+                folder = await self._folder_repository.get_by_id(folder_id)
+                if folder is None or folder.owner_id != user_id:
+                    raise TemplateFolderNotFoundError(f"Folder {folder_id} not found")
 
         old_name = template.name
         old_description = template.description
@@ -418,6 +461,8 @@ class TemplateService:
                 name=name,
                 description=description,
                 description_provided=description_provided,
+                folder_id=folder_id,
+                folder_id_provided=folder_id_provided,
             )
         except TemplateNameCollisionError:
             raise DomainError(
@@ -431,6 +476,9 @@ class TemplateService:
             if description_provided:
                 details["old_description"] = old_description
                 details["new_description"] = updated.description
+            if folder_id_provided:
+                details["old_folder_id"] = str(template.folder_id) if template.folder_id else None
+                details["new_folder_id"] = str(updated.folder_id) if updated.folder_id else None
             self._audit_service.log(
                 actor_id=user_id,
                 tenant_id=template.tenant_id,

@@ -9,6 +9,7 @@ from app.domain.exceptions import (
     DomainError,
     InvalidTemplateError,
     TemplateAccessDeniedError,
+    TemplateFolderNotFoundError,
     TemplateNotFoundError,
     TemplateSharingError,
     TemplateVersionNotFoundError,
@@ -244,17 +245,38 @@ async def list_templates(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
     search: str | None = Query(None),
+    folder_id: str | None = Query(
+        None,
+        description="Filter by folder. A folder UUID filters to that folder; "
+        "the literal string 'none' filters to unfiled templates.",
+    ),
     current_user: CurrentUser = Depends(get_current_user),
     service: TemplateService = Depends(get_template_service),
     user_repo: UserRepository = Depends(get_user_repository),
 ):
-    """List templates with pagination and optional search."""
+    """List templates with pagination and optional search/folder filter."""
+    folder_filter_unfiled = False
+    parsed_folder_id: UUID | None = None
+    if folder_id is not None:
+        if folder_id == "none":
+            folder_filter_unfiled = True
+        else:
+            try:
+                parsed_folder_id = UUID(folder_id)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="folder_id inválido",
+                )
+
     templates, total = await service.list_templates(
         page=page,
         size=size,
         search=search,
         user_id=current_user.user_id,
         role=current_user.role,
+        folder_id=parsed_folder_id,
+        folder_filter_unfiled=folder_filter_unfiled,
     )
 
     owner_name_cache: dict[str, str | None] = {}
@@ -295,6 +317,7 @@ async def list_templates(
             access_type=access_type,
             is_owner=is_owner,
             owner_name=owner_name,
+            folder_id=str(t.folder_id) if getattr(t, "folder_id", None) else None,
         ))
 
     return TemplateListResponse(items=items, total=total, page=page, size=size)
@@ -371,6 +394,7 @@ async def get_template(
         is_owner=is_owner,
         shared_by_email=shared_by_email,
         owner_name=owner_name,
+        folder_id=str(t.folder_id) if getattr(t, "folder_id", None) else None,
     )
 
 
@@ -382,7 +406,17 @@ async def update_template(
     service: TemplateService = Depends(get_template_service),
     user_repo: UserRepository = Depends(get_user_repository),
 ):
-    """Rename and/or update the description of a template (owner or admin only)."""
+    """Rename, update the description, and/or re-file a template.
+
+    Name/description follow the owner-or-admin rule. Folder assignment
+    (folder_id) is strictly owner-only — no admin bypass — since folders
+    are personal organization.
+    """
+    folder_id_provided = "folder_id" in body.model_fields_set
+    parsed_folder_id: UUID | None = None
+    if folder_id_provided and body.folder_id is not None:
+        parsed_folder_id = UUID(body.folder_id)
+
     try:
         t = await service.update_template(
             template_id,
@@ -391,6 +425,8 @@ async def update_template(
             name=body.name,
             description=body.description,
             description_provided="description" in body.model_fields_set,
+            folder_id=parsed_folder_id,
+            folder_id_provided=folder_id_provided,
         )
     except TemplateAccessDeniedError as e:
         raise HTTPException(
@@ -401,6 +437,11 @@ async def update_template(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Plantilla no encontrada",
+        )
+    except TemplateFolderNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Carpeta no encontrada",
         )
     except DomainError as e:
         raise HTTPException(
@@ -442,6 +483,7 @@ async def update_template(
         access_type=access_type,
         is_owner=is_owner,
         owner_name=owner_name,
+        folder_id=str(t.folder_id) if getattr(t, "folder_id", None) else None,
     )
 
 

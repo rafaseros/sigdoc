@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/shared/lib/api-client";
-import { templateKeys } from "./keys";
+import { folderKeys, templateKeys } from "./keys";
 import type { VariableType } from "./queries";
 
 export interface ValidationError {
@@ -133,6 +133,9 @@ export function useDeleteTemplate() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: templateKeys.lists() });
+      // A deleted template may have belonged to a folder — its count must
+      // refresh too.
+      queryClient.invalidateQueries({ queryKey: folderKeys.lists() });
     },
   });
 }
@@ -145,14 +148,18 @@ export function useUpdateTemplate() {
       templateId,
       name,
       description,
+      folder_id,
     }: {
       templateId: string;
       name?: string;
       description?: string;
+      /** Explicit `null` unfiles the template ("Sin carpeta"); `undefined` leaves it untouched. */
+      folder_id?: string | null;
     }) => {
       const { data } = await apiClient.patch(`/templates/${templateId}`, {
         name,
         description,
+        folder_id,
       });
       return data;
     },
@@ -161,6 +168,10 @@ export function useUpdateTemplate() {
       queryClient.invalidateQueries({
         queryKey: templateKeys.detail(variables.templateId),
       });
+      // Renaming never touches folder_id, but moving does — invalidate
+      // folder counts unconditionally since this query is cheap and it
+      // keeps the mutation simple (no conditional invalidation branch).
+      queryClient.invalidateQueries({ queryKey: folderKeys.lists() });
     },
   });
 }

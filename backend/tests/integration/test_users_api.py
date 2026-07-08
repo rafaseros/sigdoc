@@ -546,6 +546,79 @@ async def test_deactivate_user_with_reassign_transfers_templates(
 
 
 @pytest.mark.asyncio
+async def test_deactivate_user_with_reassign_clears_folder_id(
+    async_client, auth_headers, monkeypatch, fake_template_repo, fake_template_folder_repo
+):
+    """Regression: a template filed in the deactivated owner's folder must
+    be UNFILED (folder_id=None) after reassignment — not left pointing at a
+    folder the new owner has no relationship with. The old folder's
+    template_count must drop accordingly."""
+    from app.domain.entities import Template, TemplateFolder
+    from datetime import datetime, timezone
+
+    REASSIGN_TARGET_ID = uuid.UUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee")
+
+    fake_repo = FakeUserRepository()
+    target = _make_admin_user(
+        TARGET_USER_ID, ADMIN_TENANT_ID, role="document_generator"
+    )
+    reassign_target = _make_admin_user(
+        REASSIGN_TARGET_ID, ADMIN_TENANT_ID, role="document_generator"
+    )
+    requesting_admin = _make_admin_user(ADMIN_USER_ID, ADMIN_TENANT_ID, role="admin")
+    _seed_user(fake_repo, target)
+    _seed_user(fake_repo, reassign_target)
+    _seed_user(fake_repo, requesting_admin)
+
+    now = datetime.now(timezone.utc)
+    folder = TemplateFolder(
+        id=uuid.uuid4(),
+        tenant_id=ADMIN_TENANT_ID,
+        owner_id=TARGET_USER_ID,
+        name="TargetUsersFolder",
+        created_at=now,
+        updated_at=now,
+    )
+    await fake_template_folder_repo.create(folder)
+
+    tpl_id = uuid.uuid4()
+    fake_template_repo._templates[tpl_id] = Template(
+        id=tpl_id,
+        tenant_id=ADMIN_TENANT_ID,
+        name="ReassignableFiledTemplate",
+        description=None,
+        current_version=1,
+        created_by=TARGET_USER_ID,
+        folder_id=folder.id,
+        versions=[],
+        created_at=now,
+        updated_at=now,
+    )
+
+    repo_class = _make_users_repo_class(fake_repo)
+    monkeypatch.setattr("app.presentation.api.v1.users.SQLAlchemyUserRepository", repo_class)
+
+    response = await async_client.delete(
+        f"/api/v1/users/{TARGET_USER_ID}?reassign_to={REASSIGN_TARGET_ID}",
+        headers=auth_headers,
+    )
+    assert response.status_code == 204, response.text
+
+    # Ownership transferred AND folder_id cleared — the new owner has no
+    # relationship with the old owner's folder.
+    reassigned_tpl = fake_template_repo._templates[tpl_id]
+    assert reassigned_tpl.created_by == REASSIGN_TARGET_ID
+    assert reassigned_tpl.folder_id is None
+
+    # The old folder's template_count must reflect the unfiling.
+    old_owner_folders = await fake_template_folder_repo.list_by_owner(TARGET_USER_ID)
+    assert next(f.template_count for f in old_owner_folders if f.id == folder.id) == 0
+
+    fake_template_repo._templates.pop(tpl_id, None)
+    fake_template_folder_repo._folders.pop(folder.id, None)
+
+
+@pytest.mark.asyncio
 async def test_deactivate_user_reassign_to_self_returns_400(
     async_client, auth_headers, monkeypatch, fake_template_repo
 ):

@@ -1,4 +1,5 @@
 from .template_repository import TemplateRepository
+from .template_folder_repository import TemplateFolderRepository
 from .document_repository import DocumentRepository
 from .storage_service import StorageService
 from .template_engine import TemplateEngine
@@ -11,6 +12,7 @@ from .email_service import EmailService
 
 __all__ = [
     "TemplateRepository",
+    "TemplateFolderRepository",
     "DocumentRepository",
     "StorageService",
     "TemplateEngine",

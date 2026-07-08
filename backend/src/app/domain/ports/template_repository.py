@@ -66,9 +66,19 @@ class TemplateRepository(ABC):
         page: int = 1,
         size: int = 20,
         search: str | None = None,
+        folder_id: UUID | None = None,
+        folder_filter_unfiled: bool = False,
     ) -> tuple[list[Template], int]:
         """Return templates where user is owner OR has a share record.
-        Admin role sees all templates in the tenant."""
+        Admin role sees all templates in the tenant.
+
+        `folder_filter_unfiled=True` restricts results to templates with no
+        folder (folder_id IS NULL); `folder_id` (when `folder_filter_unfiled`
+        is False) restricts results to that specific folder. The folder
+        filter MUST be intersected with the owner/shared visibility rule for
+        non-admin callers — never applied as an independent query — or
+        another owner's shared templates could leak through a folder filter.
+        """
         ...
 
     @abstractmethod
@@ -150,12 +160,19 @@ class TemplateRepository(ABC):
         name: str | None = None,
         description: str | None = None,
         description_provided: bool = False,
+        folder_id: UUID | None = None,
+        folder_id_provided: bool = False,
     ) -> Template:
         """Update the given fields on a template and return the updated entity.
 
         `name` is applied when not None (name can never be cleared). `description`
         is applied whenever `description_provided` is True — including clearing it
         to None — which lets callers distinguish an explicit null from an omitted
-        field. Raises TemplateNameCollisionError on a (tenant_id, name) collision —
-        the caller is responsible for catching it and mapping it to a domain error."""
+        field. `folder_id` follows the same explicit-null pattern via
+        `folder_id_provided`: setting it to None while `folder_id_provided=True`
+        unfiles the template. Raises TemplateNameCollisionError on a
+        (tenant_id, name) collision — the caller is responsible for catching it
+        and mapping it to a domain error. Callers are responsible for validating
+        that the target folder exists and belongs to the caller BEFORE invoking
+        this method — this method does not re-validate folder ownership."""
         ...

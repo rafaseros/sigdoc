@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { TemplateList } from "./TemplateList";
 import { apiClient } from "@/shared/lib/api-client";
 import type { Template } from "../api/queries";
+import type { Folder } from "../api/folders";
 
 vi.mock("@/shared/lib/api-client", () => ({
   apiClient: {
@@ -35,6 +36,7 @@ const ownedTemplate: Template = {
   is_owner: true,
   shared_by_email: null,
   owner_name: "Ana Gómez",
+  folder_id: null,
 };
 
 const sharedTemplate: Template = {
@@ -50,11 +52,26 @@ const sharedTemplate: Template = {
   is_owner: false,
   shared_by_email: "maria@empresa.com",
   owner_name: "María Pérez",
+  folder_id: null,
 };
 
-function mockTemplatesResponse(items: Template[], total: number) {
-  vi.mocked(apiClient.get).mockResolvedValue({
-    data: { items, total, page: 1, size: 20 },
+/**
+ * Mocks `apiClient.get` for BOTH `/templates` and `/folders` in one shot,
+ * routing by URL prefix since the sidebar's `useFolders()` and the list's
+ * `useTemplates()` share the same mocked function. Folders default to `[]`
+ * so pre-existing tests (which don't care about the sidebar) keep working
+ * unmodified.
+ */
+function mockTemplatesResponse(
+  items: Template[],
+  total: number,
+  folders: Folder[] = [],
+) {
+  vi.mocked(apiClient.get).mockImplementation(async (url: string) => {
+    if (typeof url === "string" && url.startsWith("/folders")) {
+      return { data: { folders } };
+    }
+    return { data: { items, total, page: 1, size: 20 } };
   });
 }
 
@@ -295,6 +312,161 @@ describe("TemplateList — page clamp when total shrinks", () => {
         expect(lastCall).toContain("page=2");
       },
       { timeout: 2000 },
+    );
+  });
+});
+
+describe("TemplateList — folder sidebar", () => {
+  const folders: Folder[] = [
+    { id: "folder-1", name: "Contratos", template_count: 7 },
+    { id: "folder-2", name: "Informes", template_count: 12 },
+  ];
+
+  beforeEach(() => {
+    vi.mocked(apiClient.get).mockReset();
+    vi.mocked(apiClient.post).mockReset();
+    vi.mocked(apiClient.delete).mockReset();
+    window.localStorage.clear();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("renders folder rows with their counts; clicking one filters by folder_id and resets to page 1", async () => {
+    mockTemplatesResponse([ownedTemplate, sharedTemplate], 45, folders);
+    const user = userEvent.setup();
+    renderList();
+
+    await waitFor(() => expect(screen.getByText("Contratos")).toBeInTheDocument());
+    expect(screen.getByText("Informes")).toBeInTheDocument();
+    expect(screen.getByText("7")).toBeInTheDocument();
+    expect(screen.getByText("12")).toBeInTheDocument();
+
+    // Move off page 1 first so we can prove the folder click resets it.
+    await waitFor(() =>
+      expect(screen.getByText("Página 1 de 3")).toBeInTheDocument(),
+    );
+    await user.click(screen.getByRole("button", { name: /siguiente/i }));
+    await waitFor(() =>
+      expect(apiClient.get).toHaveBeenCalledWith(
+        expect.stringContaining("page=2"),
+      ),
+    );
+
+    vi.mocked(apiClient.get).mockClear();
+    await user.click(screen.getByRole("button", { name: "Contratos" }));
+
+    await waitFor(() =>
+      expect(apiClient.get).toHaveBeenCalledWith(
+        expect.stringMatching(/\/templates\?.*folder_id=folder-1/),
+      ),
+    );
+    const lastCalls = vi.mocked(apiClient.get).mock.calls;
+    const lastTemplatesCall = lastCalls
+      .map((c) => c[0] as string)
+      .filter((url) => url.startsWith("/templates"))
+      .pop();
+    expect(lastTemplatesCall).toContain("page=1");
+  });
+
+  it('sends folder_id="none" when "Sin carpeta" is selected', async () => {
+    mockTemplatesResponse([ownedTemplate, sharedTemplate], 2, folders);
+    const user = userEvent.setup();
+    renderList();
+
+    await waitFor(() =>
+      expect(screen.getByText("Contrato de Servicios")).toBeInTheDocument(),
+    );
+    vi.mocked(apiClient.get).mockClear();
+
+    await user.click(screen.getByRole("button", { name: "Sin carpeta" }));
+
+    await waitFor(() =>
+      expect(apiClient.get).toHaveBeenCalledWith(
+        expect.stringMatching(/\/templates\?.*folder_id=none/),
+      ),
+    );
+  });
+});
+
+describe("TemplateList — create folder", () => {
+  beforeEach(() => {
+    vi.mocked(apiClient.get).mockReset();
+    vi.mocked(apiClient.post).mockReset();
+    window.localStorage.clear();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("creates a new folder via POST and refetches the folder list", async () => {
+    mockTemplatesResponse([ownedTemplate, sharedTemplate], 2, []);
+    vi.mocked(apiClient.post).mockResolvedValue({
+      data: { id: "folder-3", name: "Nueva", template_count: 0 },
+    });
+    const user = userEvent.setup();
+    renderList();
+
+    await waitFor(() =>
+      expect(screen.getByText("Contrato de Servicios")).toBeInTheDocument(),
+    );
+
+    await user.click(screen.getByRole("button", { name: /nueva carpeta/i }));
+    const nameInput = await screen.findByLabelText(/nombre de la carpeta/i);
+    await user.type(nameInput, "Nueva");
+
+    vi.mocked(apiClient.get).mockClear();
+    await user.click(screen.getByRole("button", { name: /crear carpeta/i }));
+
+    await waitFor(() =>
+      expect(apiClient.post).toHaveBeenCalledWith("/folders", { name: "Nueva" }),
+    );
+    // Creating a folder invalidates the folders query — it must refetch.
+    await waitFor(() =>
+      expect(apiClient.get).toHaveBeenCalledWith(
+        expect.stringMatching(/^\/folders/),
+      ),
+    );
+  });
+});
+
+describe("TemplateList — delete folder", () => {
+  const folders: Folder[] = [
+    { id: "folder-1", name: "Contratos", template_count: 7 },
+  ];
+
+  beforeEach(() => {
+    vi.mocked(apiClient.get).mockReset();
+    vi.mocked(apiClient.delete).mockReset();
+    window.localStorage.clear();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("confirms that templates are preserved (only unfiled) and sends DELETE", async () => {
+    mockTemplatesResponse([ownedTemplate, sharedTemplate], 2, folders);
+    vi.mocked(apiClient.delete).mockResolvedValue({ data: undefined });
+    const user = userEvent.setup();
+    renderList();
+
+    await waitFor(() => expect(screen.getByText("Contratos")).toBeInTheDocument());
+
+    await user.click(
+      screen.getByRole("button", { name: "Eliminar carpeta Contratos" }),
+    );
+
+    expect(
+      await screen.findByText(/las plantillas no se eliminan; quedan sin carpeta/i),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /^eliminar$/i }));
+
+    await waitFor(() =>
+      expect(apiClient.delete).toHaveBeenCalledWith("/folders/folder-1"),
     );
   });
 });

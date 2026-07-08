@@ -51,6 +51,29 @@ class TemplateNameCollisionError(DomainError):
         self.name = name
 
 
+class TemplateFolderNotFoundError(DomainError):
+    """Template folder not found, or not owned by the requesting user.
+
+    Folders are strictly personal — this error is also raised when a caller
+    tries to act on another user's folder, so the 404 never leaks whether
+    the folder exists under a different owner.
+    """
+
+
+class FolderNameCollisionError(DomainError):
+    """A folder create/rename collided with an existing (tenant_id, owner_id, name) pair.
+
+    Raised by repository implementations instead of leaking the underlying
+    persistence exception (e.g. sqlalchemy.exc.IntegrityError). The service
+    layer is expected to catch this and map it to a non-leaking, user-facing
+    message. Mirrors TemplateNameCollisionError.
+    """
+
+    def __init__(self, name: str | None = None) -> None:
+        super().__init__(f"Folder name collision for '{name}'")
+        self.name = name
+
+
 class QuotaExceededError(DomainError):
     """Subscription quota exceeded for the tenant."""
 

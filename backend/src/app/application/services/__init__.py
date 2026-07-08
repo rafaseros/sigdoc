@@ -4,12 +4,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.application.services.audit_service import AuditService
 from app.application.services.document_service import DocumentService
 from app.application.services.quota_service import QuotaService
+from app.application.services.template_folder_service import TemplateFolderService
 from app.application.services.template_service import TemplateService
 from app.application.services.usage_service import UsageService
 from app.config import get_settings
 from app.domain.ports.user_repository import UserRepository
 from app.infrastructure.pdf import get_pdf_converter
 from app.infrastructure.persistence.database import async_session_factory
+from app.infrastructure.persistence.repositories.template_folder_repository import (
+    SQLAlchemyTemplateFolderRepository,
+)
 from app.infrastructure.persistence.repositories.template_repository import (
     SQLAlchemyTemplateRepository,
 )
@@ -85,6 +89,17 @@ async def get_template_service(
         audit_service=get_audit_service(),
         quota_service=quota_service,
         tier_id=tier_id,
+        folder_repository=SQLAlchemyTemplateFolderRepository(session),
+    )
+
+
+async def get_template_folder_service(
+    session: AsyncSession = Depends(get_tenant_session),
+) -> TemplateFolderService:
+    """Return a TemplateFolderService backed by the current tenant session."""
+    return TemplateFolderService(
+        repository=SQLAlchemyTemplateFolderRepository(session),
+        audit_service=get_audit_service(),
     )
 
 

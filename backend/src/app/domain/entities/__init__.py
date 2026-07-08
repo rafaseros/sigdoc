@@ -1,6 +1,7 @@
 from .tenant import Tenant
 from .user import User
 from .template import Template, TemplateVersion
+from .template_folder import TemplateFolder
 from .document import Document
 from .template_share import TemplateShare
 from .usage_event import UsageEvent
@@ -12,6 +13,7 @@ __all__ = [
     "User",
     "Template",
     "TemplateVersion",
+    "TemplateFolder",
     "Document",
     "TemplateShare",
     "UsageEvent",

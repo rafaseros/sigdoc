@@ -17,6 +17,9 @@ class TemplateModel(UUIDMixin, TimestampMixin, TenantMixin, Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     current_version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     created_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    folder_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("template_folders.id", ondelete="SET NULL"), nullable=True
+    )
 
     versions = relationship("TemplateVersionModel", back_populates="template", lazy="selectin")
     creator = relationship("UserModel", lazy="selectin")

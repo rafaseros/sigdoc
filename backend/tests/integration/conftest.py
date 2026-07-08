@@ -35,12 +35,14 @@ from app.application.services import (
     get_audit_service,
     get_document_service,
     get_quota_service,
+    get_template_folder_service,
     get_template_service,
     get_usage_service,
     get_user_repository,
 )
 from app.application.services.audit_service import AuditService
 from app.application.services.document_service import DocumentService
+from app.application.services.template_folder_service import TemplateFolderService
 from app.application.services.template_service import TemplateService
 from app.application.services.usage_service import UsageService
 from app.infrastructure.auth.jwt_handler import create_access_token
@@ -54,6 +56,7 @@ from tests.fakes import (
     FakeStorageService,
     FakeSubscriptionTierRepository,
     FakeTemplateEngine,
+    FakeTemplateFolderRepository,
     FakeTemplateRepository,
     FakeUsageRepository,
     FakeUserRepository,
@@ -82,6 +85,15 @@ def fake_template_engine() -> FakeTemplateEngine:
 @pytest.fixture(scope="session")
 def fake_template_repo() -> FakeTemplateRepository:
     return FakeTemplateRepository()
+
+
+@pytest.fixture(scope="session")
+def fake_template_folder_repo(
+    fake_template_repo: FakeTemplateRepository,
+) -> FakeTemplateFolderRepository:
+    """Linked to fake_template_repo so delete() can emulate the real DB's
+    ON DELETE SET NULL FK behavior on templates.folder_id."""
+    return FakeTemplateFolderRepository(template_repo=fake_template_repo)
 
 
 @pytest.fixture(scope="session")
@@ -125,6 +137,7 @@ def app(
     fake_storage: FakeStorageService,
     fake_template_engine: FakeTemplateEngine,
     fake_template_repo: FakeTemplateRepository,
+    fake_template_folder_repo: FakeTemplateFolderRepository,
     fake_document_repo: FakeDocumentRepository,
     fake_usage_repo: FakeUsageRepository,
     fake_audit_repo: FakeAuditRepository,
@@ -156,6 +169,14 @@ def app(
             repository=fake_template_repo,
             storage=fake_storage,
             engine=fake_template_engine,
+            audit_service=_audit_service,
+            folder_repository=fake_template_folder_repo,
+        )
+
+    # Override get_template_folder_service → TemplateFolderService with fakes
+    async def override_get_template_folder_service() -> TemplateFolderService:
+        return TemplateFolderService(
+            repository=fake_template_folder_repo,
             audit_service=_audit_service,
         )
 
@@ -212,6 +233,7 @@ def app(
     _app.dependency_overrides[get_usage_service] = override_get_usage_service
     _app.dependency_overrides[get_audit_service] = override_get_audit_service
     _app.dependency_overrides[get_template_service] = override_get_template_service
+    _app.dependency_overrides[get_template_folder_service] = override_get_template_folder_service
     _app.dependency_overrides[get_document_service] = override_get_document_service
     _app.dependency_overrides[get_quota_service] = override_get_quota_service
     _app.dependency_overrides[get_user_repository] = override_get_user_repository

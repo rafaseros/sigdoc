@@ -58,6 +58,7 @@ class TemplateUpdateRequest(BaseModel):
 
     name: str | None = None
     description: str | None = None
+    folder_id: str | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -73,10 +74,23 @@ class TemplateUpdateRequest(BaseModel):
             )
         return stripped
 
+    @field_validator("folder_id")
+    @classmethod
+    def _validate_folder_id(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        try:
+            UUID(v)
+        except ValueError:
+            raise ValueError("folder_id must be a valid UUID")
+        return v
+
     @model_validator(mode="after")
     def _require_at_least_one_field(self) -> "TemplateUpdateRequest":
-        if "name" not in self.model_fields_set and "description" not in self.model_fields_set:
-            raise ValueError("At least one of 'name' or 'description' must be provided")
+        if not ({"name", "description", "folder_id"} & self.model_fields_set):
+            raise ValueError(
+                "At least one of 'name', 'description', or 'folder_id' must be provided"
+            )
         return self
 
 
@@ -93,6 +107,7 @@ class TemplateResponse(BaseModel):
     is_owner: bool = True
     shared_by_email: str | None = None  # populated only when access_type == "shared"
     owner_name: str | None = None  # the template creator's full name
+    folder_id: str | None = None  # the owner's personal folder this template is filed in, if any
 
     model_config = {"from_attributes": True}
 

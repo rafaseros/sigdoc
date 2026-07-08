@@ -135,6 +135,8 @@ class FakeTemplateRepository(TemplateRepository):
         page: int = 1,
         size: int = 20,
         search: str | None = None,
+        folder_id: UUID | None = None,
+        folder_filter_unfiled: bool = False,
     ) -> tuple[list[Template], int]:
         """Return templates where user is owner OR has a share. Admins see all."""
         items = list(self._templates.values())
@@ -151,6 +153,11 @@ class FakeTemplateRepository(TemplateRepository):
         if search:
             search_lower = search.lower()
             items = [t for t in items if search_lower in t.name.lower()]
+
+        if folder_filter_unfiled:
+            items = [t for t in items if t.folder_id is None]
+        elif folder_id is not None:
+            items = [t for t in items if t.folder_id == folder_id]
 
         # Attach transient access_type
         for t in items:
@@ -251,10 +258,15 @@ class FakeTemplateRepository(TemplateRepository):
     async def reassign_owner(
         self, from_user_id: UUID, to_user_id: UUID
     ) -> int:
+        """Bulk reassign every template owned by `from_user_id` to
+        `to_user_id`, clearing `folder_id` on each (mirrors the real
+        repository — a template can never keep a `folder_id` belonging to
+        its previous owner's folder)."""
         count = 0
         for t in self._templates.values():
             if t.created_by == from_user_id:
                 t.created_by = to_user_id
+                t.folder_id = None
                 count += 1
         return count
 
@@ -265,6 +277,8 @@ class FakeTemplateRepository(TemplateRepository):
         name: str | None = None,
         description: str | None = None,
         description_provided: bool = False,
+        folder_id: UUID | None = None,
+        folder_id_provided: bool = False,
     ) -> Template:
         """Update the given fields on a template. Mirrors the real DB's
         UniqueConstraint("tenant_id", "name") by raising
@@ -288,6 +302,9 @@ class FakeTemplateRepository(TemplateRepository):
 
         if description_provided:
             template.description = description
+
+        if folder_id_provided:
+            template.folder_id = folder_id
 
         template.updated_at = datetime.now(timezone.utc)
         return template

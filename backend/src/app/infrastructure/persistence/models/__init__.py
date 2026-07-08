@@ -3,6 +3,7 @@ from .subscription_tier import SubscriptionTierModel
 from .tenant import TenantModel
 from .user import UserModel
 from .template import TemplateModel
+from .template_folder import TemplateFolderModel
 from .template_version import TemplateVersionModel
 from .document import DocumentModel
 from .template_share import TemplateShareModel
@@ -15,6 +16,7 @@ __all__ = [
     "TenantModel",
     "UserModel",
     "TemplateModel",
+    "TemplateFolderModel",
     "TemplateVersionModel",
     "DocumentModel",
     "TemplateShareModel",

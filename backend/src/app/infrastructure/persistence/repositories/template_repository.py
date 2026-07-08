@@ -160,10 +160,19 @@ class SQLAlchemyTemplateRepository(TemplateRepositoryPort):
         page: int = 1,
         size: int = 20,
         search: str | None = None,
+        folder_id: UUID | None = None,
+        folder_filter_unfiled: bool = False,
     ) -> tuple[list, int]:
         """Return templates where user is owner OR has a share record.
         Admin role sees all templates in the tenant (tenant filter applied by TenantMixin event).
         Each returned TemplateModel has a transient `access_type` attribute: "owned" or "shared".
+
+        `folder_filter_unfiled` / `folder_id` restrict results to a specific
+        folder (or to unfiled templates). The filter is applied as an
+        additional `.where()` on the SAME stmt/count_stmt that already
+        carries the owner/shared accessible-ids filter for non-admin users —
+        it is NEVER run as an independent query — so it is always
+        intersected with visibility, never applied on top of it.
         """
         if can_view_all_templates(role):
             # Admins see everything in the tenant
@@ -174,6 +183,13 @@ class SQLAlchemyTemplateRepository(TemplateRepositoryPort):
                 search_filter = TemplateModel.name.ilike(f"%{search}%")
                 stmt = stmt.where(search_filter)
                 count_stmt = count_stmt.where(search_filter)
+
+            if folder_filter_unfiled:
+                stmt = stmt.where(TemplateModel.folder_id.is_(None))
+                count_stmt = count_stmt.where(TemplateModel.folder_id.is_(None))
+            elif folder_id is not None:
+                stmt = stmt.where(TemplateModel.folder_id == folder_id)
+                count_stmt = count_stmt.where(TemplateModel.folder_id == folder_id)
 
             total_result = await self._session.execute(count_stmt)
             total = total_result.scalar_one()
@@ -210,6 +226,18 @@ class SQLAlchemyTemplateRepository(TemplateRepositoryPort):
             search_filter = TemplateModel.name.ilike(f"%{search}%")
             stmt = stmt.where(search_filter)
             count_stmt = count_stmt.where(search_filter)
+
+        # CRITICAL: chained onto the SAME stmt/count_stmt that already
+        # carries the owned/shared accessible-ids filter above — this
+        # intersects (AND) with visibility. Applying the folder filter as a
+        # separate query would let another owner's shared templates leak
+        # through a folder filter.
+        if folder_filter_unfiled:
+            stmt = stmt.where(TemplateModel.folder_id.is_(None))
+            count_stmt = count_stmt.where(TemplateModel.folder_id.is_(None))
+        elif folder_id is not None:
+            stmt = stmt.where(TemplateModel.folder_id == folder_id)
+            count_stmt = count_stmt.where(TemplateModel.folder_id == folder_id)
 
         total_result = await self._session.execute(count_stmt)
         total = total_result.scalar_one()
@@ -422,13 +450,20 @@ class SQLAlchemyTemplateRepository(TemplateRepositoryPort):
         self, from_user_id: UUID, to_user_id: UUID
     ) -> int:
         """Bulk reassign every template owned by `from_user_id` to
-        `to_user_id`. Returns the number of templates updated."""
+        `to_user_id`. Returns the number of templates updated.
+
+        Also clears `folder_id` on every reassigned template: a folder
+        belongs to a single owner, so a template can never keep a
+        `folder_id` pointing at the previous owner's folder once ownership
+        moves — that would leave an orphaned reference, inflate the old
+        folder's count, and 404 the new owner when they try to access it.
+        """
         from sqlalchemy import update as sa_update
 
         stmt = (
             sa_update(TemplateModel)
             .where(TemplateModel.created_by == from_user_id)
-            .values(created_by=to_user_id)
+            .values(created_by=to_user_id, folder_id=None)
         )
         result = await self._session.execute(stmt)
         await self._session.flush()
@@ -441,14 +476,18 @@ class SQLAlchemyTemplateRepository(TemplateRepositoryPort):
         name: str | None = None,
         description: str | None = None,
         description_provided: bool = False,
+        folder_id: UUID | None = None,
+        folder_id_provided: bool = False,
     ) -> TemplateModel:
-        """Update name/description on a template and return the updated model.
+        """Update name/description/folder on a template and return the updated model.
 
-        `name` is applied when not None. `description` is applied whenever
-        `description_provided` is True — including clearing it to NULL.
-        On a (tenant_id, name) collision, rolls back the aborted transaction
-        and raises TemplateNameCollisionError so callers never see a leaked
-        sqlalchemy.exc.IntegrityError nor an aborted session."""
+        `name` is applied when not None. `description` and `folder_id` are
+        applied whenever their `_provided` flag is True — including clearing
+        them to NULL. On a (tenant_id, name) collision, rolls back the
+        aborted transaction and raises TemplateNameCollisionError so callers
+        never see a leaked sqlalchemy.exc.IntegrityError nor an aborted
+        session. Callers are responsible for validating that the target
+        folder exists and belongs to the caller BEFORE calling this method."""
         from sqlalchemy import update as sa_update
         from sqlalchemy.exc import IntegrityError
 
@@ -459,6 +498,8 @@ class SQLAlchemyTemplateRepository(TemplateRepositoryPort):
             values["name"] = name
         if description_provided:
             values["description"] = description
+        if folder_id_provided:
+            values["folder_id"] = folder_id
 
         if values:
             stmt = (
