@@ -169,6 +169,53 @@ describe("TemplateList — Propietario / owner_name display", () => {
   });
 });
 
+describe("TemplateList — empty states", () => {
+  beforeEach(() => {
+    vi.mocked(apiClient.get).mockReset();
+    window.localStorage.clear();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("shows the search-empty (dashed) variant when a search yields no results", async () => {
+    mockTemplatesResponse([ownedTemplate, sharedTemplate], 2);
+    const user = userEvent.setup();
+    renderList();
+
+    await waitFor(() =>
+      expect(screen.getByText("Contrato de Servicios")).toBeInTheDocument(),
+    );
+
+    mockTemplatesResponse([], 0);
+    await user.type(screen.getByPlaceholderText(/buscar plantillas/i), "zzz");
+
+    expect(
+      await screen.findByText(
+        /no se encontraron plantillas que coincidan con su búsqueda/i,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/use el botón/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows the genuinely-empty (Card + CTA) variant naming the Subir Plantilla button when there are no templates at all", async () => {
+    mockTemplatesResponse([], 0);
+    renderList();
+
+    expect(
+      await screen.findByText(/aún no hay plantillas/i),
+    ).toBeInTheDocument();
+    const cta = screen.getByText((_, el) => el?.tagName === "STRONG" && el.textContent === "Subir Plantilla");
+    expect(cta).toBeInTheDocument();
+    expect(
+      screen.queryByText(/coincidan con su búsqueda/i),
+    ).not.toBeInTheDocument();
+  });
+});
+
 describe("TemplateList — pagination", () => {
   beforeEach(() => {
     vi.mocked(apiClient.get).mockReset();
@@ -387,6 +434,25 @@ describe("TemplateList — folder sidebar", () => {
         expect.stringMatching(/\/templates\?.*folder_id=none/),
       ),
     );
+  });
+
+  it("shows the teaching copy when there are no folders yet", async () => {
+    mockTemplatesResponse([ownedTemplate, sharedTemplate], 2, []);
+    renderList();
+
+    expect(
+      await screen.findByText(/cree carpetas para organizar sus plantillas/i),
+    ).toBeInTheDocument();
+  });
+
+  it("hides the teaching copy once at least one folder exists", async () => {
+    mockTemplatesResponse([ownedTemplate, sharedTemplate], 2, folders);
+    renderList();
+
+    await waitFor(() => expect(screen.getByText("Contratos")).toBeInTheDocument());
+    expect(
+      screen.queryByText(/cree carpetas para organizar sus plantillas/i),
+    ).not.toBeInTheDocument();
   });
 });
 

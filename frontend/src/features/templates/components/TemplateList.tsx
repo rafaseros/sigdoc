@@ -12,6 +12,7 @@ import {
   Eye,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
@@ -174,6 +175,7 @@ export function TemplateList() {
               variant="ghost"
               size="icon-sm"
               aria-label="Vista de tarjetas"
+              title="Vista de tarjetas"
               aria-pressed={viewMode === "cards"}
               onClick={() => setViewMode("cards")}
               className={
@@ -189,6 +191,7 @@ export function TemplateList() {
               variant="ghost"
               size="icon-sm"
               aria-label="Vista de tabla"
+              title="Vista de tabla"
               aria-pressed={viewMode === "table"}
               onClick={() => setViewMode("table")}
               className={
@@ -220,13 +223,24 @@ export function TemplateList() {
           Error al cargar plantillas: {error?.message ?? "Error desconocido"}
         </div>
       ) : !items.length ? (
-        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-[rgba(195,198,215,0.4)] bg-white/50 p-12 text-center">
-          <p className="text-[var(--fg-2)]">
-            {debouncedSearch
-              ? "No se encontraron plantillas que coincidan con su búsqueda."
-              : "Aún no hay plantillas. Suba su primera plantilla para comenzar."}
-          </p>
-        </div>
+        debouncedSearch || activeFolder !== undefined ? (
+          <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-[rgba(195,198,215,0.4)] bg-white/50 p-12 text-center">
+            <p className="text-[var(--fg-2)]">
+              {debouncedSearch
+                ? "No se encontraron plantillas que coincidan con su búsqueda."
+                : "No hay plantillas en esta carpeta."}
+            </p>
+          </div>
+        ) : (
+          <Card className="border-0 bg-white shadow-[var(--shadow-md)]">
+            <CardContent className="pt-6 text-center">
+              <p className="text-[var(--fg-2)]">Aún no hay plantillas.</p>
+              <p className="mt-1 text-sm text-[var(--fg-3)]">
+                Use el botón <strong>Subir Plantilla</strong> para comenzar.
+              </p>
+            </CardContent>
+          </Card>
+        )
       ) : viewMode === "table" ? (
         <div className="overflow-hidden rounded-xl bg-white shadow-[var(--shadow-sm)] ring-1 ring-[rgba(195,198,215,0.30)]">
           <Table>

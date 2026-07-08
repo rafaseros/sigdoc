@@ -72,6 +72,9 @@ export function DocumentsTab({ templateId }: DocumentsTabProps) {
           <p className="text-[var(--fg-2)]">
             No se han generado documentos para esta plantilla.
           </p>
+          <p className="mt-1 text-sm text-[var(--fg-3)]">
+            Genere el primer documento desde «Generar Documento» arriba.
+          </p>
         </div>
       ) : (
         <>

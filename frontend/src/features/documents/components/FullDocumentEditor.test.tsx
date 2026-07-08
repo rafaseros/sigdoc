@@ -511,6 +511,19 @@ describe("FullDocumentEditor — variables panel, sticky action bar, preview dia
     );
   });
 
+  it("16b. the preview dialog explains the watermark is only on the draft PDF", async () => {
+    const user = userEvent.setup();
+    renderEditor();
+
+    await user.click(screen.getByRole("button", { name: /vista previa/i }));
+
+    expect(
+      screen.getByText(
+        /este pdf es un borrador con marca de agua; el documento final se genera sin ella\.?/i,
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("17. closing the preview dialog revokes the blob URL", async () => {
     const user = userEvent.setup();
     renderEditor();
@@ -774,5 +787,82 @@ describe("FullDocumentEditor — preset picker", () => {
     expect(toastSuccessMock).toHaveBeenCalledWith(
       "Datos de «Cliente Acme» cargados",
     );
+  });
+});
+
+describe("FullDocumentEditor — preset discovery hint", () => {
+  const hintText = /reutilizar estos valores la próxima vez/i;
+  const HINT_KEY = "hint:editor-presets:dismissed";
+
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  afterEach(() => {
+    window.localStorage.clear();
+  });
+
+  it("shows the dismissible hint once presets have loaded and the template has none", async () => {
+    renderEditor();
+
+    expect(await screen.findByText(hintText)).toBeInTheDocument();
+  });
+
+  it("hides the hint once the template has presets", async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: {
+        presets: [
+          {
+            id: "preset-1",
+            name: "Cliente Acme",
+            values: { company_name: "Acme" },
+            created_by: "user-1",
+            created_at: "2026-01-01T00:00:00Z",
+          },
+        ],
+      },
+    });
+    renderEditor();
+
+    // Wait for the presets query to resolve (the picker only renders once
+    // `presets.length > 0`) before asserting the hint's absence.
+    await screen.findByRole("combobox");
+    expect(screen.queryByText(hintText)).not.toBeInTheDocument();
+  });
+
+  it("dismissing the hint persists to localStorage and keeps it hidden on re-render", async () => {
+    const user = userEvent.setup();
+    const { unmount } = renderEditor();
+
+    await screen.findByText(hintText);
+    await user.click(screen.getByRole("button", { name: /cerrar consejo/i }));
+
+    expect(screen.queryByText(hintText)).not.toBeInTheDocument();
+    expect(window.localStorage.getItem(HINT_KEY)).toBe("1");
+
+    unmount();
+    renderEditor();
+
+    // Give the presets query time to resolve — the hint must stay hidden
+    // even after the dismissal state has to be re-read from localStorage.
+    await waitFor(() =>
+      expect(screen.queryByText(hintText)).not.toBeInTheDocument(),
+    );
+  });
+});
+
+describe("FullDocumentEditor — help center mount", () => {
+  it("renders a compact Guía trigger that opens directly on 'Generar documentos'", async () => {
+    const user = userEvent.setup();
+    renderEditor();
+
+    const trigger = screen.getByRole("button", { name: "Guía" });
+    await user.click(trigger);
+
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(
+      screen.getByRole("tab", { name: /generar documentos/i }),
+    ).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText(/edición en línea/i)).toBeInTheDocument();
   });
 });

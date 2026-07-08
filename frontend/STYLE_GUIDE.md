@@ -418,6 +418,32 @@ hardcode a `fill`/`stroke` on the `<svg>` itself.
 
 ---
 
+## 16. Dismissible teaching hints
+
+A "hint" is a compact, dismissible §9 info banner that points the user at an
+underused feature (e.g. "did you know you can save these values as a
+preset?"). Distinct from an empty state (§10) — a hint can appear even when
+the surrounding list/section has content, and it disappears for good once
+dismissed.
+
+- **Storage key**: `hint:<name>:dismissed` = `"1"` once dismissed
+  (e.g. `hint:editor-presets:dismissed`). Use `isHintDismissed(name)` /
+  `dismissHint(name)` from `src/shared/lib/dismissible-hint.ts` — don't
+  hand-roll the `localStorage` calls per component.
+- **Guarded access**: both helpers wrap `localStorage` in `try/catch`, same
+  pattern as the view-mode key in `TemplateList.tsx` — private browsing or
+  disabled storage degrades to "hint reappears every render", never a thrown
+  error.
+- **Recipe**: the §9 compact info variant (`py-2.5`, `text-[12.5px]`) plus a
+  trailing ghost icon button (`size="icon-sm"`, `X` icon, `aria-label`
+  "Cerrar consejo") that calls `dismissHint(name)` and hides the banner
+  immediately (no confirmation, no toast — dismissal is a low-stakes,
+  reversible-by-clearing-storage action).
+- **Scope**: hints are for feature discovery, not warnings or errors — never
+  use the destructive or warning palette for a hint.
+
+---
+
 ## Copy register (Spanish)
 
 - Neutral, professional Spanish — no regional slang, no *voseo* in UI copy.

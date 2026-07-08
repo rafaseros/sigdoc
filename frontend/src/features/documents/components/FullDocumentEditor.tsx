@@ -38,8 +38,10 @@ import {
   ChevronDown,
   Eye,
   FileText,
+  Info,
   Save,
   Sparkles,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -48,6 +50,7 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -67,6 +70,8 @@ import { DownloadButton } from "./DownloadButton";
 import { SavePresetDialog } from "./SavePresetDialog";
 
 import { usePresets } from "@/features/templates/api/presets";
+import { TemplateGuideButton } from "@/features/templates/components/TemplateGuide";
+import { dismissHint, isHintDismissed } from "@/shared/lib/dismissible-hint";
 import type {
   StructureNode,
   StructureSpan,
@@ -671,6 +676,9 @@ export function FullDocumentEditor({
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [savePresetOpen, setSavePresetOpen] = useState(false);
+  const [presetHintDismissed, setPresetHintDismissed] = useState(() =>
+    isHintDismissed("editor-presets"),
+  );
 
   const metaByName = useMemo(
     () => Object.fromEntries(variablesMeta.map((m) => [m.name, m])),
@@ -957,13 +965,42 @@ export function FullDocumentEditor({
           <Progress value={progress} className="h-1.5" />
         </div>
 
+        {/* Preset discovery hint — shown once presets have loaded and the
+            template genuinely has none yet; the feature is invisible at zero
+            presets otherwise. Dismissal persists (see STYLE_GUIDE.md §16). */}
+        {presetsData !== undefined &&
+          presets.length === 0 &&
+          !presetHintDismissed && (
+            <div className="flex items-start gap-2.5 rounded-[10px] bg-[var(--bg-accent)] px-3.5 py-2.5 text-[12.5px] leading-[1.45] text-[var(--primary)]">
+              <Info className="mt-px size-4 shrink-0" />
+              <div className="flex-1">
+                Consejo: si genera documentos para un cliente recurrente, use
+                «Guardar datos» para reutilizar estos valores la próxima vez.
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Cerrar consejo"
+                onClick={() => {
+                  dismissHint("editor-presets");
+                  setPresetHintDismissed(true);
+                }}
+                className="-m-1 size-6 shrink-0 text-[var(--primary)] hover:bg-white/50"
+              >
+                <X className="size-3.5" />
+              </Button>
+            </div>
+          )}
+
         {/* Document card */}
         <div className="overflow-hidden rounded-xl bg-white shadow-[var(--shadow-md)] ring-1 ring-[rgba(195,198,215,0.30)]">
-          <div className="border-b border-[rgba(195,198,215,0.20)] bg-[var(--bg-page)] px-6 py-3">
+          <div className="flex items-center justify-between gap-2 border-b border-[rgba(195,198,215,0.20)] bg-[var(--bg-page)] px-6 py-3">
             <div className="flex items-center gap-2 text-[12.5px] text-[var(--fg-3)]">
               <FileText className="size-4 text-[var(--primary)]" />
               <span className="font-medium text-[var(--fg-1)]">{templateName}</span>
             </div>
+            <TemplateGuideButton compact initialTopic="generate" />
           </div>
 
           {/* pb-16 (instead of a symmetric py-5) leaves clearance so the
@@ -1149,6 +1186,10 @@ export function FullDocumentEditor({
             <DialogTitle className="text-xl font-bold tracking-tight">
               Vista previa del documento
             </DialogTitle>
+            <DialogDescription>
+              Este PDF es un borrador con marca de agua; el documento final
+              se genera sin ella.
+            </DialogDescription>
           </DialogHeader>
           {previewUrl ? (
             <iframe

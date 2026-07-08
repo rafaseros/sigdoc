@@ -20,7 +20,10 @@ import {
   BookOpen,
   Pencil,
   FolderInput,
+  X,
 } from "lucide-react";
+
+import { dismissHint, isHintDismissed } from "@/shared/lib/dismissible-hint";
 
 import {
   useTemplate,
@@ -71,6 +74,7 @@ import { RenameTemplateDialog } from "./RenameTemplateDialog";
 import { MoveToFolderDialog } from "./MoveToFolderDialog";
 import { SharesTab } from "./SharesTab";
 import { PresetsTab } from "./PresetsTab";
+import { TemplateGuideButton } from "./TemplateGuide";
 
 function formatFileSize(bytes: number): string {
   if (bytes === 0) return "0 B";
@@ -246,6 +250,9 @@ export function VariablesTab({ templateId, versionId, variablesMeta, isOwner }: 
   );
   const [isDirty, setIsDirty] = useState(false);
   const [query, setQuery] = useState("");
+  const [computedHintDismissed, setComputedHintDismissed] = useState(() =>
+    isHintDismissed("variables-computed"),
+  );
   const [selectedName, setSelectedName] = useState<string>(
     () => variablesMeta[0]?.name ?? ""
   );
@@ -416,6 +423,29 @@ export function VariablesTab({ templateId, versionId, variablesMeta, isOwner }: 
 
   return (
     <div>
+      {isOwner && !computedHintDismissed && (
+        <div className="mb-4 flex items-start gap-2.5 rounded-[10px] bg-[var(--bg-accent)] px-3.5 py-2.5 text-[12.5px] leading-[1.45] text-[var(--primary)]">
+          <Calculator className="mt-px size-4 shrink-0" />
+          <div className="flex-1">
+            Las variables pueden calcularse automáticamente (fórmulas o monto
+            en literal): abra una variable y active{" "}
+            <strong className="font-semibold">Variable calculada</strong>.
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Cerrar consejo"
+            onClick={() => {
+              dismissHint("variables-computed");
+              setComputedHintDismissed(true);
+            }}
+            className="-m-1 size-6 shrink-0 text-[var(--primary)] hover:bg-white/50"
+          >
+            <X className="size-3.5" />
+          </Button>
+        </div>
+      )}
       <div className="grid gap-4 lg:grid-cols-[280px_1fr]">
         {/* Left rail — variable list */}
         <div className="flex max-h-[calc(100vh-280px)] flex-col overflow-hidden rounded-xl bg-white shadow-[var(--shadow-sm)] ring-1 ring-[rgba(195,198,215,0.30)]">
@@ -1009,6 +1039,9 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
 
         {/* Action row */}
         <div className="flex flex-wrap items-center gap-1.5">
+          <TemplateGuideButton
+            initialTopic={activeTab === "variables" ? "computed" : "upload"}
+          />
           {currentVersion && (
             <>
               <Button
@@ -1187,8 +1220,8 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
                   <BookOpen className="mt-px size-4 shrink-0" />
                   <div className="flex-1">
                     ¿Dudas con marcadores{" "}
-                    <span className="font-mono">{"{{ var }}"}</span>? Usá el botón{" "}
-                    <strong className="font-semibold">Guía de Plantillas</strong> arriba para ver la documentación completa.
+                    <span className="font-mono">{"{{ var }}"}</span>? Use el botón{" "}
+                    <strong className="font-semibold">Guía</strong> arriba para ver la documentación completa.
                   </div>
                 </div>
               </div>
