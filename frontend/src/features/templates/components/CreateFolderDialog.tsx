@@ -60,7 +60,9 @@ export function CreateFolderDialog({
       <DialogContent className="sm:max-w-md">
         <form onSubmit={handleSubmit}>
           <DialogHeader>
-            <DialogTitle>Nueva carpeta</DialogTitle>
+            <DialogTitle className="text-xl font-bold tracking-tight">
+              Nueva carpeta
+            </DialogTitle>
             <DialogDescription>
               Organice sus plantillas agrupándolas en carpetas personales.
             </DialogDescription>
@@ -69,7 +71,7 @@ export function CreateFolderDialog({
           <div className="grid gap-1.5 py-4">
             <Label
               htmlFor="folder-name"
-              className="text-[12.5px] font-medium text-[var(--fg-2)]"
+              className="text-xs font-semibold uppercase tracking-[0.04em] text-[var(--fg-3)]"
             >
               Nombre de la carpeta
             </Label>

@@ -85,7 +85,9 @@ export function RenameTemplateDialog({
       <DialogContent className="sm:max-w-lg">
         <form onSubmit={handleSubmit}>
           <DialogHeader>
-            <DialogTitle>Renombrar plantilla</DialogTitle>
+            <DialogTitle className="text-xl font-bold tracking-tight">
+              Renombrar plantilla
+            </DialogTitle>
             <DialogDescription>
               Cambie el nombre o la descripción de la plantilla. Los cambios
               se aplican de inmediato.
@@ -96,7 +98,7 @@ export function RenameTemplateDialog({
             <div className="grid gap-1.5">
               <Label
                 htmlFor="rename-name"
-                className="text-[12.5px] font-medium text-[var(--fg-2)]"
+                className="text-xs font-semibold uppercase tracking-[0.04em] text-[var(--fg-3)]"
               >
                 Nombre
               </Label>
@@ -112,7 +114,7 @@ export function RenameTemplateDialog({
             <div className="grid gap-1.5">
               <Label
                 htmlFor="rename-description"
-                className="text-[12.5px] font-medium text-[var(--fg-2)]"
+                className="text-xs font-semibold uppercase tracking-[0.04em] text-[var(--fg-3)]"
               >
                 Descripción
               </Label>

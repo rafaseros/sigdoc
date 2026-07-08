@@ -86,7 +86,9 @@ export function SavePresetDialog({
       <DialogContent className="sm:max-w-md">
         <form onSubmit={handleSubmit}>
           <DialogHeader>
-            <DialogTitle>Guardar datos</DialogTitle>
+            <DialogTitle className="text-xl font-bold tracking-tight">
+              Guardar datos
+            </DialogTitle>
             <DialogDescription>
               Guarde los valores actuales para reutilizarlos en próximas
               generaciones de esta plantilla.
@@ -96,7 +98,7 @@ export function SavePresetDialog({
           <div className="grid gap-1.5 py-4">
             <Label
               htmlFor="save-preset-name"
-              className="text-[12.5px] font-medium text-[var(--fg-2)]"
+              className="text-xs font-semibold uppercase tracking-[0.04em] text-[var(--fg-3)]"
             >
               Nombre
             </Label>

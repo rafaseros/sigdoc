@@ -232,10 +232,15 @@
   border: 1px solid rgba(195, 198, 215, 0.30);
 }
 /* Computed variables (formula/function) — server-owned, never editable.
-   Violet tint keeps it visually distinct from the active/muted states. */
+   Violet tint keeps it visually distinct from the active/muted states.
+   --fg-computed is also the token to use for any non-chip (plain text)
+   reference to a computed/auto-calculated value — never hardcode #5b21b6. */
+:root {
+  --fg-computed: #5b21b6;
+}
 .var-chip-computed {
   background: linear-gradient(135deg, #ede9fe, #ddd6fe);
-  color: #5b21b6;
+  color: var(--fg-computed);
   border: 1px solid #a78bfa;
 }
 

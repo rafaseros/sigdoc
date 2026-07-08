@@ -1146,7 +1146,9 @@ export function FullDocumentEditor({
       <Dialog open={previewOpen} onOpenChange={handlePreviewOpenChange}>
         <DialogContent className="sm:max-w-4xl">
           <DialogHeader>
-            <DialogTitle>Vista previa del documento</DialogTitle>
+            <DialogTitle className="text-xl font-bold tracking-tight">
+              Vista previa del documento
+            </DialogTitle>
           </DialogHeader>
           {previewUrl ? (
             <iframe

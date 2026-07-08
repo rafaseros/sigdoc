@@ -125,14 +125,16 @@ export function MoveToFolderDialog({
       <DialogContent className="sm:max-w-md">
         <form onSubmit={handleSubmit}>
           <DialogHeader>
-            <DialogTitle>Mover a carpeta</DialogTitle>
+            <DialogTitle className="text-xl font-bold tracking-tight">
+              Mover a carpeta
+            </DialogTitle>
             <DialogDescription>
               Elija la carpeta destino para "{templateName}".
             </DialogDescription>
           </DialogHeader>
 
           <div className="grid gap-1.5 py-4">
-            <Label className="text-[12.5px] font-medium text-[var(--fg-2)]">
+            <Label className="text-xs font-semibold uppercase tracking-[0.04em] text-[var(--fg-3)]">
               Carpeta
             </Label>
             <Select

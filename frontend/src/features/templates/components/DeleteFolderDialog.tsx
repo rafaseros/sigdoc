@@ -52,7 +52,9 @@ export function DeleteFolderDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Eliminar carpeta</DialogTitle>
+          <DialogTitle className="text-xl font-bold tracking-tight">
+            Eliminar carpeta
+          </DialogTitle>
         </DialogHeader>
 
         <div className="flex items-start gap-2.5 rounded-[10px] bg-[var(--bg-accent)] px-3.5 py-3 text-[13px] leading-[1.45] text-[var(--primary)]">

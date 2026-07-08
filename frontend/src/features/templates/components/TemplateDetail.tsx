@@ -765,7 +765,7 @@ export function VariablesTab({ templateId, versionId, variablesMeta, isOwner }: 
               ) : (
                 <div className="space-y-2">
                   {activeMeta.computed && (
-                    <div className="flex items-center gap-1.5 text-[12.5px] font-medium text-[#5b21b6]">
+                    <div className="flex items-center gap-1.5 text-[12.5px] font-medium text-[var(--fg-computed)]">
                       <Calculator className="size-3.5" />
                       Variable calculada automáticamente
                     </div>

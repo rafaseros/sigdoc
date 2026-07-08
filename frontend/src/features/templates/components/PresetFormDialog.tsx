@@ -134,7 +134,7 @@ export function PresetFormDialog({
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
         <form onSubmit={handleSubmit}>
           <DialogHeader>
-            <DialogTitle>
+            <DialogTitle className="text-xl font-bold tracking-tight">
               {isEdit ? "Editar datos guardados" : "Nuevos datos guardados"}
             </DialogTitle>
             <DialogDescription>

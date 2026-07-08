@@ -69,7 +69,9 @@ export function RenameFolderDialog({
       <DialogContent className="sm:max-w-md">
         <form onSubmit={handleSubmit}>
           <DialogHeader>
-            <DialogTitle>Renombrar carpeta</DialogTitle>
+            <DialogTitle className="text-xl font-bold tracking-tight">
+              Renombrar carpeta
+            </DialogTitle>
             <DialogDescription>
               Cambie el nombre de la carpeta "{folder.name}".
             </DialogDescription>
@@ -78,7 +80,7 @@ export function RenameFolderDialog({
           <div className="grid gap-1.5 py-4">
             <Label
               htmlFor="rename-folder-name"
-              className="text-[12.5px] font-medium text-[var(--fg-2)]"
+              className="text-xs font-semibold uppercase tracking-[0.04em] text-[var(--fg-3)]"
             >
               Nombre
             </Label>

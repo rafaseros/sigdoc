@@ -216,7 +216,7 @@ export function TemplateList() {
           ))}
         </div>
       ) : isError ? (
-        <div className="rounded-lg border border-destructive/50 bg-destructive/5 p-4 text-sm text-destructive">
+        <div className="rounded-[10px] bg-[#ffdad6] px-3.5 py-3 text-[13px] leading-[1.45] text-[#93000a]">
           Error al cargar plantillas: {error?.message ?? "Error desconocido"}
         </div>
       ) : !items.length ? (
