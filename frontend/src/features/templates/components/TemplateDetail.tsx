@@ -12,12 +12,14 @@ import {
   Variable,
   Info,
   Clock,
+  Download,
   Upload,
   Share2,
   Sparkles,
   FileSpreadsheet,
   CircleAlert,
   BookOpen,
+  Paperclip,
   Pencil,
   FolderInput,
   MoreHorizontal,
@@ -32,15 +34,20 @@ import {
   useUploadNewVersion,
   useTemplateShares,
 } from "@/features/templates/api";
-import { useDocuments } from "@/features/documents/api/queries";
+import {
+  triggerBlobDownload,
+  useDocuments,
+} from "@/features/documents/api/queries";
 import type {
   ComputedConfig,
   ComputedFunctionName,
   ComputedOperator,
+  TemplateVersionFile,
   VariableMeta,
   VariableType,
 } from "@/features/templates/api/queries";
 import {
+  useDetachVersionFile,
   useUpdateVariableTypes,
   type VariableTypeOverrideInput,
 } from "@/features/templates/api/mutations";
@@ -76,6 +83,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 
 import { TemplateDetailSkeleton } from "./TemplateDetailSkeleton";
+import { AttachRelatedFileDialog } from "./AttachRelatedFileDialog";
 import { DocumentsTab } from "./DocumentsTab";
 import { ShareTemplateDialog } from "./ShareTemplateDialog";
 import { RenameTemplateDialog } from "./RenameTemplateDialog";
@@ -878,7 +886,7 @@ export function VariablesTab({ templateId, versionId, variablesMeta, isOwner }: 
 
       {/* Sticky save/discard bar — owner only */}
       {isOwner && (
-        <div className="sticky bottom-0 mt-4 flex justify-end gap-2 border-t border-[rgba(195,198,215,0.20)] bg-white/90 pt-3 pb-1 backdrop-blur-sm">
+        <div className="sticky bottom-0 mt-4 flex flex-wrap justify-end gap-2 border-t border-[rgba(195,198,215,0.20)] bg-white/90 pt-3 pb-1 backdrop-blur-sm">
           <Button
             type="button"
             variant="outline"
@@ -903,11 +911,29 @@ export function VariablesTab({ templateId, versionId, variablesMeta, isOwner }: 
 
 // ---------------------------------------------------------------------------
 
+/** Sidebar tabs of the template detail page. Exported so the route can
+ * validate a `?tab=` deep link (e.g. landing on Versiones after attaching a
+ * related document). */
+export const DETAIL_TABS = [
+  "info",
+  "variables",
+  "versions",
+  "shares",
+  "documents",
+  "presets",
+] as const;
+export type DetailTab = (typeof DETAIL_TABS)[number];
+
 interface TemplateDetailProps {
   templateId: string;
+  /** Tab to open initially — defaults to the daily-flow Documentos tab. */
+  initialTab?: DetailTab;
 }
 
-export default function TemplateDetail({ templateId }: TemplateDetailProps) {
+export default function TemplateDetail({
+  templateId,
+  initialTab,
+}: TemplateDetailProps) {
   const { data: template, isLoading } = useTemplate(templateId);
   const { data: documentsData } = useDocuments({ template_id: templateId, page: 1, size: 1 });
   const { data: shares } = useTemplateShares(templateId);
@@ -921,14 +947,17 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
   const [moveDialogOpen, setMoveDialogOpen] = useState(false);
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  type DetailTab =
-    | "info"
-    | "variables"
-    | "versions"
-    | "shares"
-    | "documents"
-    | "presets";
-  const [activeTab, setActiveTab] = useState<DetailTab>("documents");
+  const [attachDialogOpen, setAttachDialogOpen] = useState(false);
+  const [fileToDetach, setFileToDetach] = useState<{
+    versionId: string;
+    versionNumber: number;
+    file: TemplateVersionFile;
+  } | null>(null);
+  const [detachConfirm, setDetachConfirm] = useState("");
+  const detachVersionFile = useDetachVersionFile();
+  const [activeTab, setActiveTab] = useState<DetailTab>(
+    initialTab ?? "documents",
+  );
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     if (acceptedFiles.length > 0) {
@@ -960,6 +989,65 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
         },
       }
     );
+  }
+
+  async function handleDownloadVersion(versionId: string, versionNumber: number) {
+    try {
+      // Blob download through the shared api client so the Authorization
+      // header is applied — never a bare <a href>.
+      await triggerBlobDownload(
+        `/templates/${templateId}/versions/${versionId}/download`,
+        `${template?.name ?? "plantilla"}_v${versionNumber}.docx`,
+      );
+    } catch {
+      toast.error("Error al descargar la plantilla");
+    }
+  }
+
+  async function handleDownloadVersionFile(
+    versionId: string,
+    versionNumber: number,
+    file: TemplateVersionFile,
+  ) {
+    try {
+      // Save-as name mirrors the backend's RFC5987 naming:
+      // {name}_{label}_v{n}.docx
+      await triggerBlobDownload(
+        `/templates/${templateId}/versions/${versionId}/files/${file.id}/download`,
+        `${template?.name ?? "plantilla"}_${file.label}_v${versionNumber}.docx`,
+      );
+    } catch {
+      toast.error("Error al descargar el documento relacionado");
+    }
+  }
+
+  function handleDetachFile() {
+    if (!fileToDetach) return;
+    detachVersionFile.mutate(
+      {
+        templateId,
+        versionId: fileToDetach.versionId,
+        fileId: fileToDetach.file.id,
+      },
+      {
+        onSuccess: () => {
+          toast.success("Documento relacionado eliminado");
+        },
+        onError: (error: unknown) => {
+          const detail =
+            error &&
+            typeof error === "object" &&
+            "response" in error &&
+            (error as { response?: { data?: { detail?: string } } }).response
+              ?.data?.detail;
+          toast.error(
+            (detail as string) || "Error al eliminar el documento relacionado",
+          );
+        },
+      },
+    );
+    setFileToDetach(null);
+    setDetachConfirm("");
   }
 
   if (isLoading) return <TemplateDetailSkeleton />;
@@ -1056,8 +1144,10 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
 
         {/* Action row — kept to a single line: primary generation actions,
             the Guía button, and a "Más acciones" overflow menu for
-            management actions. See STYLE_GUIDE.md §17 (action-overflow). */}
-        <div className="flex shrink-0 items-center gap-1.5">
+            management actions. See STYLE_GUIDE.md §17 (action-overflow).
+            Below lg the header stacks and this row wraps within the
+            viewport instead. */}
+        <div className="flex shrink-0 flex-wrap items-center gap-1.5">
           <TemplateGuideButton
             initialTopic={activeTab === "variables" ? "computed" : "upload"}
           />
@@ -1149,8 +1239,10 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
 
       {/* Sidebar layout */}
       <div className="grid gap-6 lg:grid-cols-[220px_1fr]">
-        <aside className="self-start lg:sticky lg:top-20">
-          <nav className="flex flex-col gap-0.5">
+        <aside className="min-w-0 self-start lg:sticky lg:top-20">
+          {/* Below lg the tab rail becomes a horizontally scrollable row —
+              six stacked items would push the tab content off-screen. */}
+          <nav className="flex gap-1 overflow-x-auto pb-1 lg:flex-col lg:gap-0.5 lg:overflow-visible lg:pb-0">
             {/* Primary pair — the daily flow: generate & review documents. */}
             <SidebarItem
               icon={<Files className="size-4" />}
@@ -1167,7 +1259,7 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
               Datos guardados
             </SidebarItem>
 
-            <div className="my-1.5 border-t border-[rgba(195,198,215,0.20)]" />
+            <div className="hidden border-t border-[rgba(195,198,215,0.20)] lg:my-1.5 lg:block" />
 
             {/* Secondary group — occasional configuration. */}
             <SidebarItem
@@ -1232,8 +1324,8 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
                         i ? "border-t border-[rgba(195,198,215,0.15)]" : ""
                       }`}
                     >
-                      <div className="w-[180px] shrink-0 text-[12.5px] text-[var(--fg-3)]">{k}</div>
-                      <div className="font-medium text-[var(--fg-1)]">{v}</div>
+                      <div className="w-[130px] shrink-0 text-[12.5px] text-[var(--fg-3)] sm:w-[180px]">{k}</div>
+                      <div className="min-w-0 break-words font-medium text-[var(--fg-1)]">{v}</div>
                     </div>
                   ))}
                 </CardContent>
@@ -1290,7 +1382,7 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
 
           {activeTab === "versions" && (
             <div className="space-y-4">
-              <div className="flex items-start justify-between gap-3">
+              <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <h3 className="m-0 text-lg font-bold tracking-tight text-[var(--fg-1)]">
                     Historial de versiones
@@ -1379,37 +1471,124 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
                   .sort((a, b) => b.version - a.version)
                   .map((version) => {
                     const isCurrent = version.version === template.current_version;
+                    const canManageFiles = isCurrent && isOwnerOrAdmin;
                     return (
                       <div
                         key={version.id}
-                        className="flex items-center gap-3.5 rounded-xl bg-white p-4 shadow-[var(--shadow-sm)] ring-1 ring-[rgba(195,198,215,0.30)] transition-shadow hover:shadow-[var(--shadow-md)]"
+                        className="rounded-xl bg-white p-4 shadow-[var(--shadow-sm)] ring-1 ring-[rgba(195,198,215,0.30)] transition-shadow hover:shadow-[var(--shadow-md)]"
                       >
-                        <span
-                          className={`inline-flex size-10 shrink-0 items-center justify-center rounded-[10px] text-[13px] font-bold tracking-tight ${
-                            isCurrent
-                              ? "bg-gradient-to-br from-[#004ac6] to-[#2563eb] text-white shadow-[var(--shadow-brand-sm)]"
-                              : "bg-[var(--bg-muted)] text-[var(--fg-3)]"
-                          }`}
-                        >
-                          v{version.version}
-                        </span>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm font-semibold text-[var(--fg-1)]">
-                              Versión {version.version}
-                            </span>
-                            {isCurrent && (
-                              <Badge className="rounded-full border-0 bg-[#d1fae5] text-[#065f46] hover:bg-[#d1fae5]">
-                                Actual
-                              </Badge>
-                            )}
+                        <div className="flex flex-wrap items-center gap-3.5">
+                          <span
+                            className={`inline-flex size-10 shrink-0 items-center justify-center rounded-[10px] text-[13px] font-bold tracking-tight ${
+                              isCurrent
+                                ? "bg-gradient-to-br from-[#004ac6] to-[#2563eb] text-white shadow-[var(--shadow-brand-sm)]"
+                                : "bg-[var(--bg-muted)] text-[var(--fg-3)]"
+                            }`}
+                          >
+                            v{version.version}
+                          </span>
+                          <div className="min-w-[180px] flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-semibold text-[var(--fg-1)]">
+                                Versión {version.version}
+                              </span>
+                              {isCurrent && (
+                                <Badge className="rounded-full border-0 bg-[#d1fae5] text-[#065f46] hover:bg-[#d1fae5]">
+                                  Actual
+                                </Badge>
+                              )}
+                            </div>
+                            <div className="mt-0.5 text-[12px] text-[var(--fg-3)]">
+                              {version.variables.length} variable
+                              {version.variables.length !== 1 ? "s" : ""} ·{" "}
+                              {formatFileSize(version.file_size)} · {formatDate(version.created_at)}
+                            </div>
                           </div>
-                          <div className="mt-0.5 text-[12px] text-[var(--fg-3)]">
-                            {version.variables.length} variable
-                            {version.variables.length !== 1 ? "s" : ""} ·{" "}
-                            {formatFileSize(version.file_size)} · {formatDate(version.created_at)}
-                          </div>
+                          {canManageFiles && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setAttachDialogOpen(true)}
+                              className="shrink-0"
+                            >
+                              <Paperclip className="size-3.5" />
+                              Agregar documento relacionado
+                            </Button>
+                          )}
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            aria-label={`Descargar plantilla v${version.version}`}
+                            title={`Descargar plantilla v${version.version}`}
+                            onClick={() =>
+                              handleDownloadVersion(version.id, version.version)
+                            }
+                            className="shrink-0 text-[var(--fg-2)] hover:bg-[var(--bg-accent)]/60 hover:text-[var(--primary)]"
+                          >
+                            <Download className="size-4" />
+                          </Button>
                         </div>
+
+                        {/* Related documents of this version — indented
+                            sublist under the version row. Download is open
+                            to anyone with template access; removal only on
+                            the current version for owner/admin. */}
+                        {version.files.length > 0 && (
+                          <div className="mt-3 flex flex-col border-t border-[rgba(195,198,215,0.15)] pt-1.5 pl-3 sm:pl-[54px]">
+                            {version.files.map((file) => (
+                              <div
+                                key={file.id}
+                                className="flex items-center gap-2.5 py-1.5"
+                              >
+                                <FileText className="size-3.5 shrink-0 text-[var(--fg-3)]" />
+                                <span className="min-w-0 truncate text-[12.5px] font-medium text-[var(--fg-1)]">
+                                  {file.label}
+                                </span>
+                                <span className="shrink-0 text-[11.5px] text-[var(--fg-3)]">
+                                  {file.variables.length} variable
+                                  {file.variables.length !== 1 ? "s" : ""} ·{" "}
+                                  {formatFileSize(file.file_size)}
+                                </span>
+                                <span className="flex-1" />
+                                <Button
+                                  variant="ghost"
+                                  size="icon-sm"
+                                  aria-label={`Descargar documento relacionado ${file.label}`}
+                                  title={`Descargar documento relacionado ${file.label}`}
+                                  onClick={() =>
+                                    handleDownloadVersionFile(
+                                      version.id,
+                                      version.version,
+                                      file,
+                                    )
+                                  }
+                                  className="shrink-0 text-[var(--fg-2)] hover:bg-[var(--bg-accent)]/60 hover:text-[var(--primary)]"
+                                >
+                                  <Download className="size-4" />
+                                </Button>
+                                {canManageFiles && (
+                                  <Button
+                                    variant="ghost"
+                                    size="icon-sm"
+                                    aria-label={`Eliminar documento relacionado ${file.label}`}
+                                    title={`Eliminar documento relacionado ${file.label}`}
+                                    onClick={() => {
+                                      setDetachConfirm("");
+                                      setFileToDetach({
+                                        versionId: version.id,
+                                        versionNumber: version.version,
+                                        file,
+                                      });
+                                    }}
+                                    className="shrink-0 text-[var(--fg-2)] hover:bg-[#ffdad6]/50 hover:text-[var(--destructive)]"
+                                  >
+                                    <Trash2 className="size-4" />
+                                  </Button>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -1431,6 +1610,97 @@ export default function TemplateDetail({ templateId }: TemplateDetailProps) {
           )}
         </div>
       </div>
+
+      {/* Attach related document dialog (controlled from the current
+          version's row in the Versiones tab) */}
+      {isOwnerOrAdmin && currentVersion && (
+        <AttachRelatedFileDialog
+          templateId={templateId}
+          versionId={currentVersion.id}
+          open={attachDialogOpen}
+          onOpenChange={setAttachDialogOpen}
+        />
+      )}
+
+      {/* Detach related document dialog with confirm-by-typing — same
+          destructive pattern as the template delete below. */}
+      {isOwnerOrAdmin && (
+        <Dialog
+          open={fileToDetach !== null}
+          onOpenChange={(o) => {
+            if (!o) {
+              setFileToDetach(null);
+              setDetachConfirm("");
+            }
+          }}
+        >
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle className="text-xl font-bold tracking-tight">
+                Eliminar documento relacionado
+              </DialogTitle>
+            </DialogHeader>
+            <div className="flex items-start gap-2.5 rounded-[10px] bg-[#ffdad6] px-3.5 py-3 text-[13px] leading-[1.45] text-[#93000a]">
+              <CircleAlert className="mt-px size-4 shrink-0 text-[var(--destructive)]" />
+              <div className="flex-1">
+                <strong className="font-semibold">
+                  Esta acción no se puede deshacer.
+                </strong>{" "}
+                El archivo se eliminará de la versión actual y dejará de
+                generarse junto al documento principal.
+              </div>
+            </div>
+            <p className="text-[13.5px] leading-[1.55] text-[var(--fg-2)]">
+              ¿Está seguro de eliminar el documento relacionado{" "}
+              <strong className="text-[var(--fg-1)]">
+                "{fileToDetach?.file.label}"
+              </strong>
+              ?
+            </p>
+            <div className="flex flex-col gap-1.5">
+              <Label
+                htmlFor="detach-confirm"
+                className="text-xs font-semibold uppercase tracking-[0.04em] text-[var(--fg-3)]"
+              >
+                Para confirmar, escriba{" "}
+                <span className="font-mono text-[var(--destructive)]">
+                  ELIMINAR
+                </span>
+              </Label>
+              <Input
+                id="detach-confirm"
+                value={detachConfirm}
+                onChange={(e) => setDetachConfirm(e.target.value)}
+                placeholder="ELIMINAR"
+                autoFocus
+              />
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setFileToDetach(null);
+                  setDetachConfirm("");
+                }}
+              >
+                Cancelar
+              </Button>
+              <Button
+                onClick={handleDetachFile}
+                disabled={
+                  detachConfirm !== "ELIMINAR" || detachVersionFile.isPending
+                }
+                className="bg-[var(--destructive)] font-semibold text-white hover:bg-[#93000a]"
+              >
+                <Trash2 className="size-3.5" />
+                {detachVersionFile.isPending
+                  ? "Eliminando…"
+                  : "Eliminar documento"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
 
       {/* Rename dialog (controlled from action row) */}
       {isOwnerOrAdmin && (
@@ -1547,7 +1817,7 @@ function SidebarItem({
     <button
       type="button"
       onClick={onClick}
-      className={`flex items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition-colors ${
+      className={`flex shrink-0 items-center gap-2 whitespace-nowrap rounded-lg px-3 py-2 text-left text-sm transition-colors ${
         active
           ? "bg-[var(--bg-accent)] font-semibold text-[var(--primary)]"
           : "text-[var(--fg-2)] hover:bg-[var(--bg-muted)]"

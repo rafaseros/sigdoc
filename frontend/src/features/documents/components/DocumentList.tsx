@@ -68,11 +68,20 @@ export function DocumentList() {
         </div>
       ) : (
         <>
-          <table className="w-full text-sm">
+          {/* Wide table scrolls inside its own container — the page body
+              must never scroll horizontally (STYLE_GUIDE.md §Responsive). */}
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[860px] text-sm">
             <thead>
               <tr className="border-b border-[rgba(195,198,215,0.20)] bg-[var(--bg-page)]">
                 <th className="px-5 py-2.5 text-left text-[11px] font-semibold uppercase tracking-[0.04em] text-[var(--fg-3)]">
                   Archivo
+                </th>
+                <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-[0.04em] text-[var(--fg-3)]">
+                  Plantilla
+                </th>
+                <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-[0.04em] text-[var(--fg-3)]">
+                  Versión
                 </th>
                 <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-[0.04em] text-[var(--fg-3)]">
                   Tipo
@@ -130,6 +139,19 @@ export function DocumentList() {
                           {doc.docx_file_name}
                         </span>
                       </div>
+                    </td>
+                    <td className="px-3 py-3">
+                      <span className="inline-block max-w-[200px] truncate align-middle text-[13px] text-[var(--fg-2)]">
+                        {doc.template_name}
+                      </span>
+                    </td>
+                    <td className="px-3 py-3">
+                      <Badge
+                        variant="outline"
+                        className="rounded-full border-[rgba(195,198,215,0.40)] text-[var(--fg-3)]"
+                      >
+                        v{doc.template_version}
+                      </Badge>
                     </td>
                     <td className="px-3 py-3">
                       <Badge
@@ -208,9 +230,10 @@ export function DocumentList() {
               })}
             </tbody>
           </table>
+          </div>
 
           {totalPages > 1 && (
-            <div className="flex items-center justify-between border-t border-[rgba(195,198,215,0.20)] px-5 py-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[rgba(195,198,215,0.20)] px-5 py-3">
               <p className="text-xs text-[var(--fg-3)]">
                 Mostrando {data.items.length} de {data.total} documentos
               </p>

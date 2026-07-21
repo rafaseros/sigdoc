@@ -171,7 +171,7 @@ class TestGenerateSingleResolvesComputed:
             created_by=owner_id,
         )
 
-        assert result["document"].variables_snapshot["total_con_iva"] == "500.00"
+        assert result["documents"][0].variables_snapshot["total_con_iva"] == "500.00"
 
     async def test_user_supplied_value_for_computed_name_is_overwritten(
         self,

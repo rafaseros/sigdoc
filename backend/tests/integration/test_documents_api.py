@@ -118,10 +118,16 @@ async def test_generate_with_valid_version_returns_201(
 
     assert response.status_code == 201
     data = response.json()
-    assert "id" in data
-    assert "download_url" in data
-    assert data["generation_type"] == "single"
-    assert data["status"] == "completed"
+    # Tanda 3 shape: {"documents": [...], "group_id": str|null}
+    assert "documents" in data
+    assert data["group_id"] is None  # version without related files
+    assert len(data["documents"]) == 1
+    doc = data["documents"][0]
+    assert "id" in doc
+    assert "download_url" in doc
+    assert doc["generation_type"] == "single"
+    assert doc["status"] == "completed"
+    assert doc["group_id"] is None
 
 
 @pytest.mark.asyncio
@@ -140,9 +146,9 @@ async def test_generate_download_url_is_present(
     )
 
     assert response.status_code == 201
-    data = response.json()
-    assert data["download_url"] is not None
-    assert f"/documents/" in data["download_url"]
+    doc = response.json()["documents"][0]
+    assert doc["download_url"] is not None
+    assert "/documents/" in doc["download_url"]
 
 
 @pytest.mark.asyncio
@@ -245,8 +251,9 @@ async def test_shared_user_can_generate_from_shared_template(
         )
         assert response.status_code == 201
         data = response.json()
-        assert "id" in data
-        assert data["status"] == "completed"
+        assert len(data["documents"]) == 1
+        assert "id" in data["documents"][0]
+        assert data["documents"][0]["status"] == "completed"
     finally:
         if original is not None:
             app.dependency_overrides[get_current_user] = original
@@ -284,7 +291,7 @@ async def test_document_generate_works_for_unverified_user(
         f"Expected 201 (no email-verification gate), got {response.status_code}: {response.text}"
     )
     data = response.json()
-    assert data["status"] == "completed"
+    assert data["documents"][0]["status"] == "completed"
 
 
 @pytest.mark.asyncio
@@ -405,7 +412,7 @@ async def _generate_doc_as(
             json={"template_version_id": version_id, "variables": variables},
         )
         assert resp.status_code == 201, f"generate failed for {user.user_id}: {resp.text}"
-        doc_id = resp.json()["id"]
+        doc_id = resp.json()["documents"][0]["id"]
         # Register version→template mapping in the fake doc repo so list_paginated
         # can filter by template_id correctly (REQ-OWN-DOCS tests need this).
         fake_document_repo.register_template_version(
@@ -750,3 +757,66 @@ async def test_owner_query_without_template_id_still_filters_to_own_docs(
             app.dependency_overrides.pop(_gcu, None)
 
 
+
+# ── Template info enrichment on document responses ───────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_generate_response_includes_template_info(
+    async_client, auth_headers, fake_template_repo, fake_storage
+):
+    """POST /generate response exposes template_id, template_name, and the
+    human template_version number of the version used."""
+    version_id = seed_template_version(fake_template_repo, fake_storage, ["name", "date"])
+    version = fake_template_repo._versions[uuid.UUID(version_id)]
+    template = fake_template_repo._templates[version.template_id]
+
+    response = await async_client.post(
+        "/api/v1/documents/generate",
+        headers=auth_headers,
+        json={
+            "template_version_id": version_id,
+            "variables": {"name": "Alice", "date": "2025-01-01"},
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    doc = response.json()["documents"][0]
+    assert doc["template_id"] == str(template.id)
+    assert doc["template_name"] == template.name
+    assert doc["template_version"] == 1
+
+
+@pytest.mark.asyncio
+async def test_list_documents_items_include_template_info(
+    async_client, auth_headers, fake_template_repo, fake_document_repo, fake_storage
+):
+    """GET /documents items expose template_id, template_name, and
+    template_version for each document."""
+    version_id = seed_template_version(fake_template_repo, fake_storage, ["name", "date"])
+    version = fake_template_repo._versions[uuid.UUID(version_id)]
+    template = fake_template_repo._templates[version.template_id]
+    fake_document_repo.register_template_version(version.id, template.id)
+
+    gen_resp = await async_client.post(
+        "/api/v1/documents/generate",
+        headers=auth_headers,
+        json={
+            "template_version_id": version_id,
+            "variables": {"name": "Bob", "date": "2025-02-02"},
+        },
+    )
+    assert gen_resp.status_code == 201, gen_resp.text
+    doc_id = gen_resp.json()["documents"][0]["id"]
+
+    resp = await async_client.get(
+        f"/api/v1/documents?template_id={template.id}&size=50",
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    items = resp.json()["items"]
+    match = next((i for i in items if i["id"] == doc_id), None)
+    assert match is not None, "generated document missing from list"
+    assert match["template_id"] == str(template.id)
+    assert match["template_name"] == template.name
+    assert match["template_version"] == 1

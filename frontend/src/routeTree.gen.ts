@@ -16,7 +16,9 @@ import { Route as AuthenticatedUsersIndexRouteImport } from './routes/_authentic
 import { Route as AuthenticatedTemplatesIndexRouteImport } from './routes/_authenticated/templates/index'
 import { Route as AuthenticatedDocumentsIndexRouteImport } from './routes/_authenticated/documents/index'
 import { Route as AuthenticatedAuditIndexRouteImport } from './routes/_authenticated/audit/index'
+import { Route as AuthenticatedTemplatesFromExampleRouteImport } from './routes/_authenticated/templates/from-example'
 import { Route as AuthenticatedTemplatesTemplateIdRouteImport } from './routes/_authenticated/templates/$templateId'
+import { Route as AuthenticatedTemplatesTemplateIdAttachExampleRouteImport } from './routes/_authenticated/templates/$templateId_.attach-example'
 import { Route as AuthenticatedDocumentsGenerateVersionIdRouteImport } from './routes/_authenticated/documents/generate/$versionId'
 import { Route as AuthenticatedDocumentsBulkVersionIdRouteImport } from './routes/_authenticated/documents/bulk/$versionId'
 
@@ -56,10 +58,22 @@ const AuthenticatedAuditIndexRoute = AuthenticatedAuditIndexRouteImport.update({
   path: '/audit/',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
+const AuthenticatedTemplatesFromExampleRoute =
+  AuthenticatedTemplatesFromExampleRouteImport.update({
+    id: '/templates/from-example',
+    path: '/templates/from-example',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
 const AuthenticatedTemplatesTemplateIdRoute =
   AuthenticatedTemplatesTemplateIdRouteImport.update({
     id: '/templates/$templateId',
     path: '/templates/$templateId',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
+const AuthenticatedTemplatesTemplateIdAttachExampleRoute =
+  AuthenticatedTemplatesTemplateIdAttachExampleRouteImport.update({
+    id: '/templates/$templateId_/attach-example',
+    path: '/templates/$templateId/attach-example',
     getParentRoute: () => AuthenticatedRoute,
   } as any)
 const AuthenticatedDocumentsGenerateVersionIdRoute =
@@ -79,23 +93,27 @@ export interface FileRoutesByFullPath {
   '/': typeof AuthenticatedIndexRoute
   '/login': typeof LoginRoute
   '/templates/$templateId': typeof AuthenticatedTemplatesTemplateIdRoute
+  '/templates/from-example': typeof AuthenticatedTemplatesFromExampleRoute
   '/audit/': typeof AuthenticatedAuditIndexRoute
   '/documents/': typeof AuthenticatedDocumentsIndexRoute
   '/templates/': typeof AuthenticatedTemplatesIndexRoute
   '/users/': typeof AuthenticatedUsersIndexRoute
   '/documents/bulk/$versionId': typeof AuthenticatedDocumentsBulkVersionIdRoute
   '/documents/generate/$versionId': typeof AuthenticatedDocumentsGenerateVersionIdRoute
+  '/templates/$templateId/attach-example': typeof AuthenticatedTemplatesTemplateIdAttachExampleRoute
 }
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/': typeof AuthenticatedIndexRoute
   '/templates/$templateId': typeof AuthenticatedTemplatesTemplateIdRoute
+  '/templates/from-example': typeof AuthenticatedTemplatesFromExampleRoute
   '/audit': typeof AuthenticatedAuditIndexRoute
   '/documents': typeof AuthenticatedDocumentsIndexRoute
   '/templates': typeof AuthenticatedTemplatesIndexRoute
   '/users': typeof AuthenticatedUsersIndexRoute
   '/documents/bulk/$versionId': typeof AuthenticatedDocumentsBulkVersionIdRoute
   '/documents/generate/$versionId': typeof AuthenticatedDocumentsGenerateVersionIdRoute
+  '/templates/$templateId/attach-example': typeof AuthenticatedTemplatesTemplateIdAttachExampleRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -103,12 +121,14 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/_authenticated/': typeof AuthenticatedIndexRoute
   '/_authenticated/templates/$templateId': typeof AuthenticatedTemplatesTemplateIdRoute
+  '/_authenticated/templates/from-example': typeof AuthenticatedTemplatesFromExampleRoute
   '/_authenticated/audit/': typeof AuthenticatedAuditIndexRoute
   '/_authenticated/documents/': typeof AuthenticatedDocumentsIndexRoute
   '/_authenticated/templates/': typeof AuthenticatedTemplatesIndexRoute
   '/_authenticated/users/': typeof AuthenticatedUsersIndexRoute
   '/_authenticated/documents/bulk/$versionId': typeof AuthenticatedDocumentsBulkVersionIdRoute
   '/_authenticated/documents/generate/$versionId': typeof AuthenticatedDocumentsGenerateVersionIdRoute
+  '/_authenticated/templates/$templateId_/attach-example': typeof AuthenticatedTemplatesTemplateIdAttachExampleRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -116,35 +136,41 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/templates/$templateId'
+    | '/templates/from-example'
     | '/audit/'
     | '/documents/'
     | '/templates/'
     | '/users/'
     | '/documents/bulk/$versionId'
     | '/documents/generate/$versionId'
+    | '/templates/$templateId/attach-example'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/login'
     | '/'
     | '/templates/$templateId'
+    | '/templates/from-example'
     | '/audit'
     | '/documents'
     | '/templates'
     | '/users'
     | '/documents/bulk/$versionId'
     | '/documents/generate/$versionId'
+    | '/templates/$templateId/attach-example'
   id:
     | '__root__'
     | '/_authenticated'
     | '/login'
     | '/_authenticated/'
     | '/_authenticated/templates/$templateId'
+    | '/_authenticated/templates/from-example'
     | '/_authenticated/audit/'
     | '/_authenticated/documents/'
     | '/_authenticated/templates/'
     | '/_authenticated/users/'
     | '/_authenticated/documents/bulk/$versionId'
     | '/_authenticated/documents/generate/$versionId'
+    | '/_authenticated/templates/$templateId_/attach-example'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -203,11 +229,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedAuditIndexRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
+    '/_authenticated/templates/from-example': {
+      id: '/_authenticated/templates/from-example'
+      path: '/templates/from-example'
+      fullPath: '/templates/from-example'
+      preLoaderRoute: typeof AuthenticatedTemplatesFromExampleRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
     '/_authenticated/templates/$templateId': {
       id: '/_authenticated/templates/$templateId'
       path: '/templates/$templateId'
       fullPath: '/templates/$templateId'
       preLoaderRoute: typeof AuthenticatedTemplatesTemplateIdRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/templates/$templateId_/attach-example': {
+      id: '/_authenticated/templates/$templateId_/attach-example'
+      path: '/templates/$templateId/attach-example'
+      fullPath: '/templates/$templateId/attach-example'
+      preLoaderRoute: typeof AuthenticatedTemplatesTemplateIdAttachExampleRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
     '/_authenticated/documents/generate/$versionId': {
@@ -230,17 +270,21 @@ declare module '@tanstack/react-router' {
 interface AuthenticatedRouteChildren {
   AuthenticatedIndexRoute: typeof AuthenticatedIndexRoute
   AuthenticatedTemplatesTemplateIdRoute: typeof AuthenticatedTemplatesTemplateIdRoute
+  AuthenticatedTemplatesFromExampleRoute: typeof AuthenticatedTemplatesFromExampleRoute
   AuthenticatedAuditIndexRoute: typeof AuthenticatedAuditIndexRoute
   AuthenticatedDocumentsIndexRoute: typeof AuthenticatedDocumentsIndexRoute
   AuthenticatedTemplatesIndexRoute: typeof AuthenticatedTemplatesIndexRoute
   AuthenticatedUsersIndexRoute: typeof AuthenticatedUsersIndexRoute
   AuthenticatedDocumentsBulkVersionIdRoute: typeof AuthenticatedDocumentsBulkVersionIdRoute
   AuthenticatedDocumentsGenerateVersionIdRoute: typeof AuthenticatedDocumentsGenerateVersionIdRoute
+  AuthenticatedTemplatesTemplateIdAttachExampleRoute: typeof AuthenticatedTemplatesTemplateIdAttachExampleRoute
 }
 
 const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedIndexRoute: AuthenticatedIndexRoute,
   AuthenticatedTemplatesTemplateIdRoute: AuthenticatedTemplatesTemplateIdRoute,
+  AuthenticatedTemplatesFromExampleRoute:
+    AuthenticatedTemplatesFromExampleRoute,
   AuthenticatedAuditIndexRoute: AuthenticatedAuditIndexRoute,
   AuthenticatedDocumentsIndexRoute: AuthenticatedDocumentsIndexRoute,
   AuthenticatedTemplatesIndexRoute: AuthenticatedTemplatesIndexRoute,
@@ -249,6 +293,8 @@ const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
     AuthenticatedDocumentsBulkVersionIdRoute,
   AuthenticatedDocumentsGenerateVersionIdRoute:
     AuthenticatedDocumentsGenerateVersionIdRoute,
+  AuthenticatedTemplatesTemplateIdAttachExampleRoute:
+    AuthenticatedTemplatesTemplateIdAttachExampleRoute,
 }
 
 const AuthenticatedRouteWithChildren = AuthenticatedRoute._addFileChildren(

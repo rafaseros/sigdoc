@@ -19,6 +19,12 @@ class DocumentModel(UUIDMixin, TenantMixin, Base):
             "batch_id",
             postgresql_where="batch_id IS NOT NULL",
         ),
+        Index(
+            "ix_documents_tenant_group",
+            "tenant_id",
+            "group_id",
+            postgresql_where="group_id IS NOT NULL",
+        ),
     )
 
     template_version_id: Mapped[uuid.UUID] = mapped_column(
@@ -31,6 +37,7 @@ class DocumentModel(UUIDMixin, TenantMixin, Base):
     pdf_minio_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     generation_type: Mapped[str] = mapped_column(String(10), nullable=False)
     batch_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    group_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
     variables_snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False)
     status: Mapped[str] = mapped_column(String(20), default="completed", server_default="completed")
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)

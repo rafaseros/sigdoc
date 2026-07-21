@@ -346,7 +346,7 @@ export function TemplateList() {
 
       {/* Pager */}
       {data && data.total > PAGE_SIZE && (
-        <div className="flex items-center justify-between rounded-xl bg-white px-4 py-3 shadow-[var(--shadow-sm)] ring-1 ring-[rgba(195,198,215,0.30)]">
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-white px-4 py-3 shadow-[var(--shadow-sm)] ring-1 ring-[rgba(195,198,215,0.30)]">
           <p className="text-xs text-[var(--fg-3)]">
             Mostrando {items.length} de {data.total} plantillas
           </p>

@@ -32,3 +32,10 @@ class TemplateVersionModel(UUIDMixin, TenantMixin, Base):
     )
 
     template = relationship("TemplateModel", back_populates="versions", lazy="selectin")
+    files = relationship(
+        "TemplateVersionFileModel",
+        back_populates="version",
+        lazy="selectin",
+        order_by="TemplateVersionFileModel.position",
+        cascade="all, delete-orphan",
+    )

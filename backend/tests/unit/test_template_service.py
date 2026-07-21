@@ -2394,3 +2394,172 @@ class TestShareTemplateWithQuota:
 
         assert share.template_id == tpl.id
         assert share.user_id == target_user_id
+
+
+# ---------------------------------------------------------------------------
+# download_template_version — stored .docx download for any version
+# ---------------------------------------------------------------------------
+
+
+class TestDownloadTemplateVersion:
+    """download_template_version returns the stored .docx bytes of a specific
+    version plus a readable, header-safe filename. Access gate mirrors
+    get_version_structure: owner, shared user, or admin."""
+
+    async def test_owner_downloads_bytes_and_filename(
+        self,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        service = make_service(fake_template_repo, fake_storage, fake_template_engine)
+        tpl, tenant_id, owner_id = await upload_template_helper(
+            service, name="Contrato Confidencial"
+        )
+        version = tpl.versions[0]
+
+        file_bytes, filename = await service.download_template_version(
+            tpl.id, version.id, user_id=owner_id, role="user"
+        )
+
+        assert file_bytes == b"fake-docx-bytes"
+        assert filename == "Contrato Confidencial_v1.docx"
+
+    async def test_filename_keeps_accents_and_strips_unsafe_chars(
+        self,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        service = make_service(fake_template_repo, fake_storage, fake_template_engine)
+        tpl, tenant_id, owner_id = await upload_template_helper(
+            service, name='Contrato "Año/Señal"'
+        )
+        version = tpl.versions[0]
+
+        _, filename = await service.download_template_version(
+            tpl.id, version.id, user_id=owner_id, role="user"
+        )
+
+        # Accents and enie are kept; quotes and slashes are stripped.
+        assert filename == "Contrato AñoSeñal_v1.docx"
+
+    async def test_unknown_version_raises_not_found(
+        self,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        from app.domain.exceptions import TemplateVersionNotFoundError
+
+        service = make_service(fake_template_repo, fake_storage, fake_template_engine)
+        tpl, tenant_id, owner_id = await upload_template_helper(service)
+
+        with pytest.raises(TemplateVersionNotFoundError):
+            await service.download_template_version(
+                tpl.id, uuid.uuid4(), user_id=owner_id, role="user"
+            )
+
+    async def test_version_of_another_template_raises_not_found(
+        self,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        from app.domain.exceptions import TemplateVersionNotFoundError
+
+        service = make_service(fake_template_repo, fake_storage, fake_template_engine)
+        tpl_a, _, owner_a = await upload_template_helper(service, name="Template A")
+        tpl_b, _, _ = await upload_template_helper(service, name="Template B")
+        version_b = tpl_b.versions[0]
+
+        with pytest.raises(TemplateVersionNotFoundError):
+            await service.download_template_version(
+                tpl_a.id, version_b.id, user_id=owner_a, role="user"
+            )
+
+    async def test_unrelated_user_denied(
+        self,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        service = make_service(fake_template_repo, fake_storage, fake_template_engine)
+        tpl, tenant_id, owner_id = await upload_template_helper(service)
+        version = tpl.versions[0]
+
+        with pytest.raises(TemplateAccessDeniedError):
+            await service.download_template_version(
+                tpl.id, version.id, user_id=str(uuid.uuid4()), role="user"
+            )
+
+    async def test_shared_user_allowed(
+        self,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        service = make_service(fake_template_repo, fake_storage, fake_template_engine)
+        tpl, tenant_id, owner_id = await upload_template_helper(service)
+        version = tpl.versions[0]
+
+        shared_user_id = uuid.uuid4()
+        await fake_template_repo.add_share(
+            template_id=tpl.id,
+            user_id=shared_user_id,
+            tenant_id=tpl.tenant_id,
+            shared_by=tpl.created_by,
+        )
+
+        file_bytes, _ = await service.download_template_version(
+            tpl.id, version.id, user_id=str(shared_user_id), role="user"
+        )
+        assert file_bytes == b"fake-docx-bytes"
+
+    async def test_admin_allowed(
+        self,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        service = make_service(fake_template_repo, fake_storage, fake_template_engine)
+        tpl, tenant_id, owner_id = await upload_template_helper(service)
+        version = tpl.versions[0]
+
+        file_bytes, _ = await service.download_template_version(
+            tpl.id, version.id, user_id=str(uuid.uuid4()), role="admin"
+        )
+        assert file_bytes == b"fake-docx-bytes"
+
+    async def test_download_logs_audit_event(
+        self,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+        fake_audit_repo: FakeAuditRepository,
+    ):
+        import asyncio as _asyncio
+
+        audit_svc = AuditService(audit_repo=fake_audit_repo)
+        service = make_service(
+            fake_template_repo, fake_storage, fake_template_engine, audit_svc
+        )
+        tpl, tenant_id, owner_id = await upload_template_helper(service)
+        version = tpl.versions[0]
+
+        # Drain the upload_template audit task, then isolate the download event
+        await _asyncio.sleep(0)
+        fake_audit_repo._entries.clear()
+
+        await service.download_template_version(
+            tpl.id, version.id, user_id=owner_id, role="user"
+        )
+        await _asyncio.sleep(0)
+
+        assert len(fake_audit_repo._entries) == 1
+        entry = fake_audit_repo._entries[0]
+        assert entry.action == AuditAction.TEMPLATE_DOWNLOAD
+        assert entry.resource_type == "template"
+        assert entry.resource_id == tpl.id
+        assert entry.details["version"] == 1
+        assert entry.details["version_id"] == str(version.id)

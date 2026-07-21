@@ -183,7 +183,7 @@ async def test_e2e_admin_generate_creates_both_files_in_storage(
     )
 
     assert response.status_code == 201, response.text
-    body = response.json()
+    body = response.json()["documents"][0]
 
     # Both file name fields must be set in the response
     assert body.get("docx_file_name"), "docx_file_name must be non-null"

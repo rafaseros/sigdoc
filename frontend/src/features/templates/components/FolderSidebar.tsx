@@ -136,7 +136,10 @@ export function FolderSidebar({
   return (
     <nav
       aria-label="Carpetas"
-      className="flex flex-col gap-0.5 lg:sticky lg:top-20 lg:self-start"
+      // Below lg the sidebar collapses into a wrapping chip row above the
+      // list (a full-height column would push the content off-screen);
+      // from lg it is the sticky vertical rail.
+      className="flex min-w-0 flex-wrap items-center gap-1 lg:sticky lg:top-20 lg:flex-col lg:items-stretch lg:gap-0.5 lg:self-start"
     >
       <NavRow
         label="Todas"
@@ -150,7 +153,7 @@ export function FolderSidebar({
         onClick={() => onSelectFolder("none")}
       />
 
-      <div className="mt-2.5 mb-0.5 px-2.5 text-[11px] font-semibold uppercase tracking-[0.04em] text-[var(--fg-3)]">
+      <div className="w-full px-2.5 text-[11px] font-semibold uppercase tracking-[0.04em] text-[var(--fg-3)] lg:mt-2.5 lg:mb-0.5">
         Carpetas
       </div>
 
@@ -166,7 +169,7 @@ export function FolderSidebar({
       ))}
 
       {folders !== undefined && folders.length === 0 && (
-        <p className="px-2.5 py-1 text-[12px] leading-[1.4] text-[var(--fg-3)]">
+        <p className="w-full px-2.5 py-1 text-[12px] leading-[1.4] text-[var(--fg-3)]">
           Cree carpetas para organizar sus plantillas.
         </p>
       )}
@@ -176,7 +179,7 @@ export function FolderSidebar({
         variant="ghost"
         size="sm"
         onClick={() => setCreateOpen(true)}
-        className="mt-1.5 justify-start gap-1.5 text-[var(--fg-3)] hover:text-[var(--primary)]"
+        className="justify-start gap-1.5 text-[var(--fg-3)] hover:text-[var(--primary)] lg:mt-1.5"
       >
         <FolderPlus className="size-3.5" />
         Nueva carpeta

@@ -50,6 +50,11 @@ export async function triggerBlobDownload(
 export interface DocumentItem {
   id: string;
   template_version_id: string;
+  /** Template that produced this document. */
+  template_id: string;
+  template_name: string;
+  /** Human version number of the template version used (not the version row id). */
+  template_version: number;
   docx_file_name: string;
   pdf_file_name: string | null;
   generation_type: string;
@@ -57,6 +62,9 @@ export interface DocumentItem {
   download_url?: string | null;
   variables_snapshot: Record<string, string>;
   created_at: string;
+  /** Groups the documents produced by one generate call over a version with
+   * related files; `null` for single-file generations. */
+  group_id: string | null;
 }
 
 interface DocumentListResponse {

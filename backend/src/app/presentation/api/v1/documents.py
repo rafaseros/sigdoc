@@ -16,6 +16,7 @@ from app.domain.exceptions import (
     DocumentNotFoundError,
     PdfConversionError,
     TemplateAccessDeniedError,
+    TemplateVersionFileNotFoundError,
     TemplateVersionNotFoundError,
     VariablesMismatchError,
 )
@@ -36,6 +37,7 @@ from app.presentation.schemas.document import (
     DocumentListResponse,
     DocumentResponse,
     GenerateRequest,
+    GenerateResponse,
     PreviewRequest,
 )
 
@@ -47,7 +49,31 @@ _PDF_MIME = "application/pdf"
 _ZIP_MIME = "application/zip"
 
 
-@router.post("/generate", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED)
+def _to_document_response(doc, download_url: str | None = None) -> DocumentResponse:
+    """Build a DocumentResponse from an enriched domain Document.
+
+    The repository populates template_id / template_name / template_version
+    via the template_versions → templates join (the FK is NOT NULL, so the
+    values are always concrete).
+    """
+    return DocumentResponse(
+        id=str(doc.id),
+        template_version_id=str(doc.template_version_id),
+        template_id=str(doc.template_id),
+        template_name=doc.template_name,
+        template_version=doc.template_version,
+        docx_file_name=doc.docx_file_name,
+        pdf_file_name=doc.pdf_file_name,
+        generation_type=doc.generation_type,
+        status=doc.status,
+        download_url=download_url,
+        variables_snapshot=doc.variables_snapshot,
+        created_at=doc.created_at,
+        group_id=str(doc.group_id) if doc.group_id else None,
+    )
+
+
+@router.post("/generate", response_model=GenerateResponse, status_code=status.HTTP_201_CREATED)
 @limiter.limit(tier_limit_generate)
 async def generate_document(
     request: Request,
@@ -55,7 +81,12 @@ async def generate_document(
     current_user: CurrentUser = Depends(get_current_user),
     service: DocumentService = Depends(get_document_service),
 ):
-    """Generate a single document from a template version.
+    """Generate documents from a template version — the primary docx plus
+    every related file of the version, filled with ONE shared variable set.
+
+    Response: {"documents": [DocumentResponse, ...], "group_id": str|null} —
+    primary first, then related files by position. group_id is null when the
+    version has no related files (the list then has one element).
 
     REQ-DDF-03: output_format is NOT accepted (GenerateRequest has extra="forbid").
     REQ-DDF-05: PdfConversionError → HTTP 503 (atomic rollback already done in service).
@@ -82,17 +113,13 @@ async def generate_document(
             detail="El servicio de conversión a PDF no está disponible temporalmente. Por favor, intentá más tarde.",
         )
 
-    doc = result["document"]
-    return DocumentResponse(
-        id=str(doc.id),
-        template_version_id=str(doc.template_version_id),
-        docx_file_name=doc.docx_file_name,
-        pdf_file_name=doc.pdf_file_name,
-        generation_type=doc.generation_type,
-        status=doc.status,
-        download_url=f"/documents/{doc.id}/download",
-        variables_snapshot=doc.variables_snapshot,
-        created_at=doc.created_at,
+    group_id = result["group_id"]
+    return GenerateResponse(
+        documents=[
+            _to_document_response(doc, download_url=f"/documents/{doc.id}/download")
+            for doc in result["documents"]
+        ],
+        group_id=str(group_id) if group_id else None,
     )
 
 
@@ -108,6 +135,9 @@ async def preview_document(
     variable values. Nothing is persisted — no MinIO uploads, no Document
     row, no usage/audit tracking, no quota check.
 
+    `file_id` (optional) previews a RELATED file of the version instead of
+    the primary docx.
+
     Missing variables render as blanks (docxtpl default Jinja2 Undefined).
     """
     try:
@@ -116,9 +146,15 @@ async def preview_document(
             variables=body.variables,
             user_id=str(current_user.user_id),
             role=current_user.role,
+            file_id=body.file_id,
         )
     except TemplateAccessDeniedError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except TemplateVersionFileNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Archivo relacionado no encontrado",
+        )
     except TemplateVersionNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template version not found")
     except ComputedVariableError as e:
@@ -461,19 +497,7 @@ async def list_documents(
 
     documents, total = await service.list_documents(page=page, size=size, template_id=template_id, created_by=created_by)
 
-    items = [
-        DocumentResponse(
-            id=str(d.id),
-            template_version_id=str(d.template_version_id),
-            docx_file_name=d.docx_file_name,
-            pdf_file_name=d.pdf_file_name,
-            generation_type=d.generation_type,
-            status=d.status,
-            variables_snapshot=d.variables_snapshot,
-            created_at=d.created_at,
-        )
-        for d in documents
-    ]
+    items = [_to_document_response(d) for d in documents]
 
     return DocumentListResponse(items=items, total=total, page=page, size=size)
 
@@ -491,14 +515,4 @@ async def get_document(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
     doc = result["document"]
-    return DocumentResponse(
-        id=str(doc.id),
-        template_version_id=str(doc.template_version_id),
-        docx_file_name=doc.docx_file_name,
-        pdf_file_name=doc.pdf_file_name,
-        generation_type=doc.generation_type,
-        status=doc.status,
-        download_url=f"/documents/{doc.id}/download",
-        variables_snapshot=doc.variables_snapshot,
-        created_at=doc.created_at,
-    )
+    return _to_document_response(doc, download_url=f"/documents/{doc.id}/download")

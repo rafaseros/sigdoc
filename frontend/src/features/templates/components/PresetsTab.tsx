@@ -119,12 +119,12 @@ export function PresetsTab({ templateId, variablesMeta }: PresetsTabProps) {
             return (
               <div
                 key={preset.id}
-                className="flex items-center gap-3.5 rounded-xl bg-white p-4 shadow-[var(--shadow-sm)] ring-1 ring-[rgba(195,198,215,0.30)]"
+                className="flex flex-wrap items-center gap-3.5 rounded-xl bg-white p-4 shadow-[var(--shadow-sm)] ring-1 ring-[rgba(195,198,215,0.30)]"
               >
                 <span className="inline-flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-[var(--bg-accent)] text-[var(--primary)]">
                   <Bookmark className="size-4" />
                 </span>
-                <div className="min-w-0 flex-1">
+                <div className="min-w-[160px] flex-1">
                   <div className="truncate text-sm font-semibold text-[var(--fg-1)]">
                     {preset.name}
                   </div>

@@ -54,7 +54,7 @@ export function SharesTab({ templateId, templateName }: SharesTabProps) {
 
   return (
     <div className="overflow-hidden rounded-xl bg-white shadow-[var(--shadow-md)]">
-      <div className="flex items-center justify-between border-b border-[rgba(195,198,215,0.20)] px-5 py-4">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[rgba(195,198,215,0.20)] px-5 py-4">
         <div>
           <h3 className="m-0 text-base font-bold tracking-tight text-[var(--fg-1)]">
             Compartido con
@@ -93,7 +93,10 @@ export function SharesTab({ templateId, templateName }: SharesTabProps) {
           </p>
         </div>
       ) : (
-        <table className="w-full text-sm">
+        // Wide table scrolls inside its own container — the page body must
+        // never scroll horizontally (STYLE_GUIDE.md §Responsive).
+        <div className="overflow-x-auto">
+        <table className="w-full min-w-[480px] text-sm">
           <thead>
             <tr className="border-b border-[rgba(195,198,215,0.20)] bg-[var(--bg-page)]">
               <th className="px-5 py-2.5 text-left text-[11px] font-semibold uppercase tracking-[0.04em] text-[var(--fg-3)]">
@@ -161,6 +164,7 @@ export function SharesTab({ templateId, templateName }: SharesTabProps) {
             })}
           </tbody>
         </table>
+        </div>
       )}
 
       <ShareTemplateDialog

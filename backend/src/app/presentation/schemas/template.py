@@ -84,6 +84,23 @@ class UpdateVariableTypesRequest(BaseModel):
     overrides: list[VariableTypeOverride]
 
 
+class TemplateVersionFileResponse(BaseModel):
+    """A related .docx attached to a template version (besides the primary).
+
+    `variables` is this file's OWN extracted names — the version's
+    `variables` remains the union across the primary and every file.
+    """
+
+    id: str
+    label: str
+    variables: list[str] = []
+    file_size: int
+    position: int
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class TemplateVersionResponse(BaseModel):
     id: str
     version: int
@@ -91,6 +108,7 @@ class TemplateVersionResponse(BaseModel):
     variables_meta: list[VariableMeta] = []
     file_size: int
     created_at: datetime
+    files: list[TemplateVersionFileResponse] = []
 
     model_config = {"from_attributes": True}
 
@@ -251,3 +269,63 @@ class TemplateStructureResponse(BaseModel):
     headers: list[StructureNode] = []
     body: list[StructureNode] = []
     footers: list[StructureNode] = []
+
+
+# ---------------------------------------------------------------------------
+# Template from example — a filled .docx is analyzed, the user maps literal
+# texts to variables, and the backend rewrites it into a normal template v1.
+# ---------------------------------------------------------------------------
+
+# Lowercase snake_case — the only variable-name shape the engine's validate()
+# accepts without errors.
+VARIABLE_NAME_PATTERN = r"^[a-z_][a-z0-9_]*$"
+
+
+class TemplateAnalyzeExampleResponse(BaseModel):
+    """Response of POST /templates/analyze-example."""
+
+    structure: TemplateStructureResponse
+
+
+class VariableMappingItem(BaseModel):
+    """One literal-text → variable mapping for POST /templates/from-example.
+
+    `text` is matched exactly (case-sensitive) in the example document, so it
+    is intentionally NOT stripped — only required to be non-blank. `variable`
+    must be lowercase snake_case.
+    """
+
+    text: str
+    variable: str = Field(pattern=VARIABLE_NAME_PATTERN)
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("text")
+    @classmethod
+    def _text_not_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("text must not be blank")
+        return v
+
+
+class VariableMappingsPayload(BaseModel):
+    """Validated wrapper for the `mappings` JSON form field of /from-example.
+
+    Rejects an empty list and duplicated texts. The same variable name for
+    two different texts IS allowed (both become the same placeholder).
+    """
+
+    mappings: list[VariableMappingItem] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _reject_duplicate_texts(self) -> "VariableMappingsPayload":
+        seen: set[str] = set()
+        duplicates: list[str] = []
+        for item in self.mappings:
+            if item.text in seen and item.text not in duplicates:
+                duplicates.append(item.text)
+            seen.add(item.text)
+        if duplicates:
+            joined = ", ".join(f"'{t}'" for t in duplicates)
+            raise ValueError(f"duplicated texts in mappings: {joined}")
+        return self

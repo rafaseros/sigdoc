@@ -11,8 +11,10 @@ export const templateKeys = {
   detail: (id: string) => [...templateKeys.details(), id] as const,
   shares: (templateId: string) =>
     [...templateKeys.all, "shares", templateId] as const,
-  structure: (templateId: string, versionId: string) =>
-    [...templateKeys.all, "structure", templateId, versionId] as const,
+  structure: (templateId: string, versionId: string, fileId?: string) =>
+    fileId
+      ? ([...templateKeys.all, "structure", templateId, versionId, fileId] as const)
+      : ([...templateKeys.all, "structure", templateId, versionId] as const),
 };
 
 export const folderKeys = {

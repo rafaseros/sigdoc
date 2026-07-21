@@ -279,13 +279,15 @@ class TestGenerateSingle:
 
         assert len(fake_document_repo._documents) == 1
 
-    async def test_returns_download_url(
+    async def test_returns_documents_list_with_null_group(
         self,
         fake_document_repo: FakeDocumentRepository,
         fake_template_repo: FakeTemplateRepository,
         fake_storage: FakeStorageService,
         fake_template_engine: FakeTemplateEngine,
     ):
+        """Tanda 3 shape: generate_single returns the documents list plus the
+        generation group (None for versions without related files)."""
         service = make_service(
             fake_document_repo, fake_template_repo, fake_storage, fake_template_engine
         )
@@ -298,8 +300,9 @@ class TestGenerateSingle:
             created_by=user_id,
         )
 
-        assert "download_url" in result
-        assert result["download_url"].startswith("http://fake/documents/")
+        assert len(result["documents"]) == 1
+        assert result["group_id"] is None
+        assert result["documents"][0].group_id is None
 
     async def test_document_record_has_correct_fields(
         self,
@@ -353,7 +356,7 @@ class TestDeleteDocument:
             created_by=user_id,
         )
 
-        doc = result["document"]
+        doc = result["documents"][0]
         doc_id = doc.id
 
         assert len(fake_document_repo._documents) == 1
@@ -460,8 +463,8 @@ class TestGenerateSingleAccessControl:
             role="user",
         )
 
-        assert "document" in result
-        assert result["document"].created_by == shared_user_id
+        assert result["documents"]
+        assert result["documents"][0].created_by == shared_user_id
 
     async def test_owner_can_generate(
         self,
@@ -486,7 +489,7 @@ class TestGenerateSingleAccessControl:
             role="user",
         )
 
-        assert "document" in result
+        assert result["documents"]
 
 
 class TestPerUserBulkLimit:
@@ -718,7 +721,7 @@ class TestGenerateSingleWithUsageAndAudit:
             created_by=user_id,
         )
 
-        assert "document" in result
+        assert result["documents"]
 
 
 class TestGenerateBulkWithUsageAndAudit:
@@ -833,7 +836,7 @@ class TestDeleteDocumentAudit:
             tenant_id=tenant_id,
             created_by=user_id,
         )
-        doc_id = result["document"].id
+        doc_id = result["documents"][0].id
 
         # Clear audit entries from generate_single (fire-and-forget — drain first)
         await _asyncio.sleep(0)
@@ -1183,3 +1186,181 @@ class TestLogDownloadEvent:
             via="direct",
             include_both=False,
         )
+
+
+# ---------------------------------------------------------------------------
+# Template enrichment — template_id / template_name / template_version
+# ---------------------------------------------------------------------------
+
+
+def _seed_template_with_version(
+    repo: FakeTemplateRepository,
+    storage: FakeStorageService,
+    *,
+    version_number: int = 1,
+    name: str = "Enriched Template",
+) -> tuple[TemplateVersion, Template, str, str]:
+    """Seed a template + a version with an explicit human version number.
+
+    Returns (version, template, tenant_id_str, owner_id_str).
+    """
+    from datetime import datetime, timezone
+
+    tenant_id = uuid.uuid4()
+    owner_id = uuid.uuid4()
+    template_id = uuid.uuid4()
+    version_id = uuid.uuid4()
+    now = datetime.now(timezone.utc)
+
+    version = TemplateVersion(
+        id=version_id,
+        tenant_id=tenant_id,
+        template_id=template_id,
+        version=version_number,
+        minio_path=f"{tenant_id}/{template_id}/v{version_number}/template.docx",
+        variables=["name", "company"],
+        created_at=now,
+    )
+    repo._versions[version_id] = version
+
+    template = Template(
+        id=template_id,
+        tenant_id=tenant_id,
+        name=name,
+        description=None,
+        current_version=version_number,
+        created_by=owner_id,
+        versions=[version],
+        created_at=now,
+        updated_at=now,
+    )
+    repo._templates[template_id] = template
+    storage.files[("templates", version.minio_path)] = b"fake-docx-bytes"
+
+    return version, template, str(tenant_id), str(owner_id)
+
+
+class TestDocumentTemplateEnrichment:
+    """Documents expose which template (id, name) and which human version
+    number produced them — enrichment fields consumed by DocumentResponse."""
+
+    async def test_generate_single_enriches_document_with_template_info(
+        self,
+        fake_document_repo: FakeDocumentRepository,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        service = make_service(
+            fake_document_repo, fake_template_repo, fake_storage, fake_template_engine
+        )
+        version, template, tenant_id, user_id = _seed_template_with_version(
+            fake_template_repo, fake_storage, version_number=3, name="Contrato Marco"
+        )
+
+        result = await service.generate_single(
+            template_version_id=str(version.id),
+            variables={"name": "Alice", "company": "ACME"},
+            tenant_id=tenant_id,
+            created_by=user_id,
+        )
+
+        doc = result["documents"][0]
+        assert doc.template_id == template.id
+        assert doc.template_name == "Contrato Marco"
+        assert doc.template_version == 3  # human version number, not the row id
+
+    async def test_generate_bulk_enriches_stored_documents(
+        self,
+        fake_document_repo: FakeDocumentRepository,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        service = make_service(
+            fake_document_repo, fake_template_repo, fake_storage, fake_template_engine
+        )
+        version, template, tenant_id, user_id = _seed_template_with_version(
+            fake_template_repo, fake_storage, version_number=2, name="Bulk Template"
+        )
+
+        rows = [
+            {"name": "Alice", "company": "ACME"},
+            {"name": "Bob", "company": "Globex"},
+        ]
+        await service.generate_bulk(
+            template_version_id=str(version.id),
+            rows=rows,
+            tenant_id=tenant_id,
+            created_by=user_id,
+        )
+
+        stored = list(fake_document_repo._documents.values())
+        assert len(stored) == 2
+        for doc in stored:
+            assert doc.template_id == template.id
+            assert doc.template_name == "Bulk Template"
+            assert doc.template_version == 2
+
+    async def test_list_documents_returns_enriched_documents(
+        self,
+        fake_document_repo: FakeDocumentRepository,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        service = make_service(
+            fake_document_repo, fake_template_repo, fake_storage, fake_template_engine
+        )
+        version, template, tenant_id, user_id = _seed_template_with_version(
+            fake_template_repo, fake_storage, version_number=1, name="Listado"
+        )
+
+        await service.generate_single(
+            template_version_id=str(version.id),
+            variables={"name": "Alice", "company": "ACME"},
+            tenant_id=tenant_id,
+            created_by=user_id,
+        )
+
+        documents, total = await service.list_documents(page=1, size=10)
+        assert total == 1
+        doc = documents[0]
+        assert doc.template_id == template.id
+        assert doc.template_name == "Listado"
+        assert doc.template_version == 1
+
+    async def test_fake_repo_enriches_reads_from_registry(
+        self, fake_document_repo: FakeDocumentRepository
+    ):
+        """Directly-seeded documents get enriched at read time when the
+        version registry knows the template info (mirrors the real repo's
+        read-time join)."""
+        version_id = uuid.uuid4()
+        template_id = uuid.uuid4()
+        doc = Document(
+            id=uuid.uuid4(),
+            tenant_id=uuid.uuid4(),
+            template_version_id=version_id,
+            docx_file_name="legacy.docx",
+            docx_minio_path="tenant/doc/legacy.docx",
+            generation_type="single",
+            variables_snapshot={},
+            created_by=uuid.uuid4(),
+        )
+        await fake_document_repo.create(doc)
+        fake_document_repo.register_template_version(
+            version_id,
+            template_id,
+            template_name="Legacy Template",
+            version_number=7,
+        )
+
+        fetched = await fake_document_repo.get_by_id(doc.id)
+        assert fetched is not None
+        assert fetched.template_id == template_id
+        assert fetched.template_name == "Legacy Template"
+        assert fetched.template_version == 7
+
+        listed, _ = await fake_document_repo.list_paginated(page=1, size=10)
+        assert listed[0].template_name == "Legacy Template"

@@ -40,6 +40,7 @@ def create_app() -> FastAPI:
 
     app = FastAPI(
         title=settings.app_name,
+        version="4.0.0",  # Keep in sync with pyproject.toml and frontend/src/shared/version.ts
         lifespan=lifespan,
     )
 

@@ -19,6 +19,8 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { DownloadButton } from "./DownloadButton";
+import { GeneratedDocumentsList } from "./GeneratedDocumentsList";
+import type { GeneratedDocumentInfo } from "./GeneratedDocumentsList";
 import { useGenerateDocument } from "../api/mutations";
 import {
   assembleDocument,
@@ -417,8 +419,9 @@ export function InlineDocumentEditor({
 }: InlineDocumentEditorProps) {
   const [values, setValues] = useState<Record<string, string>>({});
   const [editingInstance, setEditingInstance] = useState<InstanceKey | null>(null);
-  const [documentId, setDocumentId] = useState<string | null>(null);
-  const [fileName, setFileName] = useState<string>("");
+  const [generatedDocs, setGeneratedDocs] = useState<GeneratedDocumentInfo[]>(
+    [],
+  );
 
   const generateMutation = useGenerateDocument();
 
@@ -511,9 +514,16 @@ export function InlineDocumentEditor({
         template_version_id: templateVersionId,
         variables: values,
       });
-      setDocumentId(result.id);
-      setFileName(result.docx_file_name);
-      toast.success("¡Documento generado con éxito!");
+      const docs = result.documents.map((d) => ({
+        documentId: d.id,
+        fileName: d.docx_file_name,
+      }));
+      setGeneratedDocs(docs);
+      toast.success(
+        docs.length === 1
+          ? "Documento generado"
+          : `${docs.length} documentos generados`,
+      );
     } catch {
       toast.error("Error al generar el documento");
     }
@@ -610,22 +620,37 @@ export function InlineDocumentEditor({
       </div>
 
       {/* ── Success panel ── */}
-      {documentId && (
+      {generatedDocs.length > 0 && (
         <div className="mt-5 rounded-xl bg-[#d1fae5] p-5 shadow-[0_4px_16px_rgba(5,150,105,0.10)]">
           <div className="mb-2 flex items-center gap-2">
             <CircleCheck className="size-4 text-[#059669]" />
             <h3 className="m-0 text-[14px] font-bold text-[#065f46]">
-              Documento listo
+              {generatedDocs.length === 1
+                ? "Documento listo"
+                : "Documentos listos"}
             </h3>
           </div>
-          <p className="mb-3 text-[13px] text-[#047857]">
-            Su documento &quot;{fileName}&quot; ha sido generado correctamente.
-          </p>
-          <DownloadButton
-            documentId={documentId}
-            baseFileName={fileName}
-            via="direct"
-          />
+          {generatedDocs.length === 1 ? (
+            <>
+              <p className="mb-3 text-[13px] text-[#047857]">
+                Su documento &quot;{generatedDocs[0].fileName}&quot; ha sido
+                generado correctamente.
+              </p>
+              <DownloadButton
+                documentId={generatedDocs[0].documentId}
+                baseFileName={generatedDocs[0].fileName}
+                via="direct"
+              />
+            </>
+          ) : (
+            <>
+              <p className="mb-3 text-[13px] text-[#047857]">
+                Se generaron {generatedDocs.length} documentos con los mismos
+                datos.
+              </p>
+              <GeneratedDocumentsList documents={generatedDocs} />
+            </>
+          )}
         </div>
       )}
     </div>

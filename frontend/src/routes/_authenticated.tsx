@@ -7,6 +7,7 @@ import {
   ChevronDown,
   KeyRound,
   LogOut,
+  Sparkles,
 } from "lucide-react";
 import { useAuth } from "@/shared/lib/auth";
 import {
@@ -17,6 +18,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ChangePasswordDialog } from "@/features/users";
+import { ChangelogDialog } from "@/components/ChangelogDialog";
+import { APP_VERSION } from "@/shared/version";
 import { getRoleLabel } from "@/shared/lib/role-labels";
 import { canManageUsers, canViewAudit } from "@/shared/lib/permissions";
 
@@ -34,6 +37,7 @@ function AuthenticatedLayout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [changePassOpen, setChangePassOpen] = useState(false);
+  const [changelogOpen, setChangelogOpen] = useState(false);
 
   const handleLogout = () => {
     logout();
@@ -45,8 +49,8 @@ function AuthenticatedLayout() {
       <header className="sticky top-0 z-40 border-b border-[rgba(195,198,215,0.20)] bg-white/85 backdrop-blur-xl">
         <div className="mx-auto flex h-14 max-w-7xl items-center justify-between px-4">
           {/* Brand + nav */}
-          <div className="flex items-center gap-8">
-            <Link to="/templates" className="flex items-center gap-2">
+          <div className="flex min-w-0 items-center gap-3 sm:gap-8">
+            <Link to="/templates" className="flex shrink-0 items-center gap-2">
               <span className="inline-flex size-7 items-center justify-center rounded-md bg-gradient-to-br from-[#004ac6] to-[#2563eb] text-[13px] font-bold text-white shadow-[var(--shadow-brand-sm)]">
                 S
               </span>
@@ -56,24 +60,37 @@ function AuthenticatedLayout() {
             </Link>
 
             <nav className="flex items-center gap-1">
-              <NavLink to="/templates" icon={<Folder className="size-3.5" />}>
-                Plantillas
-              </NavLink>
+              <NavLink
+                to="/templates"
+                icon={<Folder className="size-3.5" />}
+                label="Plantillas"
+              />
               {canManageUsers(user?.role) && (
-                <NavLink to="/users" icon={<Users className="size-3.5" />}>
-                  Usuarios
-                </NavLink>
+                <NavLink
+                  to="/users"
+                  icon={<Users className="size-3.5" />}
+                  label="Usuarios"
+                />
               )}
               {canViewAudit(user?.role) && (
-                <NavLink to="/audit" icon={<ShieldCheck className="size-3.5" />}>
-                  Auditoría
-                </NavLink>
+                <NavLink
+                  to="/audit"
+                  icon={<ShieldCheck className="size-3.5" />}
+                  label="Auditoría"
+                />
               )}
             </nav>
           </div>
 
           {/* User chip */}
-          {user && <UserChip user={user} onChangePass={() => setChangePassOpen(true)} onLogout={handleLogout} />}
+          {user && (
+            <UserChip
+              user={user}
+              onChangePass={() => setChangePassOpen(true)}
+              onShowChangelog={() => setChangelogOpen(true)}
+              onLogout={handleLogout}
+            />
+          )}
         </div>
       </header>
 
@@ -82,6 +99,7 @@ function AuthenticatedLayout() {
       </main>
 
       <ChangePasswordDialog open={changePassOpen} onOpenChange={setChangePassOpen} />
+      <ChangelogDialog open={changelogOpen} onOpenChange={setChangelogOpen} />
     </div>
   );
 }
@@ -89,19 +107,24 @@ function AuthenticatedLayout() {
 function NavLink({
   to,
   icon,
-  children,
+  label,
 }: {
   to: "/templates" | "/users" | "/audit";
   icon: React.ReactNode;
-  children: React.ReactNode;
+  label: string;
 }) {
   return (
     <Link
       to={to}
-      className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium text-[var(--fg-2)] transition-all hover:bg-[var(--bg-accent)]/50 hover:text-[var(--primary)] [&.active]:bg-[var(--bg-accent)] [&.active]:text-[var(--primary)] [&.active]:font-semibold"
+      // Icon-only below sm (the three labeled pills don't fit a 360px
+      // header) — aria-label/title keep the accessible name when the text
+      // label is hidden.
+      aria-label={label}
+      title={label}
+      className="inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium text-[var(--fg-2)] transition-all hover:bg-[var(--bg-accent)]/50 hover:text-[var(--primary)] [&.active]:bg-[var(--bg-accent)] [&.active]:text-[var(--primary)] [&.active]:font-semibold"
     >
       {icon}
-      {children}
+      <span className="hidden sm:inline">{label}</span>
     </Link>
   );
 }
@@ -109,10 +132,12 @@ function NavLink({
 function UserChip({
   user,
   onChangePass,
+  onShowChangelog,
   onLogout,
 }: {
   user: { email: string; role: string };
   onChangePass: () => void;
+  onShowChangelog: () => void;
   onLogout: () => void;
 }) {
   const initials = getInitials(user.email);
@@ -149,6 +174,14 @@ function UserChip({
         <DropdownMenuItem onClick={onChangePass} className="mt-1 gap-2 px-3 py-2 text-sm">
           <KeyRound className="size-4 text-[var(--fg-2)]" />
           Cambiar contraseña
+        </DropdownMenuItem>
+
+        <DropdownMenuItem onClick={onShowChangelog} className="gap-2 px-3 py-2 text-sm">
+          <Sparkles className="size-4 text-[var(--fg-2)]" />
+          Novedades
+          <span className="ml-auto font-mono text-[11px] text-[var(--fg-3)]">
+            v{APP_VERSION}
+          </span>
         </DropdownMenuItem>
 
         <DropdownMenuSeparator />

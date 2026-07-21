@@ -36,6 +36,8 @@ import {
   Calculator,
   Check,
   ChevronDown,
+  CircleAlert,
+  CircleCheck,
   Eye,
   FileText,
   Info,
@@ -63,13 +65,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 import { useGenerateDocument, usePreviewDocument } from "../api/mutations";
 import { computeFormulaValue } from "../lib/computed";
 import { DownloadButton } from "./DownloadButton";
+import { GeneratedDocumentsList } from "./GeneratedDocumentsList";
+import type { GeneratedDocumentInfo } from "./GeneratedDocumentsList";
 import { SavePresetDialog } from "./SavePresetDialog";
 
 import { usePresets } from "@/features/templates/api/presets";
+import { useTemplateFileStructure } from "@/features/templates/api/queries";
 import { TemplateGuideButton } from "@/features/templates/components/TemplateGuide";
 import { dismissHint, isHintDismissed } from "@/shared/lib/dismissible-hint";
 import type {
@@ -77,6 +84,7 @@ import type {
   StructureSpan,
   StructureTableCell as StructureTableCellType,
   TemplateStructure,
+  TemplateVersionFile,
 } from "@/features/templates/api/queries";
 import type {
   ComputedConfig,
@@ -94,11 +102,15 @@ interface FullDocumentEditorProps {
   templateName: string;
   variablesMeta: VariableMeta[];
   structure: TemplateStructure;
+  /** Related files of the version (sorted by position). Empty array when the
+   * version only has its primary document — the editor renders exactly as
+   * before in that case (no tab bar, no extra requests). */
+  files?: TemplateVersionFile[];
 }
 
 interface GeneratedInfo {
-  documentId: string;
-  fileName: string;
+  /** All documents produced by one generate call — primary first. */
+  documents: GeneratedDocumentInfo[];
 }
 
 interface PlaceholderInstance {
@@ -668,8 +680,31 @@ export function FullDocumentEditor({
   templateName,
   variablesMeta,
   structure,
+  files = [],
 }: FullDocumentEditorProps) {
-  const instances = useMemo(() => collectInstances(structure), [structure]);
+  // Active document tab — `null` means the primary document. Guarded through
+  // `files` so a stale id (e.g. after a version switch) falls back to primary
+  // instead of pointing at a file the version no longer has.
+  const [activeFileId, setActiveFileId] = useState<string | null>(null);
+  const activeFile = files.find((f) => f.id === activeFileId) ?? null;
+  const effectiveFileId = activeFile?.id ?? null;
+
+  // Structure of the ACTIVE related file — disabled (never fetched) while
+  // the primary tab is active, so versions without files keep the exact
+  // pre-tabs behavior.
+  const relatedStructureQuery = useTemplateFileStructure(
+    templateId,
+    templateVersionId,
+    effectiveFileId,
+  );
+  const activeStructure: TemplateStructure | null = effectiveFileId
+    ? relatedStructureQuery.data ?? null
+    : structure;
+
+  const instances = useMemo(
+    () => (activeStructure ? collectInstances(activeStructure) : []),
+    [activeStructure],
+  );
   const [values, setValues] = useState<Record<string, string>>({});
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [generated, setGenerated] = useState<GeneratedInfo | null>(null);
@@ -735,11 +770,21 @@ export function FullDocumentEditor({
   // `distinctVarNames` includes computed variables — the panel still lists
   // them (with an "Auto" badge). Progress counts and submitted payloads use
   // `editableVarNames`/`nonComputedValues` below instead, which exclude them.
+  //
+  // With related files the panel stays GLOBAL: it lists the UNION of
+  // variables across the primary and every related file (the version-level
+  // variables_meta is always that union per the backend contract), so a
+  // variable used in several files is filled once and progress never changes
+  // when switching tabs. Without files, keep deriving from the document's
+  // actual instances — zero behavioral change.
   const distinctVarNames = useMemo(() => {
+    if (files.length > 0) {
+      return variablesMeta.map((m) => m.name);
+    }
     const seen = new Set<string>();
     for (const inst of instances) seen.add(inst.varName);
     return Array.from(seen);
-  }, [instances]);
+  }, [files.length, variablesMeta, instances]);
 
   const editableVarNames = useMemo(
     () => distinctVarNames.filter((n) => !isComputed(n)),
@@ -826,12 +871,17 @@ export function FullDocumentEditor({
     generateMutation.mutate(
       { template_version_id: templateVersionId, variables: nonComputedValues },
       {
-        onSuccess: (doc) => {
-          toast.success("Documento generado");
-          setGenerated({
-            documentId: doc.id,
-            fileName: doc.docx_file_name,
-          });
+        onSuccess: (res) => {
+          const docs = res.documents.map((d) => ({
+            documentId: d.id,
+            fileName: d.docx_file_name,
+          }));
+          toast.success(
+            docs.length === 1
+              ? "Documento generado"
+              : `${docs.length} documentos generados`,
+          );
+          setGenerated({ documents: docs });
         },
         onError: () => {
           toast.error("Error al generar el documento");
@@ -851,7 +901,14 @@ export function FullDocumentEditor({
     });
     const requestId = ++previewRequestIdRef.current;
     previewMutation.mutate(
-      { template_version_id: templateVersionId, variables: nonComputedValues },
+      {
+        template_version_id: templateVersionId,
+        variables: nonComputedValues,
+        // Previews the ACTIVE tab's document. The field is spread in (not
+        // sent as null) so the primary-tab payload stays byte-identical to
+        // the pre-related-files contract.
+        ...(effectiveFileId ? { file_id: effectiveFileId } : {}),
+      },
       {
         onSuccess: (data) => {
           const newUrl = URL.createObjectURL(
@@ -892,22 +949,50 @@ export function FullDocumentEditor({
     }
   };
 
+  // Instance keys are positional and per-structure — the same key (e.g.
+  // "b-0-1") can exist in two different files. Always drop the editing state
+  // when the active tab changes so a stale key never "opens" an unrelated
+  // pill in the newly-rendered document.
+  const handleFileTabChange = useCallback((fileId: string | null) => {
+    setActiveFileId(fileId);
+    setEditingKey(null);
+  }, []);
+
+  // Variables present in the PRIMARY document — used to route a panel-row
+  // click to the right tab when the variable doesn't appear in the active one.
+  const primaryVarNames = useMemo(() => {
+    const seen = new Set<string>();
+    for (const inst of collectInstances(structure)) seen.add(inst.varName);
+    return seen;
+  }, [structure]);
+
   const handleVariableRowClick = useCallback(
     (varName: string) => {
       const inst = instances.find((i) => i.varName === varName);
-      if (!inst) return;
-      setEditingKey(inst.key);
-      requestAnimationFrame(() => {
-        document
-          .querySelector<HTMLElement>(`[data-instance-key="${inst.key}"]`)
-          ?.scrollIntoView({ block: "center" });
-      });
+      if (inst) {
+        setEditingKey(inst.key);
+        requestAnimationFrame(() => {
+          document
+            .querySelector<HTMLElement>(`[data-instance-key="${inst.key}"]`)
+            ?.scrollIntoView({ block: "center" });
+        });
+        return;
+      }
+      // Not in the active tab's document — switch to the first tab that
+      // contains it (primary first, then related files in position order).
+      if (files.length === 0) return;
+      if (primaryVarNames.has(varName)) {
+        handleFileTabChange(null);
+        return;
+      }
+      const target = files.find((f) => f.variables.includes(varName));
+      if (target) handleFileTabChange(target.id);
     },
-    [instances],
+    [instances, files, primaryVarNames, handleFileTabChange],
   );
 
-  const hasHeaders = structure.headers.length > 0;
-  const hasFooters = structure.footers.length > 0;
+  const hasHeaders = (activeStructure?.headers.length ?? 0) > 0;
+  const hasFooters = (activeStructure?.footers.length ?? 0) > 0;
 
   const sectionProps = {
     values,
@@ -1003,54 +1088,138 @@ export function FullDocumentEditor({
             <TemplateGuideButton compact initialTopic="generate" />
           </div>
 
+          {/* Related-file tab bar — only when the version carries related
+              files. "Principal" is the primary document; each related file
+              gets a tab by its label. The variables panel and value map stay
+              global — tabs only swap which document renders below. */}
+          {files.length > 0 && (
+            <Tabs
+              value={effectiveFileId ?? "primary"}
+              onValueChange={(value) =>
+                handleFileTabChange(
+                  value === "primary" ? null : (value as string),
+                )
+              }
+              className="gap-0"
+            >
+              {/* Scrolls horizontally when the labels outgrow the card
+                  (STYLE_GUIDE.md §Responsive); the active underline moves to
+                  bottom-0 so the scroll clipping doesn't hide it. */}
+              <TabsList
+                variant="line"
+                className="h-auto w-full justify-start gap-1 overflow-x-auto overflow-y-hidden rounded-none border-b border-[rgba(195,198,215,0.20)] bg-transparent px-6 py-0"
+              >
+                <TabsTrigger
+                  value="primary"
+                  className="flex-none py-2.5 group-data-horizontal/tabs:after:bottom-0"
+                >
+                  Principal
+                </TabsTrigger>
+                {files.map((file) => (
+                  <TabsTrigger
+                    key={file.id}
+                    value={file.id}
+                    className="flex-none py-2.5 group-data-horizontal/tabs:after:bottom-0"
+                  >
+                    {file.label}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
+          )}
+
           {/* pb-16 (instead of a symmetric py-5) leaves clearance so the
               last content line can scroll clear of the sticky action bar
               below, instead of ending flush against it. */}
           <div className="px-6 pt-5 pb-16">
-            {hasHeaders && (
-              <DocumentSection label="Encabezado">
-                {structure.headers.map((node, i) => (
-                  <DocumentNode
-                    key={`h-${i}`}
-                    node={node}
-                    prefix={instanceKey("h", i)}
-                    {...sectionProps}
-                  />
-                ))}
-              </DocumentSection>
-            )}
+            {activeStructure ? (
+              <>
+                {hasHeaders && (
+                  <DocumentSection label="Encabezado">
+                    {activeStructure.headers.map((node, i) => (
+                      <DocumentNode
+                        key={`h-${i}`}
+                        node={node}
+                        prefix={instanceKey("h", i)}
+                        {...sectionProps}
+                      />
+                    ))}
+                  </DocumentSection>
+                )}
 
-            <DocumentSection label="Contenido" emphasis>
-              {structure.body.length === 0 ? (
-                <p className="text-[12.5px] italic text-[var(--fg-3)]">
-                  Este documento no tiene contenido en el cuerpo.
-                </p>
-              ) : (
-                structure.body.map((node, i) => (
-                  <DocumentNode
-                    key={`b-${i}`}
-                    node={node}
-                    prefix={instanceKey("b", i)}
-                    {...sectionProps}
-                  />
-                ))
-              )}
-            </DocumentSection>
+                <DocumentSection label="Contenido" emphasis>
+                  {activeStructure.body.length === 0 ? (
+                    <p className="text-[12.5px] italic text-[var(--fg-3)]">
+                      Este documento no tiene contenido en el cuerpo.
+                    </p>
+                  ) : (
+                    activeStructure.body.map((node, i) => (
+                      <DocumentNode
+                        key={`b-${i}`}
+                        node={node}
+                        prefix={instanceKey("b", i)}
+                        {...sectionProps}
+                      />
+                    ))
+                  )}
+                </DocumentSection>
 
-            {hasFooters && (
-              <DocumentSection label="Pie de página">
-                {structure.footers.map((node, i) => (
-                  <DocumentNode
-                    key={`f-${i}`}
-                    node={node}
-                    prefix={instanceKey("f", i)}
-                    {...sectionProps}
-                  />
-                ))}
-              </DocumentSection>
+                {hasFooters && (
+                  <DocumentSection label="Pie de página">
+                    {activeStructure.footers.map((node, i) => (
+                      <DocumentNode
+                        key={`f-${i}`}
+                        node={node}
+                        prefix={instanceKey("f", i)}
+                        {...sectionProps}
+                      />
+                    ))}
+                  </DocumentSection>
+                )}
+              </>
+            ) : relatedStructureQuery.isError ? (
+              <div className="flex items-start gap-2.5 rounded-[10px] bg-[#ffdad6] px-3.5 py-3 text-[13px] leading-[1.45] text-[#93000a]">
+                <CircleAlert className="mt-px size-4 shrink-0" />
+                <div className="flex-1">
+                  No se pudo cargar el documento relacionado. Vuelva a la
+                  pestaña <strong className="font-semibold">Principal</strong>{" "}
+                  e intente nuevamente.
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-3">
+                <Skeleton className="h-5 w-2/3 rounded-md" />
+                <Skeleton className="h-5 w-full rounded-md" />
+                <Skeleton className="h-5 w-5/6 rounded-md" />
+                <Skeleton className="h-40 w-full rounded-lg" />
+              </div>
             )}
           </div>
         </div>
+
+        {/* Multi-document success card — one generate call produced the
+            primary plus its related documents; list them all (primary
+            first) with per-document download controls. Single-document
+            generations keep the pre-existing download button in the sticky
+            bar below and never render this card. */}
+        {generated && generated.documents.length > 1 && (
+          <div
+            data-testid="generated-documents-card"
+            className="rounded-xl bg-[#d1fae5] p-5 shadow-[0_4px_16px_rgba(5,150,105,0.10)]"
+          >
+            <div className="mb-2 flex items-center gap-2">
+              <CircleCheck className="size-4 text-[#059669]" />
+              <h3 className="m-0 text-[14px] font-bold text-[#065f46]">
+                {generated.documents.length} documentos generados
+              </h3>
+            </div>
+            <p className="mb-3 text-[13px] text-[#047857]">
+              Las variables se aplicaron una sola vez a todos los documentos
+              de la plantilla.
+            </p>
+            <GeneratedDocumentsList documents={generated.documents} />
+          </div>
+        )}
 
         {/* Sticky bottom action bar */}
         <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-white/90 px-4 py-3 shadow-[var(--shadow-md)] ring-1 ring-[rgba(195,198,215,0.30)] backdrop-blur">
@@ -1062,7 +1231,7 @@ export function FullDocumentEditor({
             </div>
             <Progress value={progress} className="h-1.5 max-w-[160px] flex-1" />
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Button
               type="button"
               variant="outline"
@@ -1086,8 +1255,8 @@ export function FullDocumentEditor({
             </Button>
             {generated ? (
               <DownloadButton
-                documentId={generated.documentId}
-                baseFileName={generated.fileName}
+                documentId={generated.documents[0].documentId}
+                baseFileName={generated.documents[0].fileName}
                 via="direct"
               />
             ) : (
@@ -1191,14 +1360,16 @@ export function FullDocumentEditor({
               se genera sin ella.
             </DialogDescription>
           </DialogHeader>
+          {/* 65vh (not 75) so header + iframe fit inside the dialog's
+              max-h-[85vh] without a second internal scrollbar. */}
           {previewUrl ? (
             <iframe
               title="Vista previa del documento"
               src={previewUrl}
-              className="h-[75vh] w-full rounded-lg"
+              className="h-[65vh] w-full rounded-lg"
             />
           ) : (
-            <div className="flex h-[75vh] w-full items-center justify-center text-[13px] text-[var(--fg-3)]">
+            <div className="flex h-[65vh] w-full items-center justify-center text-[13px] text-[var(--fg-3)]">
               Generando vista previa…
             </div>
           )}

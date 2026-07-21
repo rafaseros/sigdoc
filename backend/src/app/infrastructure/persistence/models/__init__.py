@@ -5,6 +5,7 @@ from .user import UserModel
 from .template import TemplateModel
 from .template_folder import TemplateFolderModel
 from .template_version import TemplateVersionModel
+from .template_version_file import TemplateVersionFileModel
 from .document import DocumentModel
 from .template_share import TemplateShareModel
 from .usage_event import UsageEventModel
@@ -18,6 +19,7 @@ __all__ = [
     "TemplateModel",
     "TemplateFolderModel",
     "TemplateVersionModel",
+    "TemplateVersionFileModel",
     "DocumentModel",
     "TemplateShareModel",
     "UsageEventModel",

@@ -216,7 +216,12 @@
   font-family: var(--font-mono);
   font-size: 11.5px;
   font-weight: 500;
-  white-space: nowrap;
+  /* Long filled values must wrap inside the chip instead of overflowing the
+     paragraph on narrow viewports (no horizontal body scroll — see
+     STYLE_GUIDE.md §Responsive). Short chips are unaffected. */
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
   transition: all var(--dur-base) var(--ease-default);
 }
 .var-chip-active {

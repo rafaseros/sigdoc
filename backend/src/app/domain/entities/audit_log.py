@@ -13,6 +13,9 @@ class AuditAction:
     TEMPLATE_SHARE = "template.share"
     TEMPLATE_UNSHARE = "template.unshare"
     TEMPLATE_VARIABLE_TYPES_UPDATED = "template.variable_types_updated"
+    TEMPLATE_DOWNLOAD = "template.download"
+    TEMPLATE_FILE_ATTACH = "template.file_attach"
+    TEMPLATE_FILE_DETACH = "template.file_detach"
 
     FOLDER_CREATE = "folder.create"
     FOLDER_UPDATE = "folder.update"

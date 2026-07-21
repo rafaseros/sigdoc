@@ -103,20 +103,35 @@ function GuideDialogContent({
         onValueChange={(value) => onTopicChange(value as GuideTopic)}
         className="min-h-0 flex-1 gap-0"
       >
+        {/* Scrolls horizontally on narrow viewports (four labels don't fit
+            360px); the active underline moves to bottom-0 so the scroll
+            clipping doesn't hide it. */}
         <TabsList
           variant="line"
-          className="h-auto w-full justify-start gap-1 rounded-none border-b border-[rgba(195,198,215,0.20)] bg-transparent px-6 py-0"
+          className="h-auto w-full justify-start gap-1 overflow-x-auto overflow-y-hidden rounded-none border-b border-[rgba(195,198,215,0.20)] bg-transparent px-6 py-0"
         >
-          <TabsTrigger value="upload" className="py-2.5">
+          <TabsTrigger
+            value="upload"
+            className="flex-none py-2.5 group-data-horizontal/tabs:after:bottom-0"
+          >
             Subir plantillas
           </TabsTrigger>
-          <TabsTrigger value="organize" className="py-2.5">
+          <TabsTrigger
+            value="organize"
+            className="flex-none py-2.5 group-data-horizontal/tabs:after:bottom-0"
+          >
             Organizar
           </TabsTrigger>
-          <TabsTrigger value="generate" className="py-2.5">
+          <TabsTrigger
+            value="generate"
+            className="flex-none py-2.5 group-data-horizontal/tabs:after:bottom-0"
+          >
             Generar documentos
           </TabsTrigger>
-          <TabsTrigger value="computed" className="py-2.5">
+          <TabsTrigger
+            value="computed"
+            className="flex-none py-2.5 group-data-horizontal/tabs:after:bottom-0"
+          >
             Variables calculadas
           </TabsTrigger>
         </TabsList>

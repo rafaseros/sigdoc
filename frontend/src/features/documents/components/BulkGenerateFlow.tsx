@@ -35,6 +35,9 @@ interface BulkGenerateFlowProps {
   templateVersionId: string;
   templateName: string;
   variableCount: number;
+  /** Documents produced per Excel row (1 primary + related files). Defaults
+   * to 1 — versions without related files keep the original copy. */
+  documentsPerRow?: number;
 }
 
 const STEP_LABELS = [
@@ -48,6 +51,7 @@ export function BulkGenerateFlow({
   templateVersionId,
   templateName,
   variableCount,
+  documentsPerRow = 1,
 }: BulkGenerateFlowProps) {
   const [step, setStep] = useState(1);
   const [file, setFile] = useState<File | null>(null);
@@ -189,8 +193,10 @@ export function BulkGenerateFlow({
                 </h3>
                 <p className="mt-1 text-[13px] text-[var(--fg-3)]">
                   Archivo con {variableCount} columna
-                  {variableCount === 1 ? "" : "s"} — una por variable. Complete
-                  cada fila con los datos de un documento.
+                  {variableCount === 1 ? "" : "s"} — una por variable.{" "}
+                  {documentsPerRow > 1
+                    ? `Complete cada fila con un juego de datos; cada fila genera ${documentsPerRow} documentos (principal y relacionados).`
+                    : "Complete cada fila con los datos de un documento."}
                   {effectiveBulkLimit !== null && (
                     <>
                       {" "}

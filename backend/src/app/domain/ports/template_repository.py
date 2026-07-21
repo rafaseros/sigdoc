@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from uuid import UUID
 
-from app.domain.entities import Template, TemplateShare, TemplateVersion
+from app.domain.entities import Template, TemplateShare, TemplateVersion, TemplateVersionFile
 
 
 class TemplateRepository(ABC):
@@ -134,6 +134,35 @@ class TemplateRepository(ABC):
         self, version_id: UUID, variables_meta: list[dict]
     ) -> TemplateVersion:
         """Replace variables_meta for the given version and return the updated entity."""
+        ...
+
+    @abstractmethod
+    async def add_version_file(
+        self, file: TemplateVersionFile
+    ) -> TemplateVersionFile:
+        """Persist a related file row for a template version and return it."""
+        ...
+
+    @abstractmethod
+    async def get_version_file(
+        self, version_id: UUID, file_id: UUID
+    ) -> TemplateVersionFile | None:
+        """Return the related file for (version_id, file_id), or None when it
+        does not exist OR belongs to a different version (non-leaking)."""
+        ...
+
+    @abstractmethod
+    async def delete_version_file(self, version_id: UUID, file_id: UUID) -> None:
+        """Delete the related file row for (version_id, file_id)."""
+        ...
+
+    @abstractmethod
+    async def update_version_variables(
+        self, version_id: UUID, variables: list[str], variables_meta: list[dict]
+    ) -> TemplateVersion:
+        """Replace BOTH variables and variables_meta for the given version
+        (used to store the primary+related-files union) and return the
+        updated entity."""
         ...
 
     @abstractmethod

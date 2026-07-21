@@ -13,14 +13,41 @@ class FakeDocumentRepository(DocumentRepository):
         self._update_pdf_fields_calls: list[dict] = []  # call recorder for assertions
         # Maps template_version_id → template_id so list_paginated can filter by template_id
         self._version_to_template: dict[UUID, UUID] = {}
+        # Maps template_version_id → (template_name, version_number) so reads
+        # can enrich documents like the real repo's join does
+        self._version_info: dict[UUID, tuple[str | None, int | None]] = {}
 
-    def register_template_version(self, version_id: UUID, template_id: UUID) -> None:
-        """Register the template_id for a given version_id.
+    def register_template_version(
+        self,
+        version_id: UUID,
+        template_id: UUID,
+        template_name: str | None = None,
+        version_number: int | None = None,
+    ) -> None:
+        """Register the template info for a given version_id.
 
         Call this in test setup after seeding a template version so that
-        list_paginated can correctly filter documents by template_id.
+        list_paginated can correctly filter documents by template_id, and —
+        when template_name/version_number are given — so reads enrich
+        documents with template_id/template_name/template_version (mirrors
+        the real repository's read-time join).
         """
         self._version_to_template[version_id] = template_id
+        self._version_info[version_id] = (template_name, version_number)
+
+    def _enrich(self, doc: Document | None) -> Document | None:
+        """Fill missing enrichment fields from the registered version info."""
+        if doc is None:
+            return None
+        template_id = self._version_to_template.get(doc.template_version_id)
+        if template_id is not None and doc.template_id is None:
+            doc.template_id = template_id
+        name, number = self._version_info.get(doc.template_version_id, (None, None))
+        if name is not None and doc.template_name is None:
+            doc.template_name = name
+        if number is not None and doc.template_version is None:
+            doc.template_version = number
+        return doc
 
     async def create(self, document: Document) -> Document:
         # Simulate DB-assigned created_at so API responses pass schema validation
@@ -38,7 +65,7 @@ class FakeDocumentRepository(DocumentRepository):
         return documents
 
     async def get_by_id(self, document_id: UUID) -> Document | None:
-        return self._documents.get(document_id)
+        return self._enrich(self._documents.get(document_id))
 
     async def delete(self, document_id: UUID) -> None:
         self._documents.pop(document_id, None)
@@ -65,7 +92,7 @@ class FakeDocumentRepository(DocumentRepository):
         Matches documents where batch_id == batch_id AND tenant_id == tenant_id.
         """
         return [
-            d
+            self._enrich(d)
             for d in self._documents.values()
             if d.batch_id == batch_id and d.tenant_id == tenant_id
         ]
@@ -97,6 +124,6 @@ class FakeDocumentRepository(DocumentRepository):
 
         total = len(items)
         offset = (page - 1) * size
-        page_items = items[offset : offset + size]
+        page_items = [self._enrich(d) for d in items[offset : offset + size]]
 
         return page_items, total

@@ -13,6 +13,7 @@ from app.domain.exceptions import (
     DocumentNotFoundError,
     PdfConversionError,
     TemplateAccessDeniedError,
+    TemplateVersionFileNotFoundError,
     TemplateVersionNotFoundError,
     VariablesMismatchError,
 )
@@ -92,23 +93,25 @@ class DocumentService:
         role: str = "user",
     ) -> dict:
         """
-        Generate a single document from a template version:
+        Generate documents from a template version — the PRIMARY docx plus
+        EVERY related file of the version, all rendered with the SAME
+        resolved variable context:
         1. Fetch template version from DB
         2. Check user has access to the template
-        3. Download template .docx from MinIO
-        4. Render template with variables via docxtpl engine
-        5. Upload rendered document to MinIO
-        6. Create document record in DB
-        7. Return document with presigned download URL
-        """
-        # 0. Quota check (optional — skipped when quota_service is None)
-        if self._quota_service is not None and self._tier_id is not None:
-            await self._quota_service.check_document_quota(
-                tenant_id=uuid.UUID(tenant_id),
-                tier_id=self._tier_id,
-                additional=1,
-            )
+        3. Resolve computed variables ONCE
+        4. Render + upload DOCX (and PDF) for the primary and each related file
+        5. Create one document record per rendered file (primary first, then
+           related files by position)
+        6. Return {"documents": [Document, ...], "group_id": UUID | None}
 
+        group_id is None when the version has no related files (single-file
+        behavior unchanged); otherwise every document of this generation
+        shares one uuid4.
+
+        ATOMICITY: all-or-nothing across ALL files of the generation — any
+        render/upload/PDF failure deletes every MinIO object uploaded so far
+        and persists no DB rows.
+        """
         # 1. Get template version
         version = await self._tpl_repo.get_version_by_id(uuid.UUID(template_version_id))
         if not version:
@@ -122,84 +125,138 @@ class DocumentService:
         if not has_access:
             raise TemplateAccessDeniedError("No tenés acceso a esta plantilla")
 
+        # 2a. Resolve template name for the enrichment fields (single lookup —
+        # the FK is NOT NULL so the parent template always exists in prod).
+        template = await self._tpl_repo.get_by_id(version.template_id)
+        template_name = template.name if template is not None else ""
+
         # 2b. Resolve computed variables (server-authoritative) — AFTER
         # receiving the caller-supplied variables, BEFORE rendering, so both
-        # the rendered document and the persisted variables_snapshot below
-        # reflect the resolved value.
+        # the rendered documents and the persisted variables_snapshot below
+        # reflect the resolved value. Resolved ONCE and reused for EVERY file.
         variables = resolve_computed(version.variables_meta, variables)
 
-        # 2. Download template from MinIO
-        template_bytes = await self._storage.download_file(
-            bucket=self.TEMPLATES_BUCKET,
-            path=version.minio_path,
+        related_files = sorted(
+            list(getattr(version, "files", []) or []), key=lambda f: f.position
         )
 
-        # 3. Render with docxtpl
-        rendered_bytes = await self._engine.render(template_bytes, variables)
+        # 2c. Quota check (optional — skipped when quota_service is None).
+        # Runs AFTER the related files are known because this generation
+        # persists 1 + N documents (primary + every related file), and the
+        # quota must be charged for ALL of them before anything is uploaded.
+        if self._quota_service is not None and self._tier_id is not None:
+            await self._quota_service.check_document_quota(
+                tenant_id=uuid.UUID(tenant_id),
+                tier_id=self._tier_id,
+                additional=1 + len(related_files),
+            )
 
-        # 4. Upload rendered DOCX to MinIO
-        doc_id = uuid.uuid4()
-        # Build a filename from the first variable value or use doc_id
-        first_var = (
-            next(iter(variables.values()), str(doc_id)) if variables else str(doc_id)
-        )
+        group_id: uuid.UUID | None = uuid.uuid4() if related_files else None
+
+        # Base stem from the first variable value — the primary keeps the
+        # historical naming exactly; related files inject their label before
+        # the extension (spaces → underscores).
+        first_var = next(iter(variables.values()), "") if variables else ""
         safe_name = "".join(
             c for c in str(first_var) if c.isalnum() or c in " _-"
         ).strip()[:50]
-        docx_file_name = f"{safe_name}.docx" if safe_name else f"{doc_id}.docx"
 
-        docx_minio_path = f"{tenant_id}/{doc_id}/{docx_file_name}"
-        await self._storage.upload_file(
-            bucket=self.DOCUMENTS_BUCKET,
-            path=docx_minio_path,
-            data=rendered_bytes,
-            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        )
+        # (label, source template path) — primary first, then files by position
+        render_specs: list[tuple[str | None, str]] = [(None, version.minio_path)]
+        render_specs += [(f.label, f.minio_path) for f in related_files]
 
-        # 4b. Convert DOCX → PDF (ADR-PDF-03: atomic dual-format)
-        pdf_file_name: str | None = None
-        pdf_minio_path: str | None = None
+        uploaded_paths: list[str] = []
+        pending_documents: list[Document] = []
 
-        if self._pdf_converter is not None:
-            try:
-                pdf_bytes = await self._pdf_converter.convert(rendered_bytes)
-            except PdfConversionError:
-                # Atomic rollback: delete the DOCX we just uploaded (best-effort)
+        try:
+            for label, source_path in render_specs:
+                # 3. Download the source template from MinIO
+                template_bytes = await self._storage.download_file(
+                    bucket=self.TEMPLATES_BUCKET,
+                    path=source_path,
+                )
+
+                # 4. Render with docxtpl (same resolved context for every file)
+                rendered_bytes = await self._engine.render(template_bytes, variables)
+
+                doc_id = uuid.uuid4()
+                if label is None:
+                    docx_file_name = (
+                        f"{safe_name}.docx" if safe_name else f"{doc_id}.docx"
+                    )
+                else:
+                    stem = safe_name if safe_name else str(doc_id)
+                    safe_label = (
+                        "".join(c for c in label if c.isalnum() or c in " _-")
+                        .strip()
+                        .replace(" ", "_")
+                    )
+                    docx_file_name = f"{stem}_{safe_label or 'archivo'}.docx"
+
+                docx_minio_path = f"{tenant_id}/{doc_id}/{docx_file_name}"
+                await self._storage.upload_file(
+                    bucket=self.DOCUMENTS_BUCKET,
+                    path=docx_minio_path,
+                    data=rendered_bytes,
+                    content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                )
+                uploaded_paths.append(docx_minio_path)
+
+                # 4b. Convert DOCX → PDF (ADR-PDF-03: atomic dual-format)
+                pdf_file_name: str | None = None
+                pdf_minio_path: str | None = None
+
+                if self._pdf_converter is not None:
+                    pdf_bytes = await self._pdf_converter.convert(rendered_bytes)
+                    pdf_stem = (
+                        docx_file_name[:-5]
+                        if docx_file_name.endswith(".docx")
+                        else str(doc_id)
+                    )
+                    pdf_file_name = f"{pdf_stem}.pdf"
+                    pdf_minio_path = f"{tenant_id}/{doc_id}/{pdf_file_name}"
+                    await self._storage.upload_file(
+                        bucket=self.DOCUMENTS_BUCKET,
+                        path=pdf_minio_path,
+                        data=pdf_bytes,
+                        content_type="application/pdf",
+                    )
+                    uploaded_paths.append(pdf_minio_path)
+
+                # Build domain entity (not persisted until ALL files succeed)
+                pending_documents.append(
+                    Document(
+                        id=doc_id,
+                        tenant_id=uuid.UUID(tenant_id),
+                        template_version_id=uuid.UUID(template_version_id),
+                        docx_minio_path=docx_minio_path,
+                        docx_file_name=docx_file_name,
+                        pdf_file_name=pdf_file_name,
+                        pdf_minio_path=pdf_minio_path,
+                        generation_type="single",
+                        group_id=group_id,
+                        variables_snapshot=variables,
+                        created_by=uuid.UUID(created_by),
+                        status="completed",
+                        template_id=version.template_id,
+                        template_name=template_name,
+                        template_version=version.version,
+                    )
+                )
+        except Exception:
+            # Atomic rollback: delete EVERY object uploaded so far (best-effort)
+            for path in uploaded_paths:
                 try:
-                    await self._storage.delete_file(self.DOCUMENTS_BUCKET, docx_minio_path)
+                    await self._storage.delete_file(self.DOCUMENTS_BUCKET, path)
                 except Exception:
                     logger.warning(
-                        "Failed to delete orphan DOCX %s after PdfConversionError",
-                        docx_minio_path,
+                        "Failed to delete upload %s during single-generation rollback",
+                        path,
                     )
-                raise  # re-raise so caller sees PdfConversionError
+            raise  # re-raise so the caller sees the original error
 
-            # Upload PDF to MinIO
-            pdf_stem = docx_file_name[:-5] if docx_file_name.endswith(".docx") else str(doc_id)
-            pdf_file_name = f"{pdf_stem}.pdf"
-            pdf_minio_path = f"{tenant_id}/{doc_id}/{pdf_file_name}"
-            await self._storage.upload_file(
-                bucket=self.DOCUMENTS_BUCKET,
-                path=pdf_minio_path,
-                data=pdf_bytes,
-                content_type="application/pdf",
-            )
-
-        # 5. Create DB record (domain entity — repo handles ORM mapping)
-        document = Document(
-            id=doc_id,
-            tenant_id=uuid.UUID(tenant_id),
-            template_version_id=uuid.UUID(template_version_id),
-            docx_minio_path=docx_minio_path,
-            docx_file_name=docx_file_name,
-            pdf_file_name=pdf_file_name,
-            pdf_minio_path=pdf_minio_path,
-            generation_type="single",
-            variables_snapshot=variables,
-            created_by=uuid.UUID(created_by),
-            status="completed",
-        )
-        document = await self._doc_repo.create(document)
+        # 5. Create DB records (all files succeeded — repo enriches each row)
+        documents = [await self._doc_repo.create(d) for d in pending_documents]
 
         # 6. Record usage + audit (both optional for backward compat)
         user_uuid = uuid.UUID(created_by)
@@ -212,7 +269,7 @@ class DocumentService:
                 tenant_id=tenant_uuid,
                 template_id=template_uuid,
                 generation_type="single",
-                document_count=1,
+                document_count=len(documents),
             )
 
         if self._audit_service is not None:
@@ -220,25 +277,22 @@ class DocumentService:
             audit_details: dict = {}
             if self._pdf_converter is not None:
                 audit_details["formats_generated"] = ["docx", "pdf"]
+            if group_id is not None:
+                audit_details["document_count"] = len(documents)
+                audit_details["group_id"] = str(group_id)
             self._audit_service.log(
                 actor_id=user_uuid,
                 tenant_id=tenant_uuid,
                 action=AuditAction.DOCUMENT_GENERATE,
                 resource_type="document",
-                resource_id=document.id,
+                resource_id=documents[0].id,
                 details=audit_details if audit_details else None,
                 ip_address=self._ip_address,
             )
 
-        # 7. Get presigned download URL
-        download_url = await self._storage.get_presigned_url(
-            bucket=self.DOCUMENTS_BUCKET,
-            path=docx_minio_path,
-        )
-
         return {
-            "document": document,
-            "download_url": download_url,
+            "documents": documents,
+            "group_id": group_id,
         }
 
     async def preview(
@@ -248,12 +302,17 @@ class DocumentService:
         variables: dict[str, str],
         user_id: str,
         role: str = "user",
+        file_id: str | None = None,
     ) -> bytes:
         """
         Render a template with the CURRENT (possibly partial) variable
         values and return the converted PDF bytes directly. Nothing is
         persisted: no MinIO uploads, no Document row, no usage/audit
         tracking, no quota check.
+
+        When `file_id` is given, the RELATED file of the version is
+        previewed instead of the primary docx (same variable context;
+        watermark unchanged).
 
         Missing variables render as blanks — this is the default Jinja2
         Undefined behavior in docxtpl, so no extra handling is needed here.
@@ -263,6 +322,8 @@ class DocumentService:
 
         Raises:
             TemplateVersionNotFoundError: same as generate_single.
+            TemplateVersionFileNotFoundError: file_id doesn't exist OR belongs
+                to a different version.
             TemplateAccessDeniedError: same as generate_single.
             PdfConversionError: propagated from the converter, uncaught.
         """
@@ -284,10 +345,23 @@ class DocumentService:
         # partially-filled preview never crashes.
         variables = resolve_computed(version.variables_meta, variables)
 
+        # 2c. Optional related-file selection — preview that file's docx
+        # instead of the primary (must belong to this version).
+        source_path = version.minio_path
+        if file_id is not None:
+            file = await self._tpl_repo.get_version_file(
+                uuid.UUID(template_version_id), uuid.UUID(file_id)
+            )
+            if file is None:
+                raise TemplateVersionFileNotFoundError(
+                    f"Template version file {file_id} not found"
+                )
+            source_path = file.minio_path
+
         # 3. Download template from MinIO (read-only — no upload_file calls below)
         template_bytes = await self._storage.download_file(
             bucket=self.TEMPLATES_BUCKET,
-            path=version.minio_path,
+            path=source_path,
         )
 
         # 4. Render with the current (possibly partial) variables, verbatim
@@ -564,21 +638,6 @@ class DocumentService:
         import zipfile
         from io import BytesIO
 
-        # 0. Quota checks (optional — skipped when quota_service is None)
-        if self._quota_service is not None and self._tier_id is not None:
-            tenant_uuid = uuid.UUID(tenant_id)
-            await self._quota_service.check_document_quota(
-                tenant_id=tenant_uuid,
-                tier_id=self._tier_id,
-                additional=len(rows),
-            )
-            await self._quota_service.check_bulk_limit(
-                tenant_id=tenant_uuid,
-                tier_id=self._tier_id,
-                requested_count=len(rows),
-                user_bulk_override=self._user_bulk_override,
-            )
-
         version = await self._tpl_repo.get_version_by_id(
             uuid.UUID(template_version_id)
         )
@@ -593,11 +652,47 @@ class DocumentService:
         if not has_access:
             raise TemplateAccessDeniedError("No tenés acceso a esta plantilla")
 
+        # Related files of the version: downloaded ONCE (below), rendered for
+        # EVERY row with the same (resolved) row context as the primary.
+        related_files = sorted(
+            list(getattr(version, "files", []) or []), key=lambda f: f.position
+        )
+
+        # Quota checks (optional — skipped when quota_service is None). Run
+        # AFTER the related files are known: every row persists 1 + N
+        # documents (primary + related files), so the document quota must be
+        # charged rows × (1 + N) before anything is uploaded.
+        if self._quota_service is not None and self._tier_id is not None:
+            tenant_uuid = uuid.UUID(tenant_id)
+            await self._quota_service.check_document_quota(
+                tenant_id=tenant_uuid,
+                tier_id=self._tier_id,
+                additional=len(rows) * (1 + len(related_files)),
+            )
+            await self._quota_service.check_bulk_limit(
+                tenant_id=tenant_uuid,
+                tier_id=self._tier_id,
+                requested_count=len(rows),
+                user_bulk_override=self._user_bulk_override,
+            )
+
+        # Resolve template name ONCE for the enrichment fields on every row
+        template = await self._tpl_repo.get_by_id(version.template_id)
+        template_name = template.name if template is not None else ""
+
         # Download template ONCE — engine creates a fresh DocxTemplate per render
         template_bytes = await self._storage.download_file(
             bucket=self.TEMPLATES_BUCKET,
             path=version.minio_path,
         )
+
+        related_specs: list[tuple[str, bytes]] = []
+        for related in related_files:
+            related_bytes = await self._storage.download_file(
+                bucket=self.TEMPLATES_BUCKET,
+                path=related.minio_path,
+            )
+            related_specs.append((related.label, related_bytes))
 
         batch_id = uuid.uuid4()
         zip_buffer = BytesIO()
@@ -628,87 +723,117 @@ class DocumentService:
                             )
                     raise  # propagate — no DB rows persisted
 
-                # Render document (fresh DocxTemplate per render — handled by engine)
-                rendered_bytes = await self._engine.render(template_bytes, row_data)
-
-                # Generate filename from first variable value
+                # Generate the row's base filename from its first variable value
                 first_var = next(iter(row_data.values()), f"doc_{i + 1}")
                 safe_name = "".join(
                     c for c in str(first_var) if c.isalnum() or c in " _-"
                 ).strip()[:50]
-                docx_file_name = (
+                base_docx_file_name = (
                     f"{i + 1:03d}_{safe_name}.docx"
                     if safe_name
                     else f"{i + 1:03d}_document.docx"
                 )
 
-                zf.writestr(docx_file_name, rendered_bytes)
-
-                doc_id = uuid.uuid4()
-                docx_minio_path = f"{tenant_id}/{batch_id}/{docx_file_name}"
-
-                # Upload DOCX to MinIO
-                await self._storage.upload_file(
-                    bucket=self.DOCUMENTS_BUCKET,
-                    path=docx_minio_path,
-                    data=rendered_bytes,
-                    content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                # group_id shared PER ROW when the version has related files
+                row_group_id: uuid.UUID | None = (
+                    uuid.uuid4() if related_specs else None
                 )
-                uploaded_minio_paths.append(docx_minio_path)
 
-                # Convert DOCX → PDF (ADR-PDF-03 bulk: atomic, sequential)
-                pdf_file_name: str | None = None
-                pdf_minio_path: str | None = None
+                # Primary first, then related files by position — the label
+                # is injected before the extension for related files.
+                file_specs: list[tuple[str | None, bytes]] = [(None, template_bytes)]
+                file_specs += related_specs
 
-                if self._pdf_converter is not None:
-                    try:
-                        pdf_bytes = await self._pdf_converter.convert(rendered_bytes)
-                    except PdfConversionError:
-                        # Rollback: delete ALL uploaded files for this batch
-                        for path in uploaded_minio_paths:
-                            try:
-                                await self._storage.delete_file(
-                                    self.DOCUMENTS_BUCKET, path
-                                )
-                            except Exception:
-                                logger.warning(
-                                    "Failed to delete bulk upload %s during rollback",
-                                    path,
-                                )
-                        raise  # propagate — no DB rows persisted
+                for label, source_bytes in file_specs:
+                    # Render document (fresh DocxTemplate per render — engine)
+                    rendered_bytes = await self._engine.render(source_bytes, row_data)
 
-                    # Upload PDF to MinIO
-                    pdf_stem = (
-                        docx_file_name[:-5]
-                        if docx_file_name.endswith(".docx")
-                        else f"{doc_id}"
-                    )
-                    pdf_file_name = f"{pdf_stem}.pdf"
-                    pdf_minio_path = f"{tenant_id}/{batch_id}/{pdf_file_name}"
+                    if label is None:
+                        docx_file_name = base_docx_file_name
+                    else:
+                        safe_label = (
+                            "".join(c for c in label if c.isalnum() or c in " _-")
+                            .strip()
+                            .replace(" ", "_")
+                        )
+                        stem = (
+                            base_docx_file_name[:-5]
+                            if base_docx_file_name.endswith(".docx")
+                            else base_docx_file_name
+                        )
+                        docx_file_name = f"{stem}_{safe_label or 'archivo'}.docx"
+
+                    zf.writestr(docx_file_name, rendered_bytes)
+
+                    doc_id = uuid.uuid4()
+                    docx_minio_path = f"{tenant_id}/{batch_id}/{docx_file_name}"
+
+                    # Upload DOCX to MinIO
                     await self._storage.upload_file(
                         bucket=self.DOCUMENTS_BUCKET,
-                        path=pdf_minio_path,
-                        data=pdf_bytes,
-                        content_type="application/pdf",
+                        path=docx_minio_path,
+                        data=rendered_bytes,
+                        content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                     )
-                    uploaded_minio_paths.append(pdf_minio_path)
+                    uploaded_minio_paths.append(docx_minio_path)
 
-                # Build domain entity (not persisted until all rows succeed)
-                doc = Document(
-                    id=doc_id,
-                    tenant_id=uuid.UUID(tenant_id),
-                    template_version_id=uuid.UUID(template_version_id),
-                    docx_minio_path=docx_minio_path,
-                    docx_file_name=docx_file_name,
-                    pdf_file_name=pdf_file_name,
-                    pdf_minio_path=pdf_minio_path,
-                    generation_type="bulk",
-                    batch_id=batch_id,
-                    variables_snapshot=row_data,
-                    created_by=uuid.UUID(created_by),
-                    status="completed",
-                )
-                documents.append(doc)
+                    # Convert DOCX → PDF (ADR-PDF-03 bulk: atomic, sequential)
+                    pdf_file_name: str | None = None
+                    pdf_minio_path: str | None = None
+
+                    if self._pdf_converter is not None:
+                        try:
+                            pdf_bytes = await self._pdf_converter.convert(rendered_bytes)
+                        except PdfConversionError:
+                            # Rollback: delete ALL uploaded files for this batch
+                            for path in uploaded_minio_paths:
+                                try:
+                                    await self._storage.delete_file(
+                                        self.DOCUMENTS_BUCKET, path
+                                    )
+                                except Exception:
+                                    logger.warning(
+                                        "Failed to delete bulk upload %s during rollback",
+                                        path,
+                                    )
+                            raise  # propagate — no DB rows persisted
+
+                        # Upload PDF to MinIO
+                        pdf_stem = (
+                            docx_file_name[:-5]
+                            if docx_file_name.endswith(".docx")
+                            else f"{doc_id}"
+                        )
+                        pdf_file_name = f"{pdf_stem}.pdf"
+                        pdf_minio_path = f"{tenant_id}/{batch_id}/{pdf_file_name}"
+                        await self._storage.upload_file(
+                            bucket=self.DOCUMENTS_BUCKET,
+                            path=pdf_minio_path,
+                            data=pdf_bytes,
+                            content_type="application/pdf",
+                        )
+                        uploaded_minio_paths.append(pdf_minio_path)
+
+                    # Build domain entity (not persisted until all rows succeed)
+                    doc = Document(
+                        id=doc_id,
+                        tenant_id=uuid.UUID(tenant_id),
+                        template_version_id=uuid.UUID(template_version_id),
+                        docx_minio_path=docx_minio_path,
+                        docx_file_name=docx_file_name,
+                        pdf_file_name=pdf_file_name,
+                        pdf_minio_path=pdf_minio_path,
+                        generation_type="bulk",
+                        batch_id=batch_id,
+                        group_id=row_group_id,
+                        variables_snapshot=row_data,
+                        created_by=uuid.UUID(created_by),
+                        status="completed",
+                        template_id=version.template_id,
+                        template_name=template_name,
+                        template_version=version.version,
+                    )
+                    documents.append(doc)
 
         zip_buffer.seek(0)
         zip_bytes = zip_buffer.read()
@@ -843,11 +968,9 @@ class DocumentService:
             pdf_minio_path=pdf_minio_path,
         )
 
-        # The real repo returns a DocumentModel (ORM object); fake returns
-        # the updated domain Document. Phase 4 callers only need the
-        # pdf_minio_path string from the returned object — both ORM and
-        # domain entity expose this attribute with the same name, so the
-        # presentation layer works transparently with either type.
+        # Both the real repo and the fake return an updated domain Document
+        # (the real repo re-fetches with eager-loaded relationships so the
+        # template enrichment fields are populated too).
         return updated
 
     # ------------------------------------------------------------------

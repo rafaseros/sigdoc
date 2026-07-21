@@ -135,6 +135,7 @@ function BulkGeneratePage() {
         templateVersionId={versionId}
         templateName={template.name}
         variableCount={variables.length}
+        documentsPerRow={(version?.files.length ?? 0) + 1}
       />
     </div>
   );

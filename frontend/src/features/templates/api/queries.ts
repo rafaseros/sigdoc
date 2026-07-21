@@ -34,6 +34,17 @@ export interface VariableMeta {
   computed?: ComputedConfig;
 }
 
+/** A related docx attached to a template version — shares the version's
+ * variable set and is generated alongside the primary document. */
+export interface TemplateVersionFile {
+  id: string;
+  label: string;
+  variables: string[];
+  file_size: number;
+  position: number;
+  created_at: string;
+}
+
 export interface TemplateVersion {
   id: string;
   version: number;
@@ -41,6 +52,10 @@ export interface TemplateVersion {
   variables_meta: VariableMeta[];
   file_size: number;
   created_at: string;
+  /** Related files sorted by position; `[]` when the version has none.
+   * Version-level `variables`/`variables_meta` are always the UNION across
+   * the primary document and every related file. */
+  files: TemplateVersionFile[];
 }
 
 
@@ -155,6 +170,27 @@ export function useTemplateStructure(templateId: string, versionId: string) {
       return data;
     },
     enabled: !!templateId && !!versionId,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+/** Structure of a RELATED file of a version (same shape as the primary
+ * structure, `?file_id=` variant). Disabled until a `fileId` is chosen so
+ * versions without related files never fire the request. */
+export function useTemplateFileStructure(
+  templateId: string,
+  versionId: string,
+  fileId: string | null,
+) {
+  return useQuery({
+    queryKey: templateKeys.structure(templateId, versionId, fileId ?? undefined),
+    queryFn: async () => {
+      const { data } = await apiClient.get<TemplateStructure>(
+        `/templates/${templateId}/versions/${versionId}/structure?file_id=${encodeURIComponent(fileId ?? "")}`,
+      );
+      return data;
+    },
+    enabled: !!templateId && !!versionId && !!fileId,
     staleTime: 5 * 60 * 1000,
   });
 }

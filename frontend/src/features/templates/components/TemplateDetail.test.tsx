@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import TemplateDetail from "./TemplateDetail";
 import { apiClient } from "@/shared/lib/api-client";
-import type { Template } from "../api/queries";
+import type { Template, TemplateVersionFile } from "../api/queries";
 
 vi.mock("@/shared/lib/api-client", () => ({
   apiClient: {
@@ -40,6 +40,7 @@ const template: Template = {
       variables_meta: [{ name: "monto", contexts: [], type: "decimal" }],
       file_size: 1024,
       created_at: "2026-01-01T00:00:00Z",
+      files: [],
     },
   ],
   created_at: "2026-01-01T00:00:00Z",
@@ -279,5 +280,247 @@ describe("TemplateDetail — action row reorganization", () => {
     expect(
       screen.queryByRole("menuitem", { name: /eliminar/i }),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("TemplateDetail — per-version template download", () => {
+  const createObjectURLMock = vi.fn(() => "blob:mock-url");
+  const revokeObjectURLMock = vi.fn();
+
+  beforeEach(() => {
+    vi.mocked(apiClient.get).mockReset();
+    mockDetailResponses();
+    createObjectURLMock.mockClear();
+    revokeObjectURLMock.mockClear();
+    URL.createObjectURL =
+      createObjectURLMock as unknown as typeof URL.createObjectURL;
+    URL.revokeObjectURL = revokeObjectURLMock;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("renders a download button per version row in the Versiones tab", async () => {
+    const user = userEvent.setup();
+    renderDetail();
+
+    await waitFor(() =>
+      expect(screen.getByText("Contrato de Servicios")).toBeInTheDocument(),
+    );
+
+    await user.click(screen.getByRole("button", { name: /^versiones/i }));
+
+    expect(
+      screen.getByRole("button", { name: /descargar plantilla v1/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("fetches the version docx as a blob through the api client on click", async () => {
+    const user = userEvent.setup();
+    renderDetail();
+
+    await waitFor(() =>
+      expect(screen.getByText("Contrato de Servicios")).toBeInTheDocument(),
+    );
+
+    await user.click(screen.getByRole("button", { name: /^versiones/i }));
+    await user.click(
+      screen.getByRole("button", { name: /descargar plantilla v1/i }),
+    );
+
+    await waitFor(() =>
+      expect(apiClient.get).toHaveBeenCalledWith(
+        "/templates/template-1/versions/version-1/download",
+        { responseType: "blob" },
+      ),
+    );
+  });
+
+  it("shows the download button for a shared (non-owner) viewer", async () => {
+    const viewerTemplate: Template = {
+      ...template,
+      access_type: "shared",
+      is_owner: false,
+    };
+    mockDetailResponses(viewerTemplate);
+    const user = userEvent.setup();
+    renderDetail();
+
+    await waitFor(() =>
+      expect(screen.getByText("Contrato de Servicios")).toBeInTheDocument(),
+    );
+
+    await user.click(screen.getByRole("button", { name: /^versiones/i }));
+
+    expect(
+      screen.getByRole("button", { name: /descargar plantilla v1/i }),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("TemplateDetail — related documents per version", () => {
+  const relatedFile: TemplateVersionFile = {
+    id: "file-1",
+    label: "Recibo de pago",
+    variables: ["monto"],
+    file_size: 2048,
+    position: 0,
+    created_at: "2026-01-02T00:00:00Z",
+  };
+
+  const oldVersionFile: TemplateVersionFile = {
+    ...relatedFile,
+    id: "file-old",
+    label: "Recibo antiguo",
+  };
+
+  /** v1 (old, with a file) + v2 (current, with a file). */
+  const twoVersionTemplate: Template = {
+    ...template,
+    current_version: 2,
+    versions: [
+      { ...template.versions[0], files: [oldVersionFile] },
+      {
+        ...template.versions[0],
+        id: "version-2",
+        version: 2,
+        files: [relatedFile],
+      },
+    ],
+  };
+
+  const createObjectURLMock = vi.fn(() => "blob:mock-url");
+  const revokeObjectURLMock = vi.fn();
+
+  beforeEach(() => {
+    vi.mocked(apiClient.get).mockReset();
+    createObjectURLMock.mockClear();
+    revokeObjectURLMock.mockClear();
+    URL.createObjectURL =
+      createObjectURLMock as unknown as typeof URL.createObjectURL;
+    URL.revokeObjectURL = revokeObjectURLMock;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("renders the related-files sublist under a version that has files", async () => {
+    mockDetailResponses(twoVersionTemplate);
+    const user = userEvent.setup();
+    renderDetail();
+
+    await waitFor(() =>
+      expect(screen.getByText("Contrato de Servicios")).toBeInTheDocument(),
+    );
+    await user.click(screen.getByRole("button", { name: /^versiones/i }));
+
+    expect(screen.getByText("Recibo de pago")).toBeInTheDocument();
+    expect(screen.getByText("Recibo antiguo")).toBeInTheDocument();
+    // Variable count + file size meta line.
+    expect(screen.getAllByText(/1 variable · 2\.0 KB/)).toHaveLength(2);
+  });
+
+  it("shows 'Agregar documento relacionado' only on the current version row, for the owner", async () => {
+    mockDetailResponses(twoVersionTemplate);
+    const user = userEvent.setup();
+    renderDetail();
+
+    await waitFor(() =>
+      expect(screen.getByText("Contrato de Servicios")).toBeInTheDocument(),
+    );
+    await user.click(screen.getByRole("button", { name: /^versiones/i }));
+
+    // Exactly ONE attach button — the current (v2) row only.
+    expect(
+      screen.getAllByRole("button", { name: /agregar documento relacionado/i }),
+    ).toHaveLength(1);
+  });
+
+  it("hides the attach button for a shared (non-owner) viewer", async () => {
+    mockDetailResponses({
+      ...twoVersionTemplate,
+      access_type: "shared",
+      is_owner: false,
+    });
+    const user = userEvent.setup();
+    renderDetail();
+
+    await waitFor(() =>
+      expect(screen.getByText("Contrato de Servicios")).toBeInTheDocument(),
+    );
+    await user.click(screen.getByRole("button", { name: /^versiones/i }));
+
+    expect(
+      screen.queryByRole("button", { name: /agregar documento relacionado/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows the remove button only on the current version's files for the owner, hides it for non-owners", async () => {
+    mockDetailResponses(twoVersionTemplate);
+    const user = userEvent.setup();
+    const { unmount } = renderDetail();
+
+    await waitFor(() =>
+      expect(screen.getByText("Contrato de Servicios")).toBeInTheDocument(),
+    );
+    await user.click(screen.getByRole("button", { name: /^versiones/i }));
+
+    // Both versions carry a file, but only the CURRENT version's file is
+    // removable — exactly one remove button.
+    const removeButtons = screen.getAllByRole("button", {
+      name: /eliminar documento relacionado/i,
+    });
+    expect(removeButtons).toHaveLength(1);
+    expect(removeButtons[0]).toHaveAccessibleName(
+      /eliminar documento relacionado recibo de pago/i,
+    );
+
+    unmount();
+
+    // Non-owner viewer: no remove buttons at all.
+    mockDetailResponses({
+      ...twoVersionTemplate,
+      access_type: "shared",
+      is_owner: false,
+    });
+    renderDetail();
+    await waitFor(() =>
+      expect(screen.getByText("Contrato de Servicios")).toBeInTheDocument(),
+    );
+    await user.click(screen.getByRole("button", { name: /^versiones/i }));
+
+    expect(screen.getByText("Recibo de pago")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /eliminar documento relacionado/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("downloads a related file as a blob through the api client", async () => {
+    const singleVersionWithFile: Template = {
+      ...template,
+      versions: [{ ...template.versions[0], files: [relatedFile] }],
+    };
+    mockDetailResponses(singleVersionWithFile);
+    const user = userEvent.setup();
+    renderDetail();
+
+    await waitFor(() =>
+      expect(screen.getByText("Contrato de Servicios")).toBeInTheDocument(),
+    );
+    await user.click(screen.getByRole("button", { name: /^versiones/i }));
+    await user.click(
+      screen.getByRole("button", {
+        name: /descargar documento relacionado recibo de pago/i,
+      }),
+    );
+
+    await waitFor(() =>
+      expect(apiClient.get).toHaveBeenCalledWith(
+        "/templates/template-1/versions/version-1/files/file-1/download",
+        { responseType: "blob" },
+      ),
+    );
   });
 });

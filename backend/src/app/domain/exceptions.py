@@ -10,6 +10,15 @@ class TemplateVersionNotFoundError(DomainError):
     """Template version not found."""
 
 
+class TemplateVersionFileNotFoundError(DomainError):
+    """Related file not found, or does not belong to the given template version.
+
+    Never distinguishes between "does not exist" and "belongs to a different
+    version" — the 404 never leaks the existence of a file under a foreign
+    version_id (mirrors TemplatePresetNotFoundError).
+    """
+
+
 class DocumentNotFoundError(DomainError):
     """Document not found."""
 
@@ -115,6 +124,30 @@ class ComputedVariableError(DomainError):
     out of the supported domain for the configured function (e.g.
     number_to_words with a negative or too-large source).
     """
+
+
+class InvalidVariableMappingError(DomainError):
+    """A text-to-variable mapping list is structurally invalid.
+
+    Raised by template engines before rewriting an example document when the
+    mappings are empty, a text is blank, a variable name is not lowercase
+    snake_case, or two mappings share the same exact text.
+    """
+
+
+class MappingTextNotFoundError(DomainError):
+    """One or more mapping texts were not found anywhere in the example document.
+
+    Carries `missing_texts` (every text that had zero occurrences, in the
+    original mapping order) so the API layer can return a 422 listing them all.
+    """
+
+    def __init__(self, missing_texts: list[str]) -> None:
+        joined = ", ".join(f"'{t}'" for t in missing_texts)
+        super().__init__(
+            f"Los siguientes textos no se encontraron en el documento: {joined}"
+        )
+        self.missing_texts = list(missing_texts)
 
 
 class QuotaExceededError(DomainError):

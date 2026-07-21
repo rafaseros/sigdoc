@@ -12,6 +12,9 @@ from app.domain.services.permissions import can_view_all_templates
 from app.infrastructure.persistence.models.template import TemplateModel
 from app.infrastructure.persistence.models.template_share import TemplateShareModel
 from app.infrastructure.persistence.models.template_version import TemplateVersionModel
+from app.infrastructure.persistence.models.template_version_file import (
+    TemplateVersionFileModel,
+)
 
 
 class SQLAlchemyTemplateRepository(TemplateRepositoryPort):
@@ -437,6 +440,67 @@ class SQLAlchemyTemplateRepository(TemplateRepositoryPort):
         result = await self._session.execute(fetch_stmt)
         return result.scalar_one()
 
+    async def add_version_file(self, file) -> TemplateVersionFileModel:
+        """Persist a related file row for a template version and return it."""
+        from app.domain.entities import TemplateVersionFile as DomainTemplateVersionFile
+
+        if isinstance(file, DomainTemplateVersionFile):
+            orm_file = TemplateVersionFileModel(
+                id=file.id,
+                tenant_id=file.tenant_id,
+                version_id=file.version_id,
+                label=file.label,
+                minio_path=file.minio_path,
+                variables=file.variables,
+                file_size=file.file_size,
+                position=file.position,
+            )
+        else:
+            orm_file = file
+
+        self._session.add(orm_file)
+        await self._session.flush()
+        return orm_file
+
+    async def get_version_file(
+        self, version_id: UUID, file_id: UUID
+    ) -> TemplateVersionFileModel | None:
+        """Return the related file for (version_id, file_id), or None."""
+        stmt = select(TemplateVersionFileModel).where(
+            TemplateVersionFileModel.id == file_id,
+            TemplateVersionFileModel.version_id == version_id,
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def delete_version_file(self, version_id: UUID, file_id: UUID) -> None:
+        """Delete the related file row for (version_id, file_id)."""
+        stmt = delete(TemplateVersionFileModel).where(
+            TemplateVersionFileModel.id == file_id,
+            TemplateVersionFileModel.version_id == version_id,
+        )
+        await self._session.execute(stmt)
+        await self._session.flush()
+
+    async def update_version_variables(
+        self, version_id: UUID, variables: list[str], variables_meta: list[dict]
+    ) -> TemplateVersionModel:
+        """Replace variables AND variables_meta for the given version."""
+        from sqlalchemy import update as sa_update
+
+        stmt = (
+            sa_update(TemplateVersionModel)
+            .where(TemplateVersionModel.id == version_id)
+            .values(variables=variables, variables_meta=variables_meta)
+        )
+        await self._session.execute(stmt)
+        await self._session.flush()
+
+        fetch_stmt = select(TemplateVersionModel).where(
+            TemplateVersionModel.id == version_id
+        )
+        result = await self._session.execute(fetch_stmt)
+        return result.scalar_one()
 
     async def count_by_owner(self, user_id: UUID) -> int:
         """Return the number of templates owned by the given user."""

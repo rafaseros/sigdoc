@@ -7,7 +7,7 @@ interface GenerateRequest {
   variables: Record<string, string>;
 }
 
-interface GenerateResponse {
+export interface GeneratedDocument {
   id: string;
   template_version_id: string;
   docx_file_name: string;
@@ -17,6 +17,16 @@ interface GenerateResponse {
   download_url: string | null;
   variables_snapshot: Record<string, string>;
   created_at: string;
+  group_id: string | null;
+}
+
+/** One generate call fills the variables once and produces the primary
+ * document plus every related file of the version. `documents[0]` is always
+ * the primary; related documents follow in position order. `group_id` is
+ * `null` for single-file versions (exactly one document). */
+export interface GenerateResponse {
+  documents: GeneratedDocument[];
+  group_id: string | null;
 }
 
 export function useGenerateDocument() {
@@ -36,6 +46,9 @@ export function useGenerateDocument() {
 interface PreviewRequest {
   template_version_id: string;
   variables: Record<string, string>;
+  /** Previews that related file instead of the primary document. Omitted
+   * (not `null`) when the primary is being previewed. */
+  file_id?: string;
 }
 
 export function usePreviewDocument() {

@@ -16,6 +16,15 @@ class Document:
       - docx_file_name / docx_minio_path: the generated Word document
       - pdf_file_name / pdf_minio_path: the generated PDF (nullable; NULL
         means the row predates Phase 2 and needs lazy backfill via ensure_pdf)
+
+    Enrichment fields (read model):
+      - template_id / template_name / template_version describe the template
+        version that produced this document (template_version is the human
+        version number, not the version row id). They are populated by
+        repositories via the template_versions → templates join (and by the
+        service at generation time) so API responses can always emit concrete
+        values. None only means "not enriched yet" — the documents table FK
+        is NOT NULL, so the join always resolves.
     """
 
     id: UUID
@@ -29,6 +38,13 @@ class Document:
     pdf_file_name: str | None = None
     pdf_minio_path: str | None = None
     batch_id: UUID | None = None
+    # Documents generated together from one multi-file generation share a
+    # group_id (None when the version had no related files).
+    group_id: UUID | None = None
     status: str = "completed"  # "completed" or "failed"
     error_message: str | None = None
     created_at: datetime | None = None
+    # Enrichment (see docstring)
+    template_id: UUID | None = None
+    template_name: str | None = None
+    template_version: int | None = None

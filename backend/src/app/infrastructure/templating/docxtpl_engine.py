@@ -7,7 +7,16 @@ import tempfile
 from docx import Document
 from docxtpl import DocxTemplate
 
+from app.domain.exceptions import (
+    InvalidVariableMappingError,
+    MappingTextNotFoundError,
+)
 from app.domain.ports.template_engine import TemplateEngine
+
+# Lowercase snake_case — the only variable-name shape validate() accepts
+# without errors, enforced here as well so a rewritten example can never
+# produce an invalid template.
+_VARIABLE_NAME_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
 
 
 def _normalize_paragraph(paragraph: str) -> str:
@@ -521,6 +530,187 @@ class DocxTemplateEngine(TemplateEngine):
                 os.unlink(tmp_path)
 
         return await asyncio.to_thread(_extract, file_bytes)
+
+    async def apply_variable_mappings(
+        self, file_bytes: bytes, mappings: list[dict]
+    ) -> bytes:
+        """
+        Replace literal text spans with {{ placeholder }} markers, preserving
+        Word formatting (template-from-example rewrite).
+
+        Strategy (formatting is sacred):
+        - Paragraphs with no match are never touched.
+        - Match inside a single run → split that run's text in place (the
+          placeholder lives in the same run, so it inherits its formatting).
+        - Match spanning runs → surgical rewrite of ONLY the affected runs:
+          the prefix + placeholder stay in the FIRST matched run (placeholder
+          inherits its formatting), middle runs are emptied, the suffix stays
+          in the LAST matched run with its own formatting. No runs are created
+          or removed, so every preserved segment keeps its original rPr.
+        - Placeholder spans are tracked as protected intervals so later
+          (shorter) mappings can never match inside an inserted placeholder.
+
+        Traversal mirrors auto_fix: body paragraphs, body table cells, header
+        and footer paragraphs, header/footer table cells (nested tables are
+        intentionally not recursed — same rule as auto_fix/extract_structure).
+        """
+        ordered = self._validate_mappings(mappings)
+
+        def _find_unprotected(
+            haystack: str, needle: str, protected: list[tuple[int, int]]
+        ) -> int | None:
+            """First index of `needle` whose span overlaps no protected interval."""
+            idx = haystack.find(needle)
+            while idx != -1:
+                end = idx + len(needle)
+                if not any(p_start < end and idx < p_end for p_start, p_end in protected):
+                    return idx
+                idx = haystack.find(needle, idx + 1)
+            return None
+
+        def _replace_in_paragraph(para, found: set[str]) -> None:
+            """Apply every mapping to one paragraph via in-place run surgery."""
+            if not para.runs:
+                return
+
+            protected: list[tuple[int, int]] = []
+            for mapping in ordered:
+                needle = mapping["text"]
+                placeholder = "{{ " + mapping["variable"] + " }}"
+                while True:
+                    runs = para.runs
+                    full_text = "".join(r.text or "" for r in runs)
+                    start = _find_unprotected(full_text, needle, protected)
+                    if start is None:
+                        break
+                    end = start + len(needle)
+
+                    # Locate the runs covered by [start, end)
+                    bounds: list[tuple[object, int, int]] = []
+                    pos = 0
+                    for r in runs:
+                        length = len(r.text or "")
+                        bounds.append((r, pos, pos + length))
+                        pos += length
+                    affected = [
+                        (r, r_start, r_end)
+                        for r, r_start, r_end in bounds
+                        if r_start < end and start < r_end
+                    ]
+
+                    first_run, f_start, _ = affected[0]
+                    last_run, l_start, _ = affected[-1]
+                    if len(affected) == 1:
+                        # Single run: split its text in place
+                        text = first_run.text or ""
+                        first_run.text = (
+                            text[: start - f_start]
+                            + placeholder
+                            + text[end - f_start :]
+                        )
+                    else:
+                        # Spanning runs: placeholder inherits the FIRST run's
+                        # formatting; middle runs are emptied; the suffix keeps
+                        # the LAST run's formatting.
+                        first_run.text = (first_run.text or "")[
+                            : start - f_start
+                        ] + placeholder
+                        for r, _, _ in affected[1:-1]:
+                            r.text = ""
+                        last_run.text = (last_run.text or "")[end - l_start :]
+
+                    found.add(needle)
+
+                    # Shift protected intervals after the match and protect the
+                    # newly inserted placeholder from later (shorter) matches.
+                    delta = len(placeholder) - len(needle)
+                    protected = [
+                        (p_start, p_end) if p_end <= start else (p_start + delta, p_end + delta)
+                        for p_start, p_end in protected
+                    ]
+                    protected.append((start, start + len(placeholder)))
+
+        def _apply_sync(data: bytes) -> bytes:
+            with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp:
+                tmp.write(data)
+                tmp_path = tmp.name
+
+            try:
+                doc = Document(tmp_path)
+
+                # Same traversal as auto_fix: body, headers, footers, tables
+                all_paragraphs = list(doc.paragraphs)
+                for section in doc.sections:
+                    if section.header:
+                        all_paragraphs.extend(section.header.paragraphs)
+                    if section.footer:
+                        all_paragraphs.extend(section.footer.paragraphs)
+                for table in doc.tables:
+                    for row in table.rows:
+                        for cell in row.cells:
+                            all_paragraphs.extend(cell.paragraphs)
+                for section in doc.sections:
+                    if section.header:
+                        for table in section.header.tables:
+                            for row in table.rows:
+                                for cell in row.cells:
+                                    all_paragraphs.extend(cell.paragraphs)
+                    if section.footer:
+                        for table in section.footer.tables:
+                            for row in table.rows:
+                                for cell in row.cells:
+                                    all_paragraphs.extend(cell.paragraphs)
+
+                found: set[str] = set()
+                for para in all_paragraphs:
+                    _replace_in_paragraph(para, found)
+
+                missing = [m["text"] for m in mappings if m["text"] not in found]
+                if missing:
+                    raise MappingTextNotFoundError(missing)
+
+                output = io.BytesIO()
+                doc.save(output)
+                output.seek(0)
+                return output.read()
+            finally:
+                os.unlink(tmp_path)
+
+        return await asyncio.to_thread(_apply_sync, file_bytes)
+
+    @staticmethod
+    def _validate_mappings(mappings: list[dict]) -> list[dict]:
+        """Validate mapping items and return them ordered longest-text-first.
+
+        Raises InvalidVariableMappingError on empty mappings, blank text,
+        invalid variable name, or duplicated text. The same variable name for
+        two different texts is explicitly allowed.
+        """
+        if not mappings:
+            raise InvalidVariableMappingError(
+                "Debe indicar al menos un mapeo de texto a variable"
+            )
+
+        seen_texts: set[str] = set()
+        for mapping in mappings:
+            text = mapping.get("text")
+            variable = mapping.get("variable")
+            if not isinstance(text, str) or not text.strip():
+                raise InvalidVariableMappingError(
+                    "Cada mapeo debe incluir un texto no vacío"
+                )
+            if not isinstance(variable, str) or not _VARIABLE_NAME_RE.match(variable):
+                raise InvalidVariableMappingError(
+                    f"Nombre de variable inválido: '{variable}'. "
+                    "Use minúsculas snake_case (ej: nombre_cliente)"
+                )
+            if text in seen_texts:
+                raise InvalidVariableMappingError(
+                    f"Texto duplicado en los mapeos: '{text}'"
+                )
+            seen_texts.add(text)
+
+        return sorted(mappings, key=lambda m: len(m["text"]), reverse=True)
 
     async def auto_fix(self, file_bytes: bytes) -> bytes:
         """

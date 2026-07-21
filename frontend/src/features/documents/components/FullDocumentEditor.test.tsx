@@ -13,8 +13,15 @@ import { FullDocumentEditor } from "./FullDocumentEditor";
 import { apiClient } from "@/shared/lib/api-client";
 import type {
   TemplateStructure,
+  TemplateVersionFile,
   VariableMeta,
 } from "@/features/templates/api/queries";
+
+// DownloadButton (rendered after a successful generate) reads the current
+// role via useAuth — provide a stub non-admin user.
+vi.mock("@/shared/lib/auth", () => ({
+  useAuth: () => ({ user: { role: "user" } }),
+}));
 
 // The "Vista previa" flow (Feature C) hits POST /documents/preview via the
 // shared apiClient — mock it at the module boundary so no live request is
@@ -144,7 +151,12 @@ function createDeferred<T>() {
   return { promise, resolve, reject };
 }
 
-function renderEditor(overrides: { variablesMeta?: VariableMeta[] } = {}) {
+function renderEditor(
+  overrides: {
+    variablesMeta?: VariableMeta[];
+    files?: TemplateVersionFile[];
+  } = {},
+) {
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
@@ -159,6 +171,7 @@ function renderEditor(overrides: { variablesMeta?: VariableMeta[] } = {}) {
         templateName="Test Template"
         variablesMeta={overrides.variablesMeta ?? variablesMeta}
         structure={structure}
+        files={overrides.files ?? []}
       />
     </QueryClientProvider>,
   );
@@ -848,6 +861,245 @@ describe("FullDocumentEditor — preset discovery hint", () => {
     await waitFor(() =>
       expect(screen.queryByText(hintText)).not.toBeInTheDocument(),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Related-file tabs — a version with one related file ("Recibo de pago")
+// sharing the primary's variable set.
+// ---------------------------------------------------------------------------
+
+const relatedFiles: TemplateVersionFile[] = [
+  {
+    id: "file-1",
+    label: "Recibo de pago",
+    variables: ["company_name"],
+    file_size: 1000,
+    position: 0,
+    created_at: "2026-01-01T00:00:00Z",
+  },
+];
+
+const relatedStructure: TemplateStructure = {
+  headers: [],
+  footers: [],
+  body: [
+    {
+      kind: "paragraph",
+      level: 0,
+      spans: [
+        { text: "Recibo para ", variable: null },
+        { text: "{{ company_name }}", variable: "company_name" },
+      ],
+      rows: [],
+    },
+  ],
+};
+
+describe("FullDocumentEditor — related-file tabs", () => {
+  beforeEach(() => {
+    vi.mocked(apiClient.get).mockReset();
+    vi.mocked(apiClient.get).mockImplementation(async (url: string) => {
+      if (url.includes("/structure")) {
+        return { data: relatedStructure };
+      }
+      return { data: { presets: [] } };
+    });
+    vi.mocked(apiClient.post).mockReset();
+    vi.mocked(apiClient.post).mockResolvedValue({
+      data: new Blob(["pdf-bytes"], { type: "application/pdf" }),
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("renders no tab bar when the version has no related files", () => {
+    renderEditor();
+    expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+  });
+
+  it("renders a 'Principal' tab plus one tab per file label, with Principal active", () => {
+    renderEditor({ files: relatedFiles });
+
+    const primaryTab = screen.getByRole("tab", { name: "Principal" });
+    expect(primaryTab).toHaveAttribute("aria-selected", "true");
+    expect(
+      screen.getByRole("tab", { name: "Recibo de pago" }),
+    ).toBeInTheDocument();
+  });
+
+  it("switching to a related tab fetches that file's structure and swaps the document surface", async () => {
+    const user = userEvent.setup();
+    renderEditor({ files: relatedFiles });
+
+    // Primary structure visible, related one absent.
+    expect(screen.getByText("Contract summary")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "Recibo de pago" }));
+
+    expect(await screen.findByText(/Recibo para/)).toBeInTheDocument();
+    expect(apiClient.get).toHaveBeenCalledWith(
+      "/templates/template-1/versions/version-1/structure?file_id=file-1",
+    );
+    expect(screen.queryByText("Contract summary")).not.toBeInTheDocument();
+
+    // Back to the primary — its structure (prop) renders again, no refetch.
+    await user.click(screen.getByRole("tab", { name: "Principal" }));
+    expect(screen.getByText("Contract summary")).toBeInTheDocument();
+    expect(screen.queryByText(/Recibo para/)).not.toBeInTheDocument();
+  });
+
+  it("keeps the variables panel GLOBAL: a value committed on the primary tab shows filled on the related tab", async () => {
+    const user = userEvent.setup();
+    renderEditor({ files: relatedFiles });
+
+    const pills = screen.getAllByText("{{ company_name }}");
+    await user.click(pills[0]);
+    await user.type(screen.getByRole("textbox"), "Acme Corp");
+    await user.keyboard("{Enter}");
+    await user.keyboard("{Escape}");
+
+    await user.click(screen.getByRole("tab", { name: "Recibo de pago" }));
+    await screen.findByText(/Recibo para/);
+
+    // The related file's pill renders the shared committed value too.
+    expect(screen.getAllByText("Acme Corp").length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("preview sends file_id when a related tab is active, and omits it on the primary tab", async () => {
+    const user = userEvent.setup();
+    renderEditor({ files: relatedFiles });
+
+    await user.click(screen.getByRole("tab", { name: "Recibo de pago" }));
+    await screen.findByText(/Recibo para/);
+
+    await user.click(screen.getByRole("button", { name: /vista previa/i }));
+    expect(apiClient.post).toHaveBeenCalledWith(
+      "/documents/preview",
+      {
+        template_version_id: "version-1",
+        variables: {},
+        file_id: "file-1",
+      },
+      { responseType: "blob" },
+    );
+
+    // Close the dialog, switch back to the primary and preview again — the
+    // payload must NOT carry file_id.
+    await user.click(screen.getByRole("button", { name: /close/i }));
+    await user.click(screen.getByRole("tab", { name: "Principal" }));
+    await user.click(screen.getByRole("button", { name: /vista previa/i }));
+    expect(vi.mocked(apiClient.post).mock.calls[1][1]).toEqual({
+      template_version_id: "version-1",
+      variables: {},
+    });
+  });
+});
+
+describe("FullDocumentEditor — multi-document generate response", () => {
+  beforeEach(() => {
+    vi.mocked(apiClient.post).mockReset();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("lists every generated document (primary first) with a download button and toasts the plural copy", async () => {
+    vi.mocked(apiClient.post).mockResolvedValue({
+      data: {
+        documents: [
+          {
+            id: "doc-1",
+            template_version_id: "version-1",
+            docx_file_name: "contrato_acme.docx",
+            pdf_file_name: null,
+            generation_type: "single",
+            status: "completed",
+            download_url: null,
+            variables_snapshot: { amount: "100" },
+            created_at: "2026-01-01T00:00:00Z",
+            group_id: "group-1",
+          },
+          {
+            id: "doc-2",
+            template_version_id: "version-1",
+            docx_file_name: "contrato_acme_Recibo_de_pago.docx",
+            pdf_file_name: null,
+            generation_type: "single",
+            status: "completed",
+            download_url: null,
+            variables_snapshot: { amount: "100" },
+            created_at: "2026-01-01T00:00:00Z",
+            group_id: "group-1",
+          },
+        ],
+        group_id: "group-1",
+      },
+    });
+    const user = userEvent.setup();
+    renderComputedEditor();
+
+    // Fill the single editable variable, then generate.
+    await user.click(screen.getByText("{{ amount }}"));
+    await user.type(screen.getByRole("textbox"), "100");
+    await user.keyboard("{Enter}");
+    await user.click(
+      screen.getByRole("button", { name: /generar documento/i }),
+    );
+
+    expect(await screen.findByText("2 documentos generados")).toBeInTheDocument();
+    expect(toastSuccessMock).toHaveBeenCalledWith("2 documentos generados");
+
+    const card = screen.getByTestId("generated-documents-card");
+    expect(within(card).getByText("contrato_acme.docx")).toBeInTheDocument();
+    expect(
+      within(card).getByText("contrato_acme_Recibo_de_pago.docx"),
+    ).toBeInTheDocument();
+    expect(
+      within(card).getAllByRole("button", { name: /descargar pdf/i }),
+    ).toHaveLength(2);
+  });
+
+  it("keeps the single-document flow unchanged: singular toast, download button in the action bar, no card", async () => {
+    vi.mocked(apiClient.post).mockResolvedValue({
+      data: {
+        documents: [
+          {
+            id: "doc-1",
+            template_version_id: "version-1",
+            docx_file_name: "contrato_acme.docx",
+            pdf_file_name: null,
+            generation_type: "single",
+            status: "completed",
+            download_url: null,
+            variables_snapshot: { amount: "100" },
+            created_at: "2026-01-01T00:00:00Z",
+            group_id: null,
+          },
+        ],
+        group_id: null,
+      },
+    });
+    const user = userEvent.setup();
+    renderComputedEditor();
+
+    await user.click(screen.getByText("{{ amount }}"));
+    await user.type(screen.getByRole("textbox"), "100");
+    await user.keyboard("{Enter}");
+    await user.click(
+      screen.getByRole("button", { name: /generar documento/i }),
+    );
+
+    expect(
+      await screen.findByRole("button", { name: /descargar pdf/i }),
+    ).toBeInTheDocument();
+    expect(toastSuccessMock).toHaveBeenCalledWith("Documento generado");
+    expect(
+      screen.queryByTestId("generated-documents-card"),
+    ).not.toBeInTheDocument();
   });
 });
 

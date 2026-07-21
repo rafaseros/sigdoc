@@ -78,7 +78,10 @@ export function DocumentsTab({ templateId }: DocumentsTabProps) {
         </div>
       ) : (
         <>
-          <table className="w-full text-sm">
+          {/* Wide table scrolls inside its own container — the page body
+              must never scroll horizontally (STYLE_GUIDE.md §Responsive). */}
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[640px] text-sm">
             <thead>
               <tr className="border-b border-[rgba(195,198,215,0.20)] bg-[var(--bg-page)]">
                 <th className="px-5 py-2.5 text-left text-[11px] font-semibold uppercase tracking-[0.04em] text-[var(--fg-3)]">
@@ -86,6 +89,9 @@ export function DocumentsTab({ templateId }: DocumentsTabProps) {
                 </th>
                 <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-[0.04em] text-[var(--fg-3)]">
                   Tipo
+                </th>
+                <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-[0.04em] text-[var(--fg-3)]">
+                  Versión
                 </th>
                 <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-[0.04em] text-[var(--fg-3)]">
                   Fecha
@@ -131,6 +137,14 @@ export function DocumentsTab({ templateId }: DocumentsTabProps) {
                         }
                       >
                         {isBulk ? "Masivo" : "Individual"}
+                      </Badge>
+                    </td>
+                    <td className="px-3 py-3">
+                      <Badge
+                        variant="outline"
+                        className="rounded-full border-[rgba(195,198,215,0.40)] text-[var(--fg-3)]"
+                      >
+                        v{doc.template_version}
                       </Badge>
                     </td>
                     <td className="px-3 py-3 text-[var(--fg-3)]">
@@ -179,9 +193,10 @@ export function DocumentsTab({ templateId }: DocumentsTabProps) {
               })}
             </tbody>
           </table>
+          </div>
 
           {totalPages > 1 && (
-            <div className="flex items-center justify-between border-t border-[rgba(195,198,215,0.20)] px-5 py-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[rgba(195,198,215,0.20)] px-5 py-3">
               <p className="text-xs text-[var(--fg-3)]">
                 Mostrando {data.items.length} de {data.total} documentos
               </p>

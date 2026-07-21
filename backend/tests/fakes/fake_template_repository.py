@@ -2,7 +2,12 @@ import uuid
 from datetime import datetime, timezone
 from uuid import UUID
 
-from app.domain.entities import Template, TemplateShare, TemplateVersion
+from app.domain.entities import (
+    Template,
+    TemplateShare,
+    TemplateVersion,
+    TemplateVersionFile,
+)
 from app.domain.ports.template_repository import TemplateRepository
 
 
@@ -14,6 +19,8 @@ class FakeTemplateRepository(TemplateRepository):
         self._versions: dict[UUID, TemplateVersion] = {}
         # _shares: {(template_id, user_id): TemplateShare}
         self._shares: dict[tuple[UUID, UUID], TemplateShare] = {}
+        # _version_files: {(version_id, file_id): TemplateVersionFile}
+        self._version_files: dict[tuple[UUID, UUID], TemplateVersionFile] = {}
 
     async def create(self, template: Template) -> Template:
         now = datetime.now(timezone.utc)
@@ -247,6 +254,43 @@ class FakeTemplateRepository(TemplateRepository):
         version = self._versions.get(version_id)
         if version is None:
             raise KeyError(f"Version {version_id} not found")
+        version.variables_meta = variables_meta
+        return version
+
+    async def add_version_file(
+        self, file: TemplateVersionFile
+    ) -> TemplateVersionFile:
+        """Persist a related file row (mirrors create_version conventions)."""
+        if file.created_at is None:
+            file.created_at = datetime.now(timezone.utc)
+        self._version_files[(file.version_id, file.id)] = file
+        version = self._versions.get(file.version_id)
+        if version is not None:
+            version.files.append(file)
+            version.files.sort(key=lambda f: f.position)
+        return file
+
+    async def get_version_file(
+        self, version_id: UUID, file_id: UUID
+    ) -> TemplateVersionFile | None:
+        """Return the related file for (version_id, file_id), or None."""
+        return self._version_files.get((version_id, file_id))
+
+    async def delete_version_file(self, version_id: UUID, file_id: UUID) -> None:
+        """Delete the related file row for (version_id, file_id)."""
+        self._version_files.pop((version_id, file_id), None)
+        version = self._versions.get(version_id)
+        if version is not None:
+            version.files = [f for f in version.files if f.id != file_id]
+
+    async def update_version_variables(
+        self, version_id: UUID, variables: list[str], variables_meta: list[dict]
+    ) -> TemplateVersion:
+        """Replace variables AND variables_meta for the given version."""
+        version = self._versions.get(version_id)
+        if version is None:
+            raise KeyError(f"Version {version_id} not found")
+        version.variables = variables
         version.variables_meta = variables_meta
         return version
 

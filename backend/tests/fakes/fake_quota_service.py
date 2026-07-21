@@ -18,12 +18,23 @@ class FakeQuotaService:
         # Simulate document quota exceeded
         svc = FakeQuotaService(exceeded_resource="monthly_document_limit")
 
+        # Model a real remaining-quota budget (mirrors QuotaService's
+        # `current + additional > limit` rule):
+        svc = FakeQuotaService(document_limit=3, documents_used=1)
+
     When exceeded_resource matches the resource being checked, raises
     QuotaExceededError with sentinel values for easy assertion in tests.
     """
 
-    def __init__(self, exceeded_resource: str | None = None) -> None:
+    def __init__(
+        self,
+        exceeded_resource: str | None = None,
+        document_limit: int | None = None,
+        documents_used: int = 0,
+    ) -> None:
         self.exceeded_resource = exceeded_resource
+        self.document_limit = document_limit
+        self.documents_used = documents_used
 
     def _maybe_raise(self, resource: str, limit_value: int, current: int, tier_name: str = "Free") -> None:
         if self.exceeded_resource == resource:
@@ -41,6 +52,16 @@ class FakeQuotaService:
         additional: int = 1,
     ) -> None:
         self._maybe_raise("monthly_document_limit", 50, 50)
+        if (
+            self.document_limit is not None
+            and self.documents_used + additional > self.document_limit
+        ):
+            raise QuotaExceededError(
+                limit_type="monthly_document_limit",
+                limit_value=self.document_limit,
+                current_usage=self.documents_used,
+                tier_name="Free",
+            )
 
     async def check_template_limit(
         self,

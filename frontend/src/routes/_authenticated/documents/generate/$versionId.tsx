@@ -161,6 +161,7 @@ function GeneratePage() {
           templateName={template.name}
           variablesMeta={variablesMeta}
           structure={structure}
+          files={currentVersion?.files ?? []}
         />
       ) : (
         // Structure failed to load — fall back to the legacy variable-form

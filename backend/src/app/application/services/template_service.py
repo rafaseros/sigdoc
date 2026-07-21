@@ -4,7 +4,7 @@ import uuid
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from app.domain.entities import Template, TemplateShare, TemplateVersion
+from app.domain.entities import Template, TemplateShare, TemplateVersion, TemplateVersionFile
 from app.domain.exceptions import (
     ComputedVariableValidationError,
     DomainError,
@@ -14,6 +14,7 @@ from app.domain.exceptions import (
     TemplateNameCollisionError,
     TemplateNotFoundError,
     TemplateSharingError,
+    TemplateVersionFileNotFoundError,
     TemplateVersionNotFoundError,
 )
 from app.domain.ports.storage_service import StorageService
@@ -76,10 +77,70 @@ class TemplateService:
         *,
         user_id: str,
         role: str | None,
+        file_id: UUID | None = None,
     ) -> dict:
         """
         Return the document structure (headers / body / footers) for a specific
         template version, used by the generation preview UI.
+
+        When `file_id` is given, the structure of that RELATED file is
+        extracted instead of the primary docx.
+
+        Raises:
+            TemplateVersionNotFoundError: version doesn't exist OR belongs to
+                a different template than the URL path indicates.
+            TemplateVersionFileNotFoundError: file_id doesn't exist OR belongs
+                to a different version.
+            TemplateAccessDeniedError: user can't read this template.
+        """
+        version = await self._repository.get_version_by_id(version_id)
+        if version is None or version.template_id != template_id:
+            raise TemplateVersionNotFoundError(
+                f"Template version {version_id} not found"
+            )
+
+        # CurrentUser.user_id can be a UUID instance (test fixture) or a string
+        # (real auth flow); normalise so has_access always sees a UUID.
+        user_uuid = user_id if isinstance(user_id, uuid.UUID) else uuid.UUID(str(user_id))
+        has_access = await self._repository.has_access(
+            version.template_id, user_uuid, role
+        )
+        if not has_access:
+            raise TemplateAccessDeniedError("No tenés acceso a esta plantilla")
+
+        path = version.minio_path
+        if file_id is not None:
+            file = await self._repository.get_version_file(version_id, file_id)
+            if file is None:
+                raise TemplateVersionFileNotFoundError(
+                    f"Template version file {file_id} not found"
+                )
+            path = file.minio_path
+
+        template_bytes = await self._storage.download_file(
+            bucket=self.TEMPLATES_BUCKET,
+            path=path,
+        )
+        return await self._engine.extract_structure(template_bytes)
+
+    async def download_template_version(
+        self,
+        template_id: UUID,
+        version_id: UUID,
+        *,
+        user_id: str,
+        role: str | None,
+    ) -> tuple[bytes, str]:
+        """
+        Return the stored .docx bytes of a specific template version together
+        with a download filename ``{template.name}_v{version}.docx``.
+
+        The template name is minimally sanitized for Content-Disposition
+        safety (keeps letters/digits including accents, spaces, ``_`` and
+        ``-`` — same rule as generate_excel_template).
+
+        Access gate mirrors get_version_structure: any user with template
+        access (owner, shared user, or admin).
 
         Raises:
             TemplateVersionNotFoundError: version doesn't exist OR belongs to
@@ -101,11 +162,421 @@ class TemplateService:
         if not has_access:
             raise TemplateAccessDeniedError("No tenés acceso a esta plantilla")
 
-        template_bytes = await self._storage.download_file(
+        template = await self._repository.get_by_id(version.template_id)
+        if template is None:
+            # FK guarantees the parent exists; defensive, non-leaking.
+            raise TemplateVersionNotFoundError(
+                f"Template version {version_id} not found"
+            )
+
+        file_bytes = await self._storage.download_file(
             bucket=self.TEMPLATES_BUCKET,
             path=version.minio_path,
         )
-        return await self._engine.extract_structure(template_bytes)
+
+        safe_name = "".join(
+            c for c in template.name if c.isalnum() or c in " _-"
+        ).strip()
+        filename = f"{safe_name or 'plantilla'}_v{version.version}.docx"
+
+        # Audit the version download (same optional pattern as uploads)
+        if self._audit_service is not None:
+            from app.domain.entities import AuditAction
+            self._audit_service.log(
+                actor_id=user_uuid,
+                tenant_id=template.tenant_id,
+                action=AuditAction.TEMPLATE_DOWNLOAD,
+                resource_type="template",
+                resource_id=template.id,
+                details={"version": version.version, "version_id": str(version_id)},
+                ip_address=self._ip_address,
+            )
+
+        return file_bytes, filename
+
+    # ------------------------------------------------------------------
+    # Related files per template version (shared variable set)
+    # ------------------------------------------------------------------
+
+    async def attach_version_file(
+        self,
+        template_id: UUID,
+        version_id: UUID,
+        *,
+        label: str,
+        file_bytes: bytes,
+        file_size: int,
+        user_id: str,
+        role: str = "user",
+    ) -> TemplateVersionFile:
+        """Attach a related .docx to the template's CURRENT version.
+
+        The version's variables/variables_meta become the union of the
+        current set and the new file's extraction: existing names keep their
+        order and meta entries as-is; genuinely new names are appended with
+        the engine-produced default entries (same shape upload_template
+        stores).
+
+        Gates: owner-or-admin (same as upload_new_version); the version must
+        belong to the template AND be the template's current version.
+
+        Raises:
+            TemplateNotFoundError / TemplateVersionNotFoundError: 404s.
+            TemplateAccessDeniedError: caller is not owner nor admin.
+            DomainError: non-current version, invalid label, or duplicate
+                label within the version (mapped to 409 by the endpoint).
+            InvalidTemplateError: the file is not a valid docx template.
+        """
+        template = await self._repository.get_by_id(template_id)
+        if template is None:
+            raise TemplateNotFoundError(f"Template {template_id} not found")
+
+        user_uuid = user_id if isinstance(user_id, uuid.UUID) else uuid.UUID(str(user_id))
+        await self._check_access(template_id, user_uuid, role, require_owner=True)
+
+        version = await self._repository.get_version_by_id(version_id)
+        if version is None or version.template_id != template_id:
+            raise TemplateVersionNotFoundError(
+                f"Template version {version_id} not found"
+            )
+
+        if version.version != template.current_version:
+            raise DomainError(
+                "Los archivos relacionados solo se pueden gestionar en la "
+                "versión vigente de la plantilla"
+            )
+
+        clean_label = (label or "").strip()
+        if not clean_label or len(clean_label) > 120:
+            raise DomainError(
+                "La etiqueta debe tener entre 1 y 120 caracteres"
+            )
+
+        existing_files = sorted(
+            list(getattr(version, "files", []) or []), key=lambda f: f.position
+        )
+        if any(f.label == clean_label for f in existing_files):
+            raise DomainError(
+                f"Ya existe un archivo relacionado con la etiqueta "
+                f"'{clean_label}' en esta versión. Use una etiqueta diferente."
+            )
+
+        try:
+            file_meta = await self._engine.extract_variables(file_bytes)
+        except Exception as e:
+            raise InvalidTemplateError(f"Invalid template file: {e}")
+        file_variables = [v["name"] for v in file_meta]
+
+        file_id = uuid.uuid4()
+        minio_path = (
+            f"{version.tenant_id}/{template_id}/v{version.version}/files/{file_id}.docx"
+        )
+        await self._storage.upload_file(
+            bucket=self.TEMPLATES_BUCKET,
+            path=minio_path,
+            data=file_bytes,
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+
+        next_position = max((f.position for f in existing_files), default=-1) + 1
+
+        # Duplicate-label race guard: two concurrent attaches with the same
+        # label both pass the app-level check above; the loser hits the
+        # uq_template_version_files_version_label unique constraint. Translate
+        # to the SAME domain error the sequential duplicate path raises (same
+        # catch-and-translate pattern as upload_template's name collision).
+        from sqlalchemy.exc import IntegrityError
+
+        try:
+            created = await self._repository.add_version_file(
+                TemplateVersionFile(
+                    id=file_id,
+                    tenant_id=version.tenant_id,
+                    version_id=version_id,
+                    label=clean_label,
+                    minio_path=minio_path,
+                    variables=file_variables,
+                    file_size=file_size,
+                    position=next_position,
+                )
+            )
+        except IntegrityError:
+            raise DomainError(
+                f"Ya existe un archivo relacionado con la etiqueta "
+                f"'{clean_label}' en esta versión. Use una etiqueta diferente."
+            )
+
+        # Union: existing names first (order preserved, meta kept as-is),
+        # genuinely new names appended with their engine-produced entries.
+        union_vars = list(version.variables or [])
+        union_meta = list(version.variables_meta or [])
+        file_meta_by_name = {m["name"]: m for m in file_meta}
+        for name in file_variables:
+            if name not in union_vars:
+                union_vars.append(name)
+                union_meta.append(
+                    file_meta_by_name.get(name, {"name": name, "contexts": []})
+                )
+        await self._repository.update_version_variables(
+            version_id, union_vars, union_meta
+        )
+
+        if self._audit_service is not None:
+            from app.domain.entities import AuditAction
+            self._audit_service.log(
+                actor_id=user_uuid,
+                tenant_id=template.tenant_id,
+                action=AuditAction.TEMPLATE_FILE_ATTACH,
+                resource_type="template",
+                resource_id=template_id,
+                details={
+                    "version": version.version,
+                    "version_id": str(version_id),
+                    "file_id": str(file_id),
+                    "label": clean_label,
+                },
+                ip_address=self._ip_address,
+            )
+
+        return created
+
+    async def attach_version_file_from_example(
+        self,
+        template_id: UUID,
+        version_id: UUID,
+        *,
+        label: str,
+        file_bytes: bytes,
+        mappings: list[dict],
+        user_id: str,
+        role: str = "user",
+    ) -> TemplateVersionFile:
+        """Attach a related file built from a FILLED example document.
+
+        1. Rewrite the example: the engine replaces each mapped literal text
+           with its {{ placeholder }}, preserving Word formatting — exact same
+           contract as create_template_from_example (rewrite happens first,
+           mirroring that flow).
+        2. Delegate to the EXISTING attach pipeline on the rewritten bytes —
+           same gates (owner-or-admin, current version only, duplicate
+           label), same variables/variables_meta union, same audit. The plain
+           attach path is untouched.
+
+        Raises:
+            InvalidVariableMappingError: structurally invalid mappings.
+            MappingTextNotFoundError: mapping texts absent from the document
+                (carries ALL missing texts).
+            Plus everything attach_version_file raises (404s, access denied,
+            non-current version / duplicate label DomainError, invalid docx).
+        """
+        rewritten_bytes = await self._engine.apply_variable_mappings(
+            file_bytes, mappings
+        )
+        return await self.attach_version_file(
+            template_id,
+            version_id,
+            label=label,
+            file_bytes=rewritten_bytes,
+            file_size=len(rewritten_bytes),
+            user_id=user_id,
+            role=role,
+        )
+
+    async def detach_version_file(
+        self,
+        template_id: UUID,
+        version_id: UUID,
+        file_id: UUID,
+        *,
+        user_id: str,
+        role: str = "user",
+    ) -> None:
+        """Detach a related file from the template's CURRENT version.
+
+        Recomputes the version's variables union FIRST (the PRIMARY docx is
+        re-downloaded and re-extracted, the remaining files contribute their
+        stored per-file variables, and variables_meta keeps the existing
+        entries for surviving names, appending defaults for any missing
+        name), then deletes the row + persists the union, and deletes the
+        MinIO object LAST (best-effort). This ordering makes a recompute
+        failure a clean abort — row and object both survive — while a failed
+        MinIO delete only leaves an orphaned object behind.
+
+        Raises: same gates as attach_version_file, plus
+            TemplateVersionFileNotFoundError when the file doesn't exist or
+            belongs to a different version.
+        """
+        template = await self._repository.get_by_id(template_id)
+        if template is None:
+            raise TemplateNotFoundError(f"Template {template_id} not found")
+
+        user_uuid = user_id if isinstance(user_id, uuid.UUID) else uuid.UUID(str(user_id))
+        await self._check_access(template_id, user_uuid, role, require_owner=True)
+
+        version = await self._repository.get_version_by_id(version_id)
+        if version is None or version.template_id != template_id:
+            raise TemplateVersionNotFoundError(
+                f"Template version {version_id} not found"
+            )
+
+        if version.version != template.current_version:
+            raise DomainError(
+                "Los archivos relacionados solo se pueden gestionar en la "
+                "versión vigente de la plantilla"
+            )
+
+        file = await self._repository.get_version_file(version_id, file_id)
+        if file is None:
+            raise TemplateVersionFileNotFoundError(
+                f"Template version file {file_id} not found"
+            )
+
+        # Recompute the union FIRST — everything fallible that touches
+        # storage or the engine runs before any deletion, so a failure here
+        # aborts cleanly with BOTH the row and the MinIO object intact.
+        # Union source: the primary's own extraction + the remaining files'
+        # stored per-file variables.
+        primary_bytes = await self._storage.download_file(
+            bucket=self.TEMPLATES_BUCKET,
+            path=version.minio_path,
+        )
+        try:
+            primary_meta = await self._engine.extract_variables(primary_bytes)
+        except Exception as e:
+            raise InvalidTemplateError(f"Invalid template file: {e}")
+        primary_names = [m["name"] for m in primary_meta]
+
+        remaining = sorted(
+            [f for f in (getattr(version, "files", []) or []) if f.id != file_id],
+            key=lambda f: f.position,
+        )
+        union_vars = list(primary_names)
+        for f in remaining:
+            for name in f.variables or []:
+                if name not in union_vars:
+                    union_vars.append(name)
+
+        surviving = set(union_vars)
+        union_meta = [
+            entry
+            for entry in (version.variables_meta or [])
+            if _meta_entry_name(entry) in surviving
+        ]
+        present = {_meta_entry_name(entry) for entry in union_meta}
+        primary_meta_by_name = {m["name"]: m for m in primary_meta}
+        for name in union_vars:
+            if name not in present:
+                union_meta.append(
+                    primary_meta_by_name.get(name, {"name": name, "contexts": []})
+                )
+                present.add(name)
+
+        # Persist: delete the row and store the recomputed union.
+        await self._repository.delete_version_file(version_id, file_id)
+        await self._repository.update_version_variables(
+            version_id, union_vars, union_meta
+        )
+
+        # LAST: best-effort MinIO delete of the detached object. A failure
+        # here only leaves a harmless orphaned object behind.
+        try:
+            await self._storage.delete_file(self.TEMPLATES_BUCKET, file.minio_path)
+        except Exception:
+            pass  # File may already be gone
+
+        if self._audit_service is not None:
+            from app.domain.entities import AuditAction
+            self._audit_service.log(
+                actor_id=user_uuid,
+                tenant_id=template.tenant_id,
+                action=AuditAction.TEMPLATE_FILE_DETACH,
+                resource_type="template",
+                resource_id=template_id,
+                details={
+                    "version": version.version,
+                    "version_id": str(version_id),
+                    "file_id": str(file_id),
+                    "label": file.label,
+                },
+                ip_address=self._ip_address,
+            )
+
+    async def download_version_file(
+        self,
+        template_id: UUID,
+        version_id: UUID,
+        file_id: UUID,
+        *,
+        user_id: str,
+        role: str | None,
+    ) -> tuple[bytes, str]:
+        """Return a related file's stored .docx bytes plus a download filename
+        ``{template.name}_{label}_v{n}.docx`` (same minimal sanitization as
+        download_template_version).
+
+        Access gate mirrors download_template_version: any user with template
+        access (owner, shared user, or admin).
+        """
+        version = await self._repository.get_version_by_id(version_id)
+        if version is None or version.template_id != template_id:
+            raise TemplateVersionNotFoundError(
+                f"Template version {version_id} not found"
+            )
+
+        user_uuid = user_id if isinstance(user_id, uuid.UUID) else uuid.UUID(str(user_id))
+        has_access = await self._repository.has_access(
+            version.template_id, user_uuid, role
+        )
+        if not has_access:
+            raise TemplateAccessDeniedError("No tenés acceso a esta plantilla")
+
+        file = await self._repository.get_version_file(version_id, file_id)
+        if file is None:
+            raise TemplateVersionFileNotFoundError(
+                f"Template version file {file_id} not found"
+            )
+
+        template = await self._repository.get_by_id(version.template_id)
+        if template is None:
+            # FK guarantees the parent exists; defensive, non-leaking.
+            raise TemplateVersionNotFoundError(
+                f"Template version {version_id} not found"
+            )
+
+        file_bytes = await self._storage.download_file(
+            bucket=self.TEMPLATES_BUCKET,
+            path=file.minio_path,
+        )
+
+        safe_name = "".join(
+            c for c in template.name if c.isalnum() or c in " _-"
+        ).strip()
+        safe_label = "".join(
+            c for c in file.label if c.isalnum() or c in " _-"
+        ).strip()
+        filename = (
+            f"{safe_name or 'plantilla'}_{safe_label or 'archivo'}"
+            f"_v{version.version}.docx"
+        )
+
+        if self._audit_service is not None:
+            from app.domain.entities import AuditAction
+            self._audit_service.log(
+                actor_id=user_uuid,
+                tenant_id=template.tenant_id,
+                action=AuditAction.TEMPLATE_DOWNLOAD,
+                resource_type="template",
+                resource_id=template.id,
+                details={
+                    "version": version.version,
+                    "version_id": str(version_id),
+                    "file_id": str(file_id),
+                    "label": file.label,
+                },
+                ip_address=self._ip_address,
+            )
+
+        return file_bytes, filename
 
     async def upload_template(
         self,
@@ -190,6 +661,56 @@ class TemplateService:
             )
 
         return template
+
+    async def analyze_example(self, file_bytes: bytes) -> dict:
+        """Return the document structure of an example .docx (no storage).
+
+        Thin passthrough to the engine port — no quota check and no side
+        effects. Lives on the service (instead of the router calling the
+        engine directly) so the whole from-example flow is driven through
+        the injected TemplateEngine port.
+        """
+        try:
+            return await self._engine.extract_structure(file_bytes)
+        except Exception as e:
+            raise InvalidTemplateError(f"Invalid example file: {e}")
+
+    async def create_template_from_example(
+        self,
+        name: str,
+        file_bytes: bytes,
+        mappings: list[dict],
+        tenant_id: str,
+        created_by: str,
+        description: str | None = None,
+    ) -> dict:
+        """Create a template v1 from a filled example document.
+
+        1. Rewrite the example: the engine replaces each mapped literal text
+           with its {{ placeholder }}, preserving Word formatting.
+        2. Run the EXACT standard upload pipeline on the rewritten bytes
+           (quota check, variable extraction, MinIO store, DB create, audit)
+           by delegating to upload_template — so the created template's
+           variables always come from extraction over the rewritten docx.
+
+        Raises:
+            InvalidVariableMappingError: structurally invalid mappings.
+            MappingTextNotFoundError: mapping texts absent from the document
+                (carries ALL missing texts).
+            Plus everything upload_template raises (quota, invalid template,
+            name collision).
+        """
+        rewritten_bytes = await self._engine.apply_variable_mappings(
+            file_bytes, mappings
+        )
+        return await self.upload_template(
+            name=name,
+            file_bytes=rewritten_bytes,
+            file_size=len(rewritten_bytes),
+            tenant_id=tenant_id,
+            created_by=created_by,
+            description=description,
+        )
 
     async def _check_access(
         self,
@@ -290,6 +811,76 @@ class TemplateService:
             file_size=file_size,
         )
         await self._repository.create_version(version_entity)
+
+        # Carry related files of the previous current version FORWARD: copy
+        # each file's bytes under the new version's files/ key with a NEW id
+        # (same label/variables/position), then make the new version's
+        # variables/variables_meta the union of the new primary extraction
+        # and the carried files — preserving the previous version's
+        # user-configured meta entries for surviving names.
+        old_version = await self._repository.get_version(
+            uuid.UUID(template_id), new_version - 1
+        )
+        old_files = sorted(
+            list(getattr(old_version, "files", []) or []),
+            key=lambda f: f.position,
+        ) if old_version is not None else []
+
+        if old_files:
+            carried_files = []
+            for old_file in old_files:
+                related_bytes = await self._storage.download_file(
+                    bucket=self.TEMPLATES_BUCKET,
+                    path=old_file.minio_path,
+                )
+                new_file_id = uuid.uuid4()
+                new_file_path = (
+                    f"{tenant_id}/{template_id}/v{new_version}/files/{new_file_id}.docx"
+                )
+                await self._storage.upload_file(
+                    bucket=self.TEMPLATES_BUCKET,
+                    path=new_file_path,
+                    data=related_bytes,
+                    content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                )
+                carried = await self._repository.add_version_file(
+                    TemplateVersionFile(
+                        id=new_file_id,
+                        tenant_id=uuid.UUID(tenant_id),
+                        version_id=version_id,
+                        label=old_file.label,
+                        minio_path=new_file_path,
+                        variables=list(old_file.variables or []),
+                        file_size=old_file.file_size,
+                        position=old_file.position,
+                    )
+                )
+                carried_files.append(carried)
+
+            union_vars = list(variables)
+            for carried in carried_files:
+                for name in carried.variables or []:
+                    if name not in union_vars:
+                        union_vars.append(name)
+
+            old_meta_by_name = {
+                _meta_entry_name(entry): entry
+                for entry in (getattr(old_version, "variables_meta", None) or [])
+            }
+            new_primary_meta_by_name = {m["name"]: m for m in variables_meta}
+            union_meta = []
+            for name in union_vars:
+                if name in old_meta_by_name:
+                    union_meta.append(old_meta_by_name[name])
+                elif name in new_primary_meta_by_name:
+                    union_meta.append(new_primary_meta_by_name[name])
+                else:
+                    union_meta.append({"name": name, "contexts": []})
+
+            await self._repository.update_version_variables(
+                version_id, union_vars, union_meta
+            )
+            variables = union_vars
 
         # Update template's current_version
         template.current_version = new_version
@@ -674,6 +1265,11 @@ class TemplateService:
             )
 
         return updated_version
+
+
+def _meta_entry_name(entry) -> str | None:
+    """Return the variable name of a variables_meta entry (dict or object)."""
+    return entry.get("name") if isinstance(entry, dict) else getattr(entry, "name", None)
 
 
 def _validate_computed_meta(variables_meta: list[dict]) -> None:

@@ -1,3 +1,4 @@
+import unicodedata
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
@@ -14,11 +15,14 @@ from app.domain.exceptions import (
     ComputedVariableValidationError,
     DomainError,
     InvalidTemplateError,
+    InvalidVariableMappingError,
+    MappingTextNotFoundError,
     TemplateAccessDeniedError,
     TemplateFolderNotFoundError,
     TemplateNotFoundError,
     TemplatePresetNotFoundError,
     TemplateSharingError,
+    TemplateVersionFileNotFoundError,
     TemplateVersionNotFoundError,
 )
 from app.domain.ports.user_repository import UserRepository
@@ -34,14 +38,17 @@ from app.presentation.schemas.preset import (
 )
 from app.presentation.schemas.template import (
     ShareTemplateRequest,
+    TemplateAnalyzeExampleResponse,
     TemplateListResponse,
     TemplateResponse,
     TemplateShareResponse,
     TemplateStructureResponse,
     TemplateUpdateRequest,
     TemplateUploadResponse,
+    TemplateVersionFileResponse,
     TemplateVersionResponse,
     UpdateVariableTypesRequest,
+    VariableMappingsPayload,
 )
 
 router = APIRouter()
@@ -60,6 +67,35 @@ def _validate_docx_upload(file: UploadFile) -> None:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Solo se aceptan archivos .docx",
         )
+
+
+def _file_to_response(f) -> TemplateVersionFileResponse:
+    """Build a TemplateVersionFileResponse from a domain entity / ORM model."""
+    return TemplateVersionFileResponse(
+        id=str(f.id),
+        label=f.label,
+        variables=list(f.variables or []),
+        file_size=f.file_size,
+        position=f.position,
+        created_at=f.created_at,
+    )
+
+
+def _version_to_response(v) -> TemplateVersionResponse:
+    """Build a TemplateVersionResponse (incl. related files) from a domain
+    entity / ORM model."""
+    files = sorted(
+        list(getattr(v, "files", []) or []), key=lambda f: f.position
+    )
+    return TemplateVersionResponse(
+        id=str(v.id),
+        version=v.version,
+        variables=v.variables,
+        variables_meta=v.variables_meta or [],
+        file_size=v.file_size,
+        created_at=v.created_at,
+        files=[_file_to_response(f) for f in files],
+    )
 
 
 @router.post("/validate")
@@ -162,6 +198,140 @@ async def upload_template(
         )
 
     # Build response from the ORM model returned by service
+    return TemplateUploadResponse(
+        id=str(template.id),
+        name=template.name,
+        description=template.description,
+        version=template.current_version,
+        variables=template.versions[0].variables if template.versions else [],
+        created_at=template.created_at,
+    )
+
+
+@router.post("/analyze-example", response_model=TemplateAnalyzeExampleResponse)
+async def analyze_example(
+    file: UploadFile = File(...),
+    current_user: CurrentUser = Depends(get_current_user),
+    service: TemplateService = Depends(get_template_service),
+):
+    """Extract the document structure of a filled example .docx (no storage).
+
+    First step of the template-from-example flow: the user uploads a real
+    document (no placeholders required), sees its content, and marks literal
+    text spans as variables. Same auth and file validation as /validate.
+    """
+    _validate_docx_upload(file)
+
+    file_bytes = await file.read()
+    if len(file_bytes) == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El archivo está vacío",
+        )
+
+    try:
+        structure = await service.analyze_example(file_bytes)
+    except InvalidTemplateError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+
+    return TemplateAnalyzeExampleResponse(
+        structure=TemplateStructureResponse(**structure)
+    )
+
+
+@router.post(
+    "/from-example",
+    response_model=TemplateUploadResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_template_from_example(
+    file: UploadFile = File(...),
+    name: str = Form(...),
+    description: str | None = Form(None),
+    mappings: str = Form(...),
+    current_user: CurrentUser = Depends(require_template_manager),
+    service: TemplateService = Depends(get_template_service),
+):
+    """Create a template v1 from a filled example .docx.
+
+    `mappings` is a JSON string array of {"text", "variable"} items. The
+    backend replaces every literal occurrence with {{ placeholders }} without
+    altering Word formatting, then runs the standard upload pipeline on the
+    rewritten bytes. Same auth as /upload; same error contract (400 invalid
+    file, 409 name collision) plus 422 for invalid mappings or texts not
+    found in the document.
+    """
+    _validate_docx_upload(file)
+
+    file_bytes = await file.read()
+    if len(file_bytes) == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El archivo está vacío",
+        )
+
+    # Parse + validate the mappings JSON form field
+    import json
+
+    from pydantic import ValidationError
+
+    try:
+        raw_mappings = json.loads(mappings)
+    except json.JSONDecodeError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="El campo 'mappings' debe ser un arreglo JSON válido de objetos {text, variable}",
+        )
+    try:
+        payload = VariableMappingsPayload(mappings=raw_mappings)
+    except ValidationError as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": "Mappings inválidos",
+                "errors": [
+                    f"{'.'.join(str(loc) for loc in err['loc'])}: {err['msg']}"
+                    for err in e.errors()
+                ],
+            },
+        )
+
+    try:
+        template = await service.create_template_from_example(
+            name=name,
+            file_bytes=file_bytes,
+            mappings=[m.model_dump() for m in payload.mappings],
+            tenant_id=str(current_user.tenant_id),
+            created_by=str(current_user.user_id),
+            description=description,
+        )
+    except MappingTextNotFoundError as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": str(e),
+                "missing_texts": e.missing_texts,
+            },
+        )
+    except InvalidVariableMappingError as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(e),
+        )
+    except InvalidTemplateError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except DomainError as e:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(e),
+        )
+
     return TemplateUploadResponse(
         id=str(template.id),
         name=template.name,
@@ -315,14 +485,7 @@ async def list_templates(
             current_version=t.current_version,
             variables=current_vars,
             versions=[
-                TemplateVersionResponse(
-                    id=str(v.id),
-                    version=v.version,
-                    variables=v.variables,
-                    variables_meta=v.variables_meta or [],
-                    file_size=v.file_size,
-                    created_at=v.created_at,
-                )
+                _version_to_response(v)
                 for v in sorted(t.versions, key=lambda x: x.version, reverse=True)
             ],
             created_at=t.created_at,
@@ -391,14 +554,7 @@ async def get_template(
         current_version=t.current_version,
         variables=current_vars,
         versions=[
-            TemplateVersionResponse(
-                id=str(v.id),
-                version=v.version,
-                variables=v.variables,
-                variables_meta=v.variables_meta or [],
-                file_size=v.file_size,
-                created_at=v.created_at,
-            )
+            _version_to_response(v)
             for v in sorted(t.versions, key=lambda x: x.version, reverse=True)
         ],
         created_at=t.created_at,
@@ -481,14 +637,7 @@ async def update_template(
         current_version=t.current_version,
         variables=current_vars,
         versions=[
-            TemplateVersionResponse(
-                id=str(v.id),
-                version=v.version,
-                variables=v.variables,
-                variables_meta=v.variables_meta or [],
-                file_size=v.file_size,
-                created_at=v.created_at,
-            )
+            _version_to_response(v)
             for v in sorted(t.versions, key=lambda x: x.version, reverse=True)
         ],
         created_at=t.created_at,
@@ -507,6 +656,11 @@ async def update_template(
 async def get_version_structure(
     template_id: UUID,
     version_id: UUID,
+    file_id: UUID | None = Query(
+        None,
+        description="Related file to extract the structure from instead of "
+        "the primary docx. Must belong to the version.",
+    ),
     current_user: CurrentUser = Depends(get_current_user),
     service: TemplateService = Depends(get_template_service),
 ):
@@ -515,9 +669,51 @@ async def get_version_structure(
     specific template version. Powers the generation preview UI: the user
     sees the entire document with placeholders inline instead of just the
     paragraphs that contain a given variable.
+
+    With `?file_id=` the structure of that RELATED file is returned instead
+    of the primary docx.
     """
     try:
         structure = await service.get_version_structure(
+            template_id,
+            version_id,
+            user_id=current_user.user_id,
+            role=current_user.role,
+            file_id=file_id,
+        )
+    except TemplateAccessDeniedError as e:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(e),
+        )
+    except TemplateVersionFileNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Archivo relacionado no encontrado",
+        )
+    except TemplateVersionNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Template version not found",
+        )
+
+    return TemplateStructureResponse(**structure)
+
+
+@router.get("/{template_id}/versions/{version_id}/download")
+async def download_template_version(
+    template_id: UUID,
+    version_id: UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+    service: TemplateService = Depends(get_template_service),
+):
+    """Download the stored .docx of a specific template version.
+
+    Accessible to any user with template access (owner, shared user, or
+    admin) — same gate as the structure endpoint.
+    """
+    try:
+        file_bytes, filename = await service.download_template_version(
             template_id,
             version_id,
             user_id=current_user.user_id,
@@ -534,7 +730,315 @@ async def get_version_structure(
             detail="Template version not found",
         )
 
-    return TemplateStructureResponse(**structure)
+    # Template names can contain accents/enie — send an ASCII fallback in
+    # `filename` plus the exact UTF-8 name in RFC 5987 `filename*`.
+    from urllib.parse import quote
+
+    ascii_fallback = (
+        unicodedata.normalize("NFKD", filename).encode("ascii", "ignore").decode("ascii")
+        or "template.docx"
+    )
+    content_disposition = (
+        f'attachment; filename="{ascii_fallback}"; '
+        f"filename*=UTF-8''{quote(filename)}"
+    )
+
+    return Response(
+        content=file_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": content_disposition},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Related files per template version — N extra .docx sharing the version's
+# variable set. Managed only on the CURRENT version (owner/admin); readable
+# by anyone with template access.
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/{template_id}/versions/{version_id}/files",
+    response_model=TemplateVersionFileResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def attach_version_file(
+    template_id: UUID,
+    version_id: UUID,
+    file: UploadFile = File(...),
+    label: str = Form(..., max_length=120),
+    current_user: CurrentUser = Depends(require_template_manager),
+    service: TemplateService = Depends(get_template_service),
+):
+    """Attach a related .docx to the template's CURRENT version.
+
+    Same gate as uploading a new version (owner or admin). The version's
+    variables become the union of the current set and this file's
+    extraction. 409 on duplicate label or non-current version.
+    """
+    _validate_docx_upload(file)
+
+    file_bytes = await file.read()
+    if len(file_bytes) == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El archivo está vacío",
+        )
+
+    if not label.strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="La etiqueta no puede estar vacía",
+        )
+
+    # Validate template before upload — same pipeline as /upload
+    engine = get_template_engine()
+    validation = await engine.validate(file_bytes)
+    if not validation["valid"]:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": "La plantilla tiene errores que deben corregirse antes de subirla.",
+                "validation": validation,
+            },
+        )
+
+    try:
+        created = await service.attach_version_file(
+            template_id,
+            version_id,
+            label=label,
+            file_bytes=file_bytes,
+            file_size=len(file_bytes),
+            user_id=str(current_user.user_id),
+            role=current_user.role,
+        )
+    except TemplateAccessDeniedError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except TemplateVersionNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Template version not found",
+        )
+    except TemplateNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Template not found",
+        )
+    except InvalidTemplateError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except DomainError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+
+    return _file_to_response(created)
+
+
+@router.post(
+    "/{template_id}/versions/{version_id}/files/from-example",
+    response_model=TemplateVersionFileResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def attach_version_file_from_example(
+    template_id: UUID,
+    version_id: UUID,
+    file: UploadFile = File(...),
+    label: str = Form(..., max_length=120),
+    mappings: str = Form(...),
+    current_user: CurrentUser = Depends(require_template_manager),
+    service: TemplateService = Depends(get_template_service),
+):
+    """Attach a related file built from a FILLED example .docx.
+
+    `mappings` is a JSON string array of {"text", "variable"} items — same
+    schema as POST /templates/from-example. The backend replaces every
+    literal occurrence with {{ placeholders }} without altering Word
+    formatting, then runs the standard attach pipeline on the rewritten
+    bytes. Same gate as the plain attach (owner or admin); error contract is
+    the union of both flows: 422 mapping variants, 409 duplicate label /
+    non-current version, 400 bad docx, 403/404.
+    """
+    _validate_docx_upload(file)
+
+    file_bytes = await file.read()
+    if len(file_bytes) == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El archivo está vacío",
+        )
+
+    if not label.strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="La etiqueta no puede estar vacía",
+        )
+
+    # Parse + validate the mappings JSON form field — exact mirror of
+    # /templates/from-example.
+    import json
+
+    from pydantic import ValidationError
+
+    try:
+        raw_mappings = json.loads(mappings)
+    except json.JSONDecodeError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="El campo 'mappings' debe ser un arreglo JSON válido de objetos {text, variable}",
+        )
+    try:
+        payload = VariableMappingsPayload(mappings=raw_mappings)
+    except ValidationError as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": "Mappings inválidos",
+                "errors": [
+                    f"{'.'.join(str(loc) for loc in err['loc'])}: {err['msg']}"
+                    for err in e.errors()
+                ],
+            },
+        )
+
+    try:
+        created = await service.attach_version_file_from_example(
+            template_id,
+            version_id,
+            label=label,
+            file_bytes=file_bytes,
+            mappings=[m.model_dump() for m in payload.mappings],
+            user_id=str(current_user.user_id),
+            role=current_user.role,
+        )
+    except MappingTextNotFoundError as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": str(e),
+                "missing_texts": e.missing_texts,
+            },
+        )
+    except InvalidVariableMappingError as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(e),
+        )
+    except TemplateAccessDeniedError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except TemplateVersionNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Template version not found",
+        )
+    except TemplateNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Template not found",
+        )
+    except InvalidTemplateError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except DomainError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+
+    return _file_to_response(created)
+
+
+@router.delete(
+    "/{template_id}/versions/{version_id}/files/{file_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def detach_version_file(
+    template_id: UUID,
+    version_id: UUID,
+    file_id: UUID,
+    current_user: CurrentUser = Depends(require_template_manager),
+    service: TemplateService = Depends(get_template_service),
+):
+    """Detach a related file from the template's CURRENT version (owner or
+    admin). The version's variables union is recomputed from the primary's
+    re-extraction plus the remaining files."""
+    try:
+        await service.detach_version_file(
+            template_id,
+            version_id,
+            file_id,
+            user_id=str(current_user.user_id),
+            role=current_user.role,
+        )
+    except TemplateAccessDeniedError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except TemplateVersionFileNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Archivo relacionado no encontrado",
+        )
+    except TemplateVersionNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Template version not found",
+        )
+    except TemplateNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Template not found",
+        )
+    except InvalidTemplateError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except DomainError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+
+
+@router.get("/{template_id}/versions/{version_id}/files/{file_id}/download")
+async def download_version_file(
+    template_id: UUID,
+    version_id: UUID,
+    file_id: UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+    service: TemplateService = Depends(get_template_service),
+):
+    """Download the stored .docx of a related file.
+
+    Accessible to any user with template access (owner, shared user, or
+    admin) — same gate as the primary version download.
+    """
+    try:
+        file_bytes, filename = await service.download_version_file(
+            template_id,
+            version_id,
+            file_id,
+            user_id=current_user.user_id,
+            role=current_user.role,
+        )
+    except TemplateAccessDeniedError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except TemplateVersionFileNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Archivo relacionado no encontrado",
+        )
+    except TemplateVersionNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Template version not found",
+        )
+
+    # Labels/names can contain accents/enie — send an ASCII fallback in
+    # `filename` plus the exact UTF-8 name in RFC 5987 `filename*`.
+    from urllib.parse import quote
+
+    ascii_fallback = (
+        unicodedata.normalize("NFKD", filename).encode("ascii", "ignore").decode("ascii")
+        or "template.docx"
+    )
+    content_disposition = (
+        f'attachment; filename="{ascii_fallback}"; '
+        f"filename*=UTF-8''{quote(filename)}"
+    )
+
+    return Response(
+        content=file_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": content_disposition},
+    )
 
 
 @router.delete("/{template_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -658,14 +1162,7 @@ async def update_variable_types(
     except ComputedVariableValidationError as e:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
 
-    return TemplateVersionResponse(
-        id=str(updated_version.id),
-        version=updated_version.version,
-        variables=updated_version.variables,
-        variables_meta=updated_version.variables_meta or [],
-        file_size=updated_version.file_size,
-        created_at=updated_version.created_at,
-    )
+    return _version_to_response(updated_version)
 
 
 @router.get("/{template_id}/shares", response_model=list[TemplateShareResponse])

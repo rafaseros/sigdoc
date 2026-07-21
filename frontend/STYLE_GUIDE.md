@@ -517,6 +517,99 @@ into the menu.
 
 ---
 
+## 18. Responsive
+
+Verified at three widths: **360px** (phone), **768px** (tablet), **1024px+**
+(desktop). Two Tailwind breakpoints carry the whole system — don't invent
+intermediate ones:
+
+- **`lg` (1024px) is the layout breakpoint**: every two-column page layout
+  (`lg:grid-cols-[240px_1fr]`, `lg:grid-cols-[1fr_280px]`, …) and every
+  `lg:sticky lg:top-20` rail collapses to a single column below it.
+- **`sm` (640px) is the density breakpoint**: paired form fields
+  (`sm:grid-cols-2`), stepper labels, header nav labels, and wide fixed
+  paddings (`sm:pl-[54px]`, `sm:w-[180px]`) drop/shrink below it.
+
+### The one hard rule — no horizontal body scroll
+
+The page body must never scroll horizontally at any width. Anything wider
+than the viewport scrolls **inside its own container**:
+
+- **Tables**: the shared `<Table>` primitive already wraps itself in an
+  `overflow-x-auto` container — nothing to do. Hand-rolled `<table>` markup
+  (`DocumentsTab`, `SharesTab`, `DocumentList`) must be wrapped manually:
+  `<div className="overflow-x-auto"><table className="w-full min-w-[640px] …">`.
+  Pick the `min-w-*` that keeps the columns readable; the card's
+  `overflow-hidden` stays on the outside (it clips corners, the inner div
+  scrolls).
+- **Line tab bars** (`TabsList variant="line"` — editor file tabs, guide
+  dialog topics): add `overflow-x-auto overflow-y-hidden` to the list and
+  `flex-none … group-data-horizontal/tabs:after:bottom-0` to each trigger —
+  the `after:bottom-0` override keeps the active underline visible once the
+  list clips its own overflow (the default underline hangs 5px below the
+  box and would be cut off).
+- **Document-embedded tables** (structure renderers) already use
+  `<div className="my-3 overflow-x-auto">` — keep that pattern.
+- **`.var-chip`**: wraps internally (`max-width: 100%; white-space: normal;
+  overflow-wrap: anywhere` in `index.css`) so a long filled value never
+  widens its paragraph. Don't reintroduce `nowrap`.
+
+### Stacking order below `lg`
+
+- **Content first, panel after** in the DOM: the editor's variables panel
+  and the from-example mapping sidebar are `<aside>`s *after* the document
+  column, so they stack **below** the content on mobile — keep that DOM
+  order when building new two-column screens.
+- **Navigation rails may not sink below the content** — they collapse
+  instead: `TemplateDetail`'s tab rail becomes a horizontally scrollable
+  row (`flex gap-1 overflow-x-auto pb-1 lg:flex-col lg:overflow-visible`,
+  items `shrink-0 whitespace-nowrap`, decorative dividers `hidden lg:block`);
+  `FolderSidebar` becomes a wrapping chip row (`flex flex-wrap items-center
+  gap-1 lg:flex-col lg:items-stretch`, full-width children get `w-full`).
+
+### Action rows, headers, list rows
+
+- Page-header action rows wrap: `flex flex-wrap items-center gap-*` on both
+  the header row and the action cluster. This does not conflict with §17 —
+  at `lg`+ the cluster is `shrink-0` and has room, so it stays one line;
+  wrapping only kicks in when the header has already stacked.
+- The app header nav is **icon-only below `sm`** — the label is
+  `<span className="hidden sm:inline">` and the `Link` carries matching
+  `aria-label` + `title` (Spanish) so the accessible name survives.
+- List rows that hold labeled action buttons (version rows, preset rows)
+  use `flex flex-wrap` + a **`min-w-[160..180px]` floor on the flexible
+  info block** — the floor is what forces the buttons onto their own line
+  instead of crushing the title to zero. Pure icon-button rows keep
+  `min-w-0` + `truncate` and never need to wrap.
+- Pagers and footer rows: `flex flex-wrap … gap-2`.
+- Two-column label/value rows shrink the label (`w-[130px] sm:w-[180px]`)
+  and give the value `min-w-0 break-words`.
+
+### Dialogs
+
+- The `DialogContent` primitive now bakes in the viewport contract:
+  `max-h-[85vh] overflow-y-auto` + `max-w-[calc(100%-2rem)]` (side margins
+  on phones). Every dialog fits the viewport and scrolls internally by
+  default — no per-dialog `max-h` needed for the simple form dialogs.
+- Dialogs may still override: taller caps (`max-h-[88vh]` user dialogs) or
+  the **shell pattern** (`flex max-h-[85vh] flex-col overflow-hidden p-0`
+  with its own `overflow-y-auto` body region — guide/changelog); a later
+  `overflow-hidden` in `className` legitimately replaces the base
+  `overflow-y-auto`.
+- Content sized in `vh` inside a dialog (preview iframe) must leave room
+  for the header within the 85vh cap — 65vh, not 75vh.
+- Floating popovers positioned with inline styles clamp themselves:
+  `w-[300px] max-w-[calc(100vw-3rem)]` plus the existing left-edge clamp.
+
+### Sticky bars
+
+Bottom action bars are in-flow `sticky bottom-0` (they never cover content
+that follows them) and wrap internally (`flex flex-wrap … gap-*`). The
+editor's document card keeps `pb-16` so the last line can scroll clear of
+the bar.
+
+---
+
 ## Copy register (Spanish)
 
 - Neutral, professional Spanish — no regional slang, no *voseo* in UI copy.

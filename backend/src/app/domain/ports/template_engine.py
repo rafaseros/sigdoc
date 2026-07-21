@@ -28,6 +28,32 @@ class TemplateEngine(ABC):
         ...
 
     @abstractmethod
+    async def apply_variable_mappings(
+        self, file_bytes: bytes, mappings: list[dict]
+    ) -> bytes:
+        """
+        Rewrite an example document by replacing literal text spans with
+        ``{{ placeholder }}`` markers, preserving Word formatting.
+
+        Each mapping item has the shape ``{"text": str, "variable": str}``.
+        Replacement is case-sensitive exact match, applied longest-text-first
+        (so a text containing another mapping's text is handled before the
+        shorter one), across body paragraphs, table cells, headers, and
+        footers. All occurrences of each text are replaced. The same variable
+        name MAY be used for two different texts.
+
+        Returns NEW document bytes; the input is never mutated.
+
+        Raises:
+            InvalidVariableMappingError: empty mappings, blank text, variable
+                name not matching ``^[a-z_][a-z0-9_]*$``, or two mappings with
+                the same exact text.
+            MappingTextNotFoundError: at least one mapping text has zero
+                occurrences in the document (carries ALL missing texts).
+        """
+        ...
+
+    @abstractmethod
     async def extract_structure(self, file_bytes: bytes) -> dict:
         """
         Extract the full document structure (body + headers + footers) for preview.
