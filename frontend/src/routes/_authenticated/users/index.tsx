@@ -1,16 +1,44 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Users, ShieldCheck, FileEdit, Sparkles } from "lucide-react";
+import { Users, ShieldCheck, FileEdit, Sparkles, Lock } from "lucide-react";
+import { useAuth } from "@/shared/lib/auth";
 import { UserList, CreateUserDialog, useUsers } from "@/features/users";
 
 export const Route = createFileRoute("/_authenticated/users/")({
   beforeLoad: () => {
-    // Additional admin check could go here if we had access to auth context
-    // The component-level check below handles the UI guard
+    // Token presence is already enforced by the _authenticated layout.
+    // Role enforcement is handled at the UI level via useAuth().
   },
   component: UsersPage,
 });
 
-function UsersPage() {
+export function UsersPage() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
+
+  // Guard the deep link: a non-admin who navigates straight to /users must
+  // see a friendly "no access" state instead of the admin shell plus a raw
+  // 403 from the users query. The admin-only content (and its queries) live
+  // in <UsersContent>, which only renders once the role check passes.
+  if (!isAdmin) {
+    return (
+      <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-[rgba(195,198,215,0.4)] bg-white/60 p-16 text-center">
+        <span className="mb-3 inline-flex size-12 items-center justify-center rounded-xl bg-[var(--bg-accent)] text-[var(--primary)]">
+          <Lock className="size-5" />
+        </span>
+        <p className="text-base font-semibold text-[var(--fg-1)]">
+          Acceso restringido
+        </p>
+        <p className="mt-1 text-sm text-[var(--fg-3)]">
+          Solo los administradores pueden gestionar usuarios.
+        </p>
+      </div>
+    );
+  }
+
+  return <UsersContent />;
+}
+
+function UsersContent() {
   const { data } = useUsers({ size: 100 });
   const items = data?.items ?? [];
   const total = data?.total ?? items.length;

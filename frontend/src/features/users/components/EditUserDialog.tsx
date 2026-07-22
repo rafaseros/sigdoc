@@ -130,9 +130,15 @@ export function EditUserDialog({
       toast.success("Usuario actualizado con éxito");
       onOpenChange(false);
     } catch (err: unknown) {
-      const message =
-        err instanceof Error ? err.message : "Error al actualizar usuario";
-      toast.error(message);
+      // Surface the backend's Spanish `detail` instead of the raw axios
+      // message so validation errors reach the user in the right language.
+      const detail =
+        err &&
+        typeof err === "object" &&
+        "response" in err &&
+        (err as { response?: { data?: { detail?: string } } }).response?.data
+          ?.detail;
+      toast.error((detail as string) || "Error al actualizar usuario");
     }
   }
 
@@ -157,9 +163,15 @@ export function EditUserDialog({
       setConfirmPassword("");
       setShowPasswordReset(false);
     } catch (err: unknown) {
-      const message =
-        err instanceof Error ? err.message : "Error al resetear contraseña";
-      toast.error(message);
+      // Surface the backend's Spanish `detail` instead of the raw axios
+      // message so password-policy errors reach the user in the right language.
+      const detail =
+        err &&
+        typeof err === "object" &&
+        "response" in err &&
+        (err as { response?: { data?: { detail?: string } } }).response?.data
+          ?.detail;
+      toast.error((detail as string) || "Error al resetear contraseña");
     }
   }
 

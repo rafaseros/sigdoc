@@ -62,11 +62,16 @@ export function ChangePasswordDialog({ open: openProp, onOpenChange }: ChangePas
       resetForm();
       setOpen(false);
     } catch (err: unknown) {
-      const message =
-        err instanceof Error
-          ? err.message
-          : "Error al cambiar la contraseña";
-      toast.error(message);
+      // Prefer the backend's Spanish `detail` (e.g. "La contraseña actual es
+      // incorrecta") over the raw axios message ("Request failed with status
+      // code 400"), which would leak English internals to the user.
+      const detail =
+        err &&
+        typeof err === "object" &&
+        "response" in err &&
+        (err as { response?: { data?: { detail?: string } } }).response?.data
+          ?.detail;
+      toast.error((detail as string) || "Error al cambiar la contraseña");
     }
   }
 

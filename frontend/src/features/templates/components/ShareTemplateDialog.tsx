@@ -15,7 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 
-import { useTemplateShares } from "../api/queries";
+import { useTemplateShares, type TemplateShare } from "../api/queries";
 import { useShareTemplate, useUnshareTemplate } from "../api/mutations";
 
 interface ShareTemplateDialogProps {
@@ -61,8 +61,18 @@ export function ShareTemplateDialog({
     shareTemplate.mutate(
       { templateId, email: trimmedEmail },
       {
-        onSuccess: () => {
-          toast.success("Plantilla compartida con éxito");
+        onSuccess: (share: TemplateShare) => {
+          // The share endpoint is idempotent (ON CONFLICT DO NOTHING): a
+          // duplicate returns 201 with the *existing* share, not an error.
+          // Detect that case by checking whether the returned user was
+          // already in the current list, so we don't claim we shared it anew.
+          const alreadyShared =
+            shares?.some((s) => s.user_id === share.user_id) ?? false;
+          if (alreadyShared) {
+            toast.info("Esta plantilla ya estaba compartida con ese usuario");
+          } else {
+            toast.success("Plantilla compartida con éxito");
+          }
           setEmail("");
         },
         onError: (err: unknown) => {
@@ -75,10 +85,12 @@ export function ShareTemplateDialog({
               ? (err as { response?: { data?: { detail?: string } } }).response?.data?.detail
               : undefined;
 
+          // 404 is the only status with a fixed client-side message (unknown
+          // or cross-tenant email). Everything else — including the backend's
+          // real 422 sharing error — carries a Spanish `detail` we surface
+          // verbatim.
           if (status === 404) {
             toast.error("No se encontró un usuario con ese correo");
-          } else if (status === 422 || status === 409) {
-            toast.error("Esta plantilla ya fue compartida con ese usuario");
           } else {
             toast.error((detail as string) || "Error al compartir la plantilla");
           }

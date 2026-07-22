@@ -117,9 +117,15 @@ export function UploadTemplateDialog() {
       handleReset();
       setOpen(false);
     } catch (error: unknown) {
-      const message =
-        error instanceof Error ? error.message : "Error al subir la plantilla";
-      toast.error(message);
+      // Surface the backend's Spanish `detail` (e.g. quota or validation
+      // errors) instead of the raw axios message.
+      const detail =
+        error &&
+        typeof error === "object" &&
+        "response" in error &&
+        (error as { response?: { data?: { detail?: string } } }).response?.data
+          ?.detail;
+      toast.error((detail as string) || "Error al subir la plantilla");
     }
   }
 
