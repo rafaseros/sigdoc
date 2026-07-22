@@ -74,7 +74,11 @@ services:
       - sigdoc-network
 
   api:
-    image: ghcr.io/rafaseros/sigdoc-api:latest
+    # SIGDOC_IMAGE_TAG pins this deploy to an immutable per-commit build
+    # (sha-<gitsha>, pushed by the CI build jobs) so the running image is
+    # reproducible and rollback-able. The :-latest default preserves the prior
+    # behavior for any manual `docker compose` invocation with the var unset.
+    image: ghcr.io/rafaseros/sigdoc-api:${SIGDOC_IMAGE_TAG:-latest}
     container_name: sigdoc-api
     restart: unless-stopped
     # Memory cap for this single small droplet (1 CPU / ~2 GB) — prevent one
@@ -143,7 +147,9 @@ services:
       - "traefik.http.services.sigdoc-api.loadbalancer.server.port=8000"
 
   frontend:
-    image: ghcr.io/rafaseros/sigdoc-frontend:latest
+    # Same immutable-tag scheme as the api service above; :-latest keeps manual
+    # `docker compose` runs (SIGDOC_IMAGE_TAG unset) on the mutable latest tag.
+    image: ghcr.io/rafaseros/sigdoc-frontend:${SIGDOC_IMAGE_TAG:-latest}
     container_name: sigdoc-frontend
     restart: unless-stopped
     healthcheck:

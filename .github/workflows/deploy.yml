@@ -196,17 +196,29 @@ jobs:
 
             cd /opt/docker/apps/sigdoc
 
+            # Deploy the immutable, per-commit build (sha-<gitsha>) instead of the
+            # mutable :latest tag, so this deploy is reproducible and can be rolled
+            # back to any prior commit (see scripts/rollback.sh). docker-compose.prod.yml
+            # substitutes ${SIGDOC_IMAGE_TAG:-latest}; the build jobs push
+            # ghcr.io/rafaseros/sigdoc-{api,frontend}:sha-<gitsha>.
+            export SIGDOC_IMAGE_TAG="sha-${{ github.sha }}"
+
             # Pull latest compose files and config (images themselves come from GHCR)
             git pull origin main
 
             # Pull pre-built images — the droplet never builds, it only pulls
             docker compose -f docker-compose.prod.yml pull api frontend
 
-            # Recreate containers with the freshly pulled images
-            docker compose -f docker-compose.prod.yml up -d
+            # Run migrations BEFORE recreating the api, in a one-off container built
+            # from the freshly pulled image (`run --rm` uses a throwaway container and
+            # never touches the running sigdoc-api). `set -e` makes a migration failure
+            # abort the deploy right here — so the old api keeps serving the old schema
+            # and new code never runs against a half-migrated database. Idempotent when
+            # there are no pending migrations.
+            docker compose -f docker-compose.prod.yml run --rm api alembic upgrade head
 
-            # Run migrations (idempotent — safe to run every deploy)
-            docker compose -f docker-compose.prod.yml exec -T api alembic upgrade head
+            # Migrations succeeded — recreate containers with the freshly pulled images
+            docker compose -f docker-compose.prod.yml up -d
 
             # Post-deploy smoke test
             sleep 5
