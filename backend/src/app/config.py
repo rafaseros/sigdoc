@@ -8,6 +8,11 @@ class Settings(BaseSettings):
     # App
     app_name: str = "SigDoc"
     debug: bool = False
+    # Root log level applied at startup by configure_logging(). Env-overridable
+    # via LOG_LEVEL (e.g. LOG_LEVEL=WARNING). When `debug` is True the effective
+    # level is forced to DEBUG regardless of this value. An unrecognized level
+    # falls back to INFO so a typo never crashes boot.
+    log_level: str = "INFO"
     api_v1_prefix: str = "/api/v1"
     # Safe local-dev default: the Vite dev-server origin. NEVER default to ["*"] —
     # main.py sends allow_credentials=True, and wildcard-with-credentials would

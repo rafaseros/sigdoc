@@ -9,6 +9,7 @@ from slowapi.middleware import SlowAPIMiddleware
 
 from app.config import get_settings
 from app.domain.exceptions import QuotaExceededError
+from app.infrastructure.logging_config import configure_logging
 from app.presentation.api.v1 import auth, templates, documents, health, users, audit, dev, folders
 from app.presentation.middleware.body_size_limit import BodySizeLimitMiddleware
 from app.presentation.middleware.rate_limit import TierPreloadMiddleware, limiter
@@ -38,6 +39,10 @@ async def _quota_exceeded_handler(request: Request, exc: QuotaExceededError) -> 
 
 def create_app() -> FastAPI:
     settings = get_settings()
+
+    # Configure application logging first so any startup log line is formatted
+    # consistently and routed to stdout. Idempotent — safe on repeated calls.
+    configure_logging(settings)
 
     app = FastAPI(
         title=settings.app_name,
