@@ -220,11 +220,23 @@ jobs:
             # Migrations succeeded — recreate containers with the freshly pulled images
             docker compose -f docker-compose.prod.yml up -d
 
-            # Post-deploy smoke test
-            sleep 5
-            API_STATUS=$(docker compose -f docker-compose.prod.yml exec -T api curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/api/v1/health)
-            if [ "$API_STATUS" != "200" ]; then
-              echo "❌ API health check failed (HTTP $API_STATUS)"
+            # Post-deploy smoke test — poll until the freshly-recreated api is
+            # listening. A single early curl races uvicorn startup (connection
+            # refused -> curl exit 7 -> set -e aborts) even though the container
+            # becomes healthy seconds later (healthcheck start_period is 15s).
+            # `|| echo 000` keeps set -e from aborting on a not-yet-ready curl.
+            API_OK=0
+            for i in $(seq 1 30); do
+              API_STATUS=$(docker compose -f docker-compose.prod.yml exec -T api curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/api/v1/health 2>/dev/null || echo "000")
+              if [ "$API_STATUS" = "200" ]; then
+                API_OK=1
+                echo "API healthy after ${i} attempt(s)"
+                break
+              fi
+              sleep 2
+            done
+            if [ "$API_OK" != "1" ]; then
+              echo "❌ API health check failed (last HTTP $API_STATUS)"
               exit 1
             fi
 
