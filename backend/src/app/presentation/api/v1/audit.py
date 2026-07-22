@@ -60,6 +60,7 @@ async def list_audit_log(
         actor_id=actor_id,
         date_from=date_from,
         date_to=date_to,
+        tenant_id=current_user.tenant_id,
     )
 
     # Carga en lote los emails de todos los actores únicos de la página

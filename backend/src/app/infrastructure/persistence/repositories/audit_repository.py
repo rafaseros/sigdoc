@@ -51,11 +51,18 @@ class SQLAlchemyAuditRepository(AuditRepositoryPort):
         resource_type: str | None = None,
         date_from: datetime | None = None,
         date_to: datetime | None = None,
+        tenant_id: UUID | None = None,
     ) -> tuple[list[AuditLog], int]:
         stmt = select(AuditLogModel)
         count_stmt = select(func.count()).select_from(AuditLogModel)
 
         filters = []
+        # Explicit tenant scoping — the durable defense against cross-tenant
+        # disclosure. It does not depend on the session-level loader-criteria
+        # event being wired up, so it holds even when the read path opens a
+        # session without session.info["tenant_id"] set.
+        if tenant_id is not None:
+            filters.append(AuditLogModel.tenant_id == tenant_id)
         if action is not None:
             filters.append(AuditLogModel.action == action)
         if actor_id is not None:

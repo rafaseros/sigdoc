@@ -69,10 +69,13 @@ class AuditService:
         resource_type: str | None = None,
         date_from: datetime | None = None,
         date_to: datetime | None = None,
+        tenant_id: UUID | None = None,
     ) -> tuple[list[AuditLog], int]:
-        """Paginated read of audit log entries.
+        """Paginated read of audit log entries scoped to ``tenant_id``.
 
         Uses the injected repo (test) or opens a fresh session (production).
+        The caller's ``tenant_id`` is always forwarded to the repository so the
+        query is scoped to a single tenant, preventing cross-tenant disclosure.
         """
         if self._audit_repo is not None:
             return await self._audit_repo.list_paginated(
@@ -83,6 +86,7 @@ class AuditService:
                 resource_type=resource_type,
                 date_from=date_from,
                 date_to=date_to,
+                tenant_id=tenant_id,
             )
 
         # Production path: open a fresh session for the read
@@ -91,6 +95,13 @@ class AuditService:
         )
 
         async with self._session_factory() as session:
+            # Belt-and-suspenders: also activate the session-level tenant
+            # loader-criteria (do_orm_execute in database.py) by tagging the
+            # session with the caller's tenant, mirroring get_tenant_session.
+            # The explicit predicate in list_paginated is the primary defense;
+            # this makes the read path consistent with the rest of the app.
+            if tenant_id is not None:
+                session.info["tenant_id"] = tenant_id
             repo = SQLAlchemyAuditRepository(session)
             return await repo.list_paginated(
                 page=page,
@@ -100,6 +111,7 @@ class AuditService:
                 resource_type=resource_type,
                 date_from=date_from,
                 date_to=date_to,
+                tenant_id=tenant_id,
             )
 
     # ------------------------------------------------------------------

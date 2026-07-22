@@ -251,3 +251,42 @@ class TestAuditServiceListLogs:
 
         assert total == 5
         assert len(items) == 3
+
+    async def test_list_scopes_by_tenant(
+        self,
+        fake_audit_repo: FakeAuditRepository,
+    ):
+        """list_audit_logs(tenant_id=A) must return only tenant A's entries.
+
+        Seeds entries for two tenants and asserts that querying as tenant A
+        never leaks tenant B rows — the cross-tenant disclosure fix.
+        """
+        service = make_service(fake_audit_repo)
+
+        tenant_a = uuid.uuid4()
+        tenant_b = uuid.uuid4()
+        ts = datetime.now(timezone.utc)
+
+        for _ in range(3):
+            await fake_audit_repo.create(
+                AuditLog(
+                    id=uuid.uuid4(),
+                    tenant_id=tenant_a,
+                    action=AuditAction.USER_CREATE,
+                    created_at=ts,
+                )
+            )
+        for _ in range(2):
+            await fake_audit_repo.create(
+                AuditLog(
+                    id=uuid.uuid4(),
+                    tenant_id=tenant_b,
+                    action=AuditAction.USER_CREATE,
+                    created_at=ts,
+                )
+            )
+
+        items, total = await service.list_audit_logs(page=1, size=50, tenant_id=tenant_a)
+
+        assert total == 3
+        assert {e.tenant_id for e in items} == {tenant_a}

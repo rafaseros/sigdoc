@@ -26,9 +26,12 @@ class FakeAuditRepository(AuditRepository):
         resource_type: str | None = None,
         date_from: datetime | None = None,
         date_to: datetime | None = None,
+        tenant_id: UUID | None = None,
     ) -> tuple[list[AuditLog], int]:
         items = list(self._entries)
 
+        if tenant_id is not None:
+            items = [e for e in items if e.tenant_id == tenant_id]
         if action is not None:
             items = [e for e in items if e.action == action]
         if actor_id is not None:

@@ -164,6 +164,50 @@ async def test_get_audit_log_filter_by_action_returns_matching_entries(
         assert item["action"] == target_action
 
 
+# ── Tenant isolation ──────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_get_audit_log_returns_only_callers_tenant(
+    async_client,
+    auth_headers,
+    fake_audit_repo: FakeAuditRepository,
+):
+    """GET /audit-log must return only the caller's tenant rows.
+
+    Seeds entries for the caller's tenant (CONFTEST_TENANT_ID) and for a
+    foreign tenant, then asserts the foreign tenant's entries never appear in
+    the response — the cross-tenant audit-log disclosure fix.
+    """
+    from app.domain.entities import AuditLog
+
+    foreign_tenant_id = uuid.uuid4()
+    foreign_entry_id = uuid.uuid4()
+
+    own_entry = AuditLog(
+        id=uuid.uuid4(),
+        tenant_id=CONFTEST_TENANT_ID,
+        actor_id=CONFTEST_USER_ID,
+        action=AuditAction.USER_CREATE,
+    )
+    foreign_entry = AuditLog(
+        id=foreign_entry_id,
+        tenant_id=foreign_tenant_id,
+        actor_id=uuid.uuid4(),
+        action=AuditAction.USER_CREATE,
+    )
+    await fake_audit_repo.create(own_entry)
+    await fake_audit_repo.create(foreign_entry)
+
+    response = await async_client.get("/api/v1/audit-log?size=100", headers=auth_headers)
+    assert response.status_code == 200
+    data = response.json()
+
+    returned_ids = {item["id"] for item in data["items"]}
+    assert str(foreign_entry_id) not in returned_ids
+    assert str(own_entry.id) in returned_ids
+
+
 # ── Audit record after document generation ───────────────────────────────────
 
 

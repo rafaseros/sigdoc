@@ -20,6 +20,10 @@ class AuditRepository(ABC):
         resource_type: str | None = None,
         date_from: datetime | None = None,
         date_to: datetime | None = None,
+        tenant_id: UUID | None = None,
     ) -> tuple[list[AuditLog], int]:
-        """Return paginated audit log entries ordered by created_at DESC."""
+        """Return paginated audit log entries ordered by created_at DESC.
+
+        When ``tenant_id`` is provided, results are scoped to that tenant only.
+        """
         ...
