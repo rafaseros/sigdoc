@@ -16,6 +16,7 @@ from app.domain.exceptions import (
     DocumentNotFoundError,
     PdfConversionError,
     TemplateAccessDeniedError,
+    TemplateRenderError,
     TemplateVersionFileNotFoundError,
     TemplateVersionNotFoundError,
     VariablesMismatchError,
@@ -106,6 +107,13 @@ async def generate_document(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template version not found")
     except ComputedVariableError as e:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
+    except TemplateRenderError:
+        # SSTI containment: an unsafe/unsupported Jinja expression in the
+        # template was blocked by the sandbox. Map to a non-leaking 422.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="La plantilla contiene una expresión no compatible o no permitida y no pudo ser procesada.",
+        )
     except PdfConversionError:
         # REQ-DDF-05 / W-03: map to 503 — do NOT leak internal details
         raise HTTPException(
@@ -159,6 +167,13 @@ async def preview_document(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template version not found")
     except ComputedVariableError as e:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
+    except TemplateRenderError:
+        # SSTI containment: an unsafe/unsupported Jinja expression in the
+        # template was blocked by the sandbox. Map to a non-leaking 422.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="La plantilla contiene una expresión no compatible o no permitida y no pudo ser procesada.",
+        )
     except PdfConversionError:
         # REQ-DDF-05: PdfConversionError → HTTP 503 — same mapping as the
         # other document endpoints.
@@ -259,6 +274,13 @@ async def generate_bulk(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
     except ComputedVariableError as e:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
+    except TemplateRenderError:
+        # SSTI containment: an unsafe/unsupported Jinja expression in the
+        # template was blocked by the sandbox. Map to a non-leaking 422.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="La plantilla contiene una expresión no compatible o no permitida y no pudo ser procesada.",
+        )
     except PdfConversionError:
         # REQ-DDF-05 / W-04: atomic rollback already done in service — map to 503
         raise HTTPException(
@@ -311,10 +333,15 @@ async def download_bulk(
     # delegating method (W-PRES-02 fix: replaces service._doc_repo private
     # access + O(N total tenant docs) full-scan with O(batch_size) query).
     batch_docs = await service.list_documents_by_batch(
-        batch_id=batch_uuid, tenant_id=current_user.tenant_id
+        batch_id=batch_uuid,
+        tenant_id=current_user.tenant_id,
+        requester_id=current_user.user_id,
+        role=current_user.role,
     )
 
     if not batch_docs:
+        # Empty for a non-existent batch OR a batch owned by another user
+        # (non-admin) — the 404 is non-leaking either way (finding #1).
         raise HTTPException(status_code=404, detail="Bulk download batch not found")
 
     # Build ZIP in memory — ADR-PDF-08 serial backfill
@@ -401,9 +428,14 @@ async def download_document(
             detail="Este formato de descarga no está disponible para tu rol.",
         )
 
-    # Fetch document
+    # Fetch document — ownership enforced in the service (finding #1): a
+    # non-creator non-admin gets DocumentNotFoundError -> non-leaking 404.
     try:
-        result = await service.get_document(document_id)
+        result = await service.get_document(
+            document_id,
+            requester_id=current_user.user_id,
+            role=current_user.role,
+        )
     except DocumentNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
@@ -459,9 +491,18 @@ async def delete_document(
     current_user: CurrentUser = Depends(get_current_user),
     service: DocumentService = Depends(get_document_service),
 ):
-    """Delete a generated document and its file."""
+    """Delete a generated document and its file.
+
+    Ownership is enforced in the service (finding #1): a non-creator non-admin
+    gets DocumentNotFoundError -> non-leaking 404, and the document is left
+    untouched.
+    """
     try:
-        await service.delete_document(document_id)
+        await service.delete_document(
+            document_id,
+            requester_id=current_user.user_id,
+            role=current_user.role,
+        )
     except DocumentNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Documento no encontrado")
 
@@ -508,9 +549,17 @@ async def get_document(
     current_user: CurrentUser = Depends(get_current_user),
     service: DocumentService = Depends(get_document_service),
 ):
-    """Get document detail with fresh presigned download URL."""
+    """Get document detail with fresh presigned download URL.
+
+    Ownership is enforced in the service (finding #1): a non-creator non-admin
+    gets DocumentNotFoundError -> non-leaking 404.
+    """
     try:
-        result = await service.get_document(document_id)
+        result = await service.get_document(
+            document_id,
+            requester_id=current_user.user_id,
+            role=current_user.role,
+        )
     except DocumentNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 

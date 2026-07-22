@@ -397,7 +397,9 @@ async def test_user_download_pdf_returns_200_with_pdf_mime(
         pdf_minio_path=pdf_minio_path,
         generation_type="single",
         variables_snapshot={"name": "Bob"},
-        created_by=ADMIN_USER_ID,
+        # Finding #1: the downloading non-admin must OWN the document — a
+        # non-admin can only download documents they created.
+        created_by=USER_ID,
         status="completed",
         created_at=datetime.now(timezone.utc),
         batch_id=None,
@@ -481,6 +483,7 @@ async def test_user_download_pdf_legacy_triggers_backfill(
     doc = _seed_legacy_document(
         fake_document_repo,
         fake_storage,
+        creator_id=USER_ID,   # Finding #1: non-admin may only download their own docs
         pdf_file_name=None,   # legacy doc — no PDF yet
         pdf_minio_path=None,
     )
@@ -527,6 +530,7 @@ async def test_user_download_pdf_legacy_gotenberg_down_returns_503(
     doc = _seed_legacy_document(
         fake_document_repo,
         fake_storage,
+        creator_id=USER_ID,   # Finding #1: non-admin may only download their own docs
         pdf_file_name=None,
         pdf_minio_path=None,
     )
@@ -799,10 +803,19 @@ async def test_share_recipient_non_admin_cannot_download_docx(
 
 
 @pytest.mark.asyncio
-async def test_share_recipient_non_admin_downloads_pdf_with_via_share_audit(
+async def test_non_creator_non_admin_cannot_download_others_document_returns_404(
     async_client, app, auth_headers, fake_document_repo, fake_storage, fake_audit_repo
 ):
-    """SCEN-DDF-14: Non-admin via share downloads pdf → 200 + audit via='share'."""
+    """Finding #1 (supersedes SCEN-DDF-14): a non-creator non-admin CANNOT
+    download another user's document, even with via=share.
+
+    `via=share` is only an audit-trail label — there is NO server-side share
+    authorization (no DocumentShare entity / token / template_shares check in
+    the download path), so a client-asserted via=share must not grant access.
+    Unauthorized access returns a non-leaking 404 (DocumentNotFoundError),
+    mirroring the folder/preset "not yours -> NotFound" convention, and no
+    bytes and no download audit event are produced.
+    """
     doc_id = uuid.uuid4()
     docx_fn = "Alice.docx"
     pdf_fn = "Alice.pdf"
@@ -841,17 +854,13 @@ async def test_share_recipient_non_admin_downloads_pdf_with_via_share_audit(
             f"/api/v1/documents/{doc_id}/download?format=pdf&via=share",
             headers=auth_headers,
         )
-        assert response.status_code == 200, response.text
-        assert response.content == b"fake-pdf-share"
+        # Non-leaking 404 — never confirms the foreign document's existence.
+        assert response.status_code == 404, response.text
 
-        # Audit event must record via="share"
+        # No download audit event for an unauthorized attempt.
         new_entries = fake_audit_repo._entries[initial_count:]
         download_events = [e for e in new_entries if e.action == "document.download"]
-        assert len(download_events) >= 1
-        evt = download_events[-1]
-        assert evt.details is not None
-        assert evt.details.get("via") == "share"
-        assert evt.details.get("format") == "pdf"
+        assert download_events == []
     finally:
         if original is not None:
             app.dependency_overrides[get_current_user] = original

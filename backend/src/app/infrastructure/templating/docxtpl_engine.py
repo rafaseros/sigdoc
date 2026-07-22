@@ -6,12 +6,31 @@ import tempfile
 
 from docx import Document
 from docxtpl import DocxTemplate
+from jinja2 import TemplateError
+from jinja2.sandbox import SandboxedEnvironment
 
 from app.domain.exceptions import (
     InvalidVariableMappingError,
     MappingTextNotFoundError,
+    TemplateRenderError,
 )
 from app.domain.ports.template_engine import TemplateEngine
+
+# SECURITY (SSTI -> RCE containment):
+# docxtpl's DocxTemplate.render() builds a PLAIN jinja2.Environment when no
+# jinja_env is supplied, so any Jinja expression embedded in an uploaded .docx
+# (e.g. {{ cycler.__init__.__globals__.os.popen('id').read() }}) is evaluated
+# server-side -> arbitrary command execution. We render EVERY template through a
+# SandboxedEnvironment instead: attribute access into Python internals
+# (__class__, __init__, __globals__, ...) and other unsafe operations raise
+# jinja2.exceptions.SecurityError at evaluation time. docxtpl accepts the env
+# via render(context, jinja_env=..., autoescape=...) and threads it through the
+# body, headers, footers, core-properties and footnotes render paths, so a
+# single shared env covers all of them. It registers no custom filters/globals,
+# so a stock SandboxedEnvironment renders legitimate templates identically.
+# The env is stateless for rendering and safe to share across threads; we build
+# it once with autoescape baked in (XML-injection protection for values).
+_SANDBOX_ENV = SandboxedEnvironment(autoescape=True)
 
 # Lowercase snake_case — the only variable-name shape validate() accepts
 # without errors, enforced here as well so a rewritten example can never
@@ -131,7 +150,22 @@ class DocxTemplateEngine(TemplateEngine):
             try:
                 # FRESH instance — NEVER reuse after render
                 tpl = DocxTemplate(tmp_path)
-                tpl.render(context, autoescape=True)
+                try:
+                    # Render inside the sandbox (see _SANDBOX_ENV note above).
+                    # autoescape=True is passed explicitly to preserve the
+                    # existing XML-escaping contract for variable values.
+                    tpl.render(context, jinja_env=_SANDBOX_ENV, autoescape=True)
+                except TemplateError as exc:
+                    # SecurityError (unsafe expression blocked by the sandbox),
+                    # UndefinedError, TemplateSyntaxError, etc. all subclass
+                    # TemplateError. Map to a non-leaking domain error so the
+                    # API returns a clean 4xx instead of an uncaught 500 that
+                    # would echo internals. The generic message never repeats
+                    # the offending expression.
+                    raise TemplateRenderError(
+                        "The template could not be rendered because it "
+                        "contains an unsupported or unsafe expression."
+                    ) from exc
 
                 # Save rendered document to BytesIO
                 output = io.BytesIO()

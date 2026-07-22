@@ -595,12 +595,13 @@ class TestDownloadVersionFile:
         assert file_bytes == RECIBO_BYTES
         assert filename == "Contrato Marco_Recibo de pago_v1.docx"
 
-    async def test_shared_user_can_download(
+    async def test_shared_user_is_denied(
         self,
         fake_template_repo: FakeTemplateRepository,
         fake_storage: FakeStorageService,
         fake_template_engine: FakeTemplateEngine,
     ):
+        """A share grants generation access, NOT raw related-file download."""
         service = make_service(fake_template_repo, fake_storage, fake_template_engine)
         template, version, tenant_id, owner_id = await upload_primary(service)
         file = await service.attach_version_file(
@@ -621,8 +622,31 @@ class TestDownloadVersionFile:
             shared_by=uuid.UUID(owner_id),
         )
 
+        with pytest.raises(TemplateAccessDeniedError):
+            await service.download_version_file(
+                template.id, version.id, file.id, user_id=str(shared_user), role="user"
+            )
+
+    async def test_admin_can_download(
+        self,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        service = make_service(fake_template_repo, fake_storage, fake_template_engine)
+        template, version, _, owner_id = await upload_primary(service)
+        file = await service.attach_version_file(
+            template.id,
+            version.id,
+            label="Recibo",
+            file_bytes=RECIBO_BYTES,
+            file_size=len(RECIBO_BYTES),
+            user_id=owner_id,
+            role="template_creator",
+        )
+
         file_bytes, _ = await service.download_version_file(
-            template.id, version.id, file.id, user_id=str(shared_user), role="user"
+            template.id, version.id, file.id, user_id=str(uuid.uuid4()), role="admin"
         )
         assert file_bytes == RECIBO_BYTES
 

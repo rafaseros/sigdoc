@@ -337,13 +337,36 @@ describe("TemplateDetail — per-version template download", () => {
     );
   });
 
-  it("shows the download button for a shared (non-owner) viewer", async () => {
+  it("hides the download button for a shared (non-owner) viewer", async () => {
+    // Raw template downloads are owner-or-admin only — a share grants
+    // document generation, not the stored .docx.
     const viewerTemplate: Template = {
       ...template,
       access_type: "shared",
       is_owner: false,
     };
     mockDetailResponses(viewerTemplate);
+    const user = userEvent.setup();
+    renderDetail();
+
+    await waitFor(() =>
+      expect(screen.getByText("Contrato de Servicios")).toBeInTheDocument(),
+    );
+
+    await user.click(screen.getByRole("button", { name: /^versiones/i }));
+
+    expect(
+      screen.queryByRole("button", { name: /descargar plantilla v1/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows the download button for an admin non-owner", async () => {
+    const adminTemplate: Template = {
+      ...template,
+      access_type: "admin",
+      is_owner: false,
+    };
+    mockDetailResponses(adminTemplate);
     const user = userEvent.setup();
     renderDetail();
 
@@ -522,5 +545,30 @@ describe("TemplateDetail — related documents per version", () => {
         { responseType: "blob" },
       ),
     );
+  });
+
+  it("hides the related-file download button for a shared (non-owner) viewer", async () => {
+    // Same owner-or-admin rule as the primary version download.
+    const sharedWithFile: Template = {
+      ...template,
+      access_type: "shared",
+      is_owner: false,
+      versions: [{ ...template.versions[0], files: [relatedFile] }],
+    };
+    mockDetailResponses(sharedWithFile);
+    const user = userEvent.setup();
+    renderDetail();
+
+    await waitFor(() =>
+      expect(screen.getByText("Contrato de Servicios")).toBeInTheDocument(),
+    );
+    await user.click(screen.getByRole("button", { name: /^versiones/i }));
+
+    expect(screen.getByText("Recibo de pago")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", {
+        name: /descargar documento relacionado/i,
+      }),
+    ).not.toBeInTheDocument();
   });
 });

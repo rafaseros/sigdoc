@@ -1589,6 +1589,60 @@ class TestUpdateVariableTypes:
                 current_user_id=recipient_id,
             )
 
+    async def test_cannot_update_variable_types_of_foreign_version(
+        self,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        """A version_id belonging to a DIFFERENT template must be rejected as
+        not-found — even when the caller owns the template named in the URL
+        path and both templates share the same tenant.
+
+        Without this guard a user owning template A could PATCH variables-meta
+        with template B's version_id and rewrite B's variable types / options /
+        computed formulas (resolved authoritatively at generation). Mirrors the
+        ownership check in get_version_structure.
+        """
+        service = make_service(fake_template_repo, fake_storage, fake_template_engine)
+        tenant_id = str(uuid.uuid4())
+        owner_id = str(uuid.uuid4())
+
+        fake_template_engine.variables_to_return = ["campo_a"]
+        tpl_a = await service.upload_template(
+            name="Template A",
+            file_bytes=b"fake-docx",
+            file_size=9,
+            tenant_id=tenant_id,
+            created_by=owner_id,
+        )
+        fake_template_engine.variables_to_return = ["campo_b"]
+        tpl_b = await service.upload_template(
+            name="Template B",
+            file_bytes=b"fake-docx",
+            file_size=9,
+            tenant_id=tenant_id,
+            created_by=owner_id,
+        )
+        foreign_version = tpl_b.versions[0]
+        original_meta = [dict(m) for m in (foreign_version.variables_meta or [])]
+
+        from app.presentation.schemas.template import VariableTypeOverride
+        overrides = [VariableTypeOverride(name="campo_b", type="decimal")]
+
+        # Owner of template A must NOT be able to touch template B's version.
+        with pytest.raises(TemplateNotFoundError):
+            await service.update_variable_types(
+                template_id=tpl_a.id,
+                version_id=foreign_version.id,
+                overrides=overrides,
+                current_user_id=tpl_a.created_by,
+            )
+
+        # Template B's version meta must remain untouched (no cross-template write).
+        reloaded = await fake_template_repo.get_version_by_id(foreign_version.id)
+        assert [dict(m) for m in (reloaded.variables_meta or [])] == original_meta
+
     async def test_unknown_variable_name_in_overrides_is_ignored(
         self,
         fake_template_repo: FakeTemplateRepository,
@@ -2403,8 +2457,9 @@ class TestShareTemplateWithQuota:
 
 class TestDownloadTemplateVersion:
     """download_template_version returns the stored .docx bytes of a specific
-    version plus a readable, header-safe filename. Access gate mirrors
-    get_version_structure: owner, shared user, or admin."""
+    version plus a readable, header-safe filename. Access gate is owner-or-admin
+    only (same rule as delete/rename): shared users can generate documents but
+    must not download the raw stored template."""
 
     async def test_owner_downloads_bytes_and_filename(
         self,
@@ -2493,12 +2548,13 @@ class TestDownloadTemplateVersion:
                 tpl.id, version.id, user_id=str(uuid.uuid4()), role="user"
             )
 
-    async def test_shared_user_allowed(
+    async def test_shared_user_denied(
         self,
         fake_template_repo: FakeTemplateRepository,
         fake_storage: FakeStorageService,
         fake_template_engine: FakeTemplateEngine,
     ):
+        """A share grants generation access, NOT raw template download."""
         service = make_service(fake_template_repo, fake_storage, fake_template_engine)
         tpl, tenant_id, owner_id = await upload_template_helper(service)
         version = tpl.versions[0]
@@ -2511,10 +2567,10 @@ class TestDownloadTemplateVersion:
             shared_by=tpl.created_by,
         )
 
-        file_bytes, _ = await service.download_template_version(
-            tpl.id, version.id, user_id=str(shared_user_id), role="user"
-        )
-        assert file_bytes == b"fake-docx-bytes"
+        with pytest.raises(TemplateAccessDeniedError):
+            await service.download_template_version(
+                tpl.id, version.id, user_id=str(shared_user_id), role="user"
+            )
 
     async def test_admin_allowed(
         self,

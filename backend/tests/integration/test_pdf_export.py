@@ -768,12 +768,17 @@ async def test_shared_user_cannot_download_docx(
 
 
 @pytest.mark.asyncio
-async def test_shared_user_can_download_pdf_via_share(
+async def test_shared_user_cannot_download_others_pdf_via_share_returns_404(
     async_client, app, auth_headers, fake_document_repo, fake_storage, fake_audit_repo
 ):
-    """T-INT-03b: Non-admin + format=pdf + via=share → 200 + audit has via="share".
+    """T-INT-03b: Non-admin non-creator + format=pdf + via=share → non-leaking 404.
 
-    SCEN-DDF-14: Share recipient downloads PDF with via=share → audit correct.
+    SCEN-DDF-14 (secured): a share recipient is NOT authorized to download another
+    user's document. ``via=share`` is only a client-asserted audit label with no
+    server-side share authorization behind it, so serving the bytes here was an
+    IDOR (finding #1). Ownership is now enforced (admin or creator only): a
+    non-creator non-admin gets DocumentNotFoundError -> 404 and nothing is served
+    or audited.
     """
     doc_id = uuid.uuid4()
     docx_minio_path = f"{TENANT_ID}/{doc_id}/SharePDF.docx"
@@ -809,17 +814,13 @@ async def test_shared_user_can_download_pdf_via_share(
             f"/api/v1/documents/{doc_id}/download?format=pdf&via=share",
             headers=auth_headers,
         )
-        assert response.status_code == 200, response.text
-        assert response.headers.get("content-type", "").lower() == "application/pdf"
+        # Ownership enforced: non-creator non-admin gets a non-leaking 404.
+        assert response.status_code == 404, response.text
 
-        # Audit event must record via="share" (user is NOT the creator)
+        # Access was denied before serving — no download must be audited.
         new_entries = fake_audit_repo._entries[initial_count:]
         download_events = [e for e in new_entries if e.action == "document.download"]
-        assert len(download_events) >= 1, "Expected DOCUMENT_DOWNLOAD audit event"
-        evt = download_events[-1]
-        assert evt.details.get("via") == "share", (
-            f"Expected via='share' in audit event, got: {evt.details}"
-        )
+        assert not download_events, "No download should be audited on denied access"
     finally:
         if original is not None:
             app.dependency_overrides[get_current_user] = original

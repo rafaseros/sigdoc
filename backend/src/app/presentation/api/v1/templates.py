@@ -709,8 +709,8 @@ async def download_template_version(
 ):
     """Download the stored .docx of a specific template version.
 
-    Accessible to any user with template access (owner, shared user, or
-    admin) — same gate as the structure endpoint.
+    Owner-or-admin only: a share grants document generation, not the raw
+    stored template — shared users receive 403.
     """
     try:
         file_bytes, filename = await service.download_template_version(
@@ -752,8 +752,9 @@ async def download_template_version(
 
 # ---------------------------------------------------------------------------
 # Related files per template version — N extra .docx sharing the version's
-# variable set. Managed only on the CURRENT version (owner/admin); readable
-# by anyone with template access.
+# variable set. Managed only on the CURRENT version (owner/admin); structure
+# readable by anyone with template access, raw .docx download owner/admin
+# only.
 # ---------------------------------------------------------------------------
 
 
@@ -997,8 +998,8 @@ async def download_version_file(
 ):
     """Download the stored .docx of a related file.
 
-    Accessible to any user with template access (owner, shared user, or
-    admin) — same gate as the primary version download.
+    Owner-or-admin only — same gate as the primary version download; shared
+    users receive 403.
     """
     try:
         file_bytes, filename = await service.download_version_file(

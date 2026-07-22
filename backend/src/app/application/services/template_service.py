@@ -139,13 +139,15 @@ class TemplateService:
         safety (keeps letters/digits including accents, spaces, ``_`` and
         ``-`` — same rule as generate_excel_template).
 
-        Access gate mirrors get_version_structure: any user with template
-        access (owner, shared user, or admin).
+        Access gate: owner-or-admin only — same rule as the other owner-only
+        operations (delete/rename/upload_new_version). A share grants
+        document generation, NOT the raw stored .docx template; shared users
+        get TemplateAccessDeniedError.
 
         Raises:
             TemplateVersionNotFoundError: version doesn't exist OR belongs to
                 a different template than the URL path indicates.
-            TemplateAccessDeniedError: user can't read this template.
+            TemplateAccessDeniedError: caller is not owner nor admin.
         """
         version = await self._repository.get_version_by_id(version_id)
         if version is None or version.template_id != template_id:
@@ -154,13 +156,8 @@ class TemplateService:
             )
 
         # CurrentUser.user_id can be a UUID instance (test fixture) or a string
-        # (real auth flow); normalise so has_access always sees a UUID.
+        # (real auth flow); normalise so the access check always sees a UUID.
         user_uuid = user_id if isinstance(user_id, uuid.UUID) else uuid.UUID(str(user_id))
-        has_access = await self._repository.has_access(
-            version.template_id, user_uuid, role
-        )
-        if not has_access:
-            raise TemplateAccessDeniedError("No tenés acceso a esta plantilla")
 
         template = await self._repository.get_by_id(version.template_id)
         if template is None:
@@ -168,6 +165,14 @@ class TemplateService:
             raise TemplateVersionNotFoundError(
                 f"Template version {version_id} not found"
             )
+
+        # Owner-or-admin gate — same pattern as the other owner-only
+        # operations (_check_access with require_owner=True). The template
+        # existence was just confirmed above, so _check_access cannot raise
+        # TemplateNotFoundError here.
+        await self._check_access(
+            version.template_id, user_uuid, role or "", require_owner=True
+        )
 
         file_bytes = await self._storage.download_file(
             bucket=self.TEMPLATES_BUCKET,
@@ -514,8 +519,8 @@ class TemplateService:
         ``{template.name}_{label}_v{n}.docx`` (same minimal sanitization as
         download_template_version).
 
-        Access gate mirrors download_template_version: any user with template
-        access (owner, shared user, or admin).
+        Access gate mirrors download_template_version: owner-or-admin only —
+        a share grants document generation, NOT the raw stored .docx.
         """
         version = await self._repository.get_version_by_id(version_id)
         if version is None or version.template_id != template_id:
@@ -524,23 +529,23 @@ class TemplateService:
             )
 
         user_uuid = user_id if isinstance(user_id, uuid.UUID) else uuid.UUID(str(user_id))
-        has_access = await self._repository.has_access(
-            version.template_id, user_uuid, role
-        )
-        if not has_access:
-            raise TemplateAccessDeniedError("No tenés acceso a esta plantilla")
-
-        file = await self._repository.get_version_file(version_id, file_id)
-        if file is None:
-            raise TemplateVersionFileNotFoundError(
-                f"Template version file {file_id} not found"
-            )
 
         template = await self._repository.get_by_id(version.template_id)
         if template is None:
             # FK guarantees the parent exists; defensive, non-leaking.
             raise TemplateVersionNotFoundError(
                 f"Template version {version_id} not found"
+            )
+
+        # Owner-or-admin gate — mirrors download_template_version.
+        await self._check_access(
+            version.template_id, user_uuid, role or "", require_owner=True
+        )
+
+        file = await self._repository.get_version_file(version_id, file_id)
+        if file is None:
+            raise TemplateVersionFileNotFoundError(
+                f"Template version file {file_id} not found"
             )
 
         file_bytes = await self._storage.download_file(
@@ -1215,9 +1220,17 @@ class TemplateService:
                 "Only the template owner can update variable types"
             )
 
-        # Find the version
+        # Find the version — it must both EXIST and BELONG to `template_id`.
+        # Without the template_id match, a user owning template X could PATCH
+        # variables-meta with a version_id from a DIFFERENT template in the same
+        # tenant and rewrite its variable types / options / computed formulas
+        # (the server resolves those formulas authoritatively at generation).
+        # Mirrors the ownership guard in get_version_structure. That method
+        # raises TemplateVersionNotFoundError, but the variables-meta endpoint
+        # maps only TemplateNotFoundError -> 404, so we raise TemplateNotFoundError
+        # here to keep the not-found HTTP status a consistent 404.
         version = await self._repository.get_version_by_id(version_id)
-        if version is None:
+        if version is None or version.template_id != template_id:
             raise TemplateNotFoundError(f"Version {version_id} not found")
 
         # Merge overrides into a copy of the existing variables_meta

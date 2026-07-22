@@ -22,6 +22,7 @@ from app.domain.ports.storage_service import StorageService
 from app.domain.ports.template_engine import TemplateEngine
 from app.domain.ports.template_repository import TemplateRepository
 from app.domain.services.computed_variables import computed_variable_names, resolve_computed
+from app.domain.services.permissions import can_view_all_documents
 from app.infrastructure.pdf.watermark import apply_watermark
 
 if TYPE_CHECKING:
@@ -387,10 +388,32 @@ class DocumentService:
 
         return pdf_bytes
 
-    async def get_document(self, document_id: uuid.UUID) -> dict:
-        """Get document by ID with fresh presigned URL."""
+    def _can_access_document(
+        self, document: Document, *, requester_id: uuid.UUID, role: str
+    ) -> bool:
+        """Ownership rule shared by get / download / delete / batch (finding #1).
+
+        Admins (can_view_all_documents) may access ANY document; every other
+        role may access ONLY documents they created. This is the exact same
+        decision the LIST endpoint applies via `created_by` scoping — kept in
+        one place so detail/download/delete/batch can never drift from it.
+        """
+        return can_view_all_documents(role) or document.created_by == requester_id
+
+    async def get_document(
+        self, document_id: uuid.UUID, *, requester_id: uuid.UUID, role: str
+    ) -> dict:
+        """Get document by ID with fresh presigned URL.
+
+        Enforces ownership (finding #1): a non-admin requester that did not
+        create the document gets a non-leaking DocumentNotFoundError (mapped
+        to 404), mirroring the folder/preset "not yours -> NotFound"
+        convention so the response never confirms the document's existence.
+        """
         document = await self._doc_repo.get_by_id(document_id)
-        if not document:
+        if not document or not self._can_access_document(
+            document, requester_id=requester_id, role=role
+        ):
             raise DocumentNotFoundError(f"Document {document_id} not found")
 
         download_url = await self._storage.get_presigned_url(
@@ -404,22 +427,41 @@ class DocumentService:
         }
 
     async def download_document(self, minio_path: str) -> bytes:
-        """Download a generated document from MinIO."""
+        """Download a generated document from MinIO.
+
+        Access is gated upstream: callers resolve the document via
+        get_document() (which enforces ownership) before requesting bytes by
+        path.
+        """
         return await self._storage.download_file(
             bucket=self.DOCUMENTS_BUCKET,
             path=minio_path,
         )
 
-    async def delete_document(self, document_id: uuid.UUID) -> None:
-        """Delete a document record and its file from MinIO."""
+    async def delete_document(
+        self, document_id: uuid.UUID, *, requester_id: uuid.UUID, role: str
+    ) -> None:
+        """Delete a document record and its files from MinIO.
+
+        Enforces ownership (finding #1): a non-admin requester that did not
+        create the document gets a non-leaking DocumentNotFoundError and the
+        document is left untouched. Both the DOCX and the PDF objects are
+        removed (finding #4) so dual-format documents never orphan a PDF.
+        """
         document = await self._doc_repo.get_by_id(document_id)
-        if not document:
+        if not document or not self._can_access_document(
+            document, requester_id=requester_id, role=role
+        ):
             raise DocumentNotFoundError(f"Document {document_id} not found")
-        # Delete from MinIO
-        try:
-            await self._storage.delete_file(self.DOCUMENTS_BUCKET, document.docx_minio_path)
-        except Exception:
-            pass  # File may already be gone
+        # Delete both MinIO objects (best-effort — a file may already be gone).
+        # The PDF was previously left behind, orphaning it on every delete.
+        for path in (document.docx_minio_path, document.pdf_minio_path):
+            if not path:
+                continue
+            try:
+                await self._storage.delete_file(self.DOCUMENTS_BUCKET, path)
+            except Exception:
+                pass  # File may already be gone
         # Delete from DB
         await self._doc_repo.delete(document_id)
 
@@ -459,15 +501,25 @@ class DocumentService:
         )
 
     async def list_documents_by_batch(
-        self, batch_id: UUID, tenant_id: UUID
+        self, batch_id: UUID, tenant_id: UUID, *, requester_id: UUID, role: str
     ) -> list:
-        """Return all documents for a given batch, scoped to tenant.
+        """Return the documents for a given batch, scoped to tenant AND owner.
 
         Public delegator for DocumentRepository.list_by_batch_id.
         Replaces the private _doc_repo access pattern used in the bulk
         download endpoint (W-PRES-02 fix). O(batch_size) instead of O(N total).
+
+        Ownership (finding #1): a non-admin requester only sees documents they
+        created. A whole batch is created by a single user, so a non-creator
+        non-admin gets an empty list — the endpoint then returns a non-leaking
+        404 exactly as it does for a non-existent batch. Admins see everything.
         """
-        return await self._doc_repo.list_by_batch_id(batch_id=batch_id, tenant_id=tenant_id)
+        docs = await self._doc_repo.list_by_batch_id(
+            batch_id=batch_id, tenant_id=tenant_id
+        )
+        if can_view_all_documents(role):
+            return docs
+        return [d for d in docs if d.created_by == requester_id]
 
     # ── Bulk generation methods ──────────────────────────────────────────
 
@@ -607,7 +659,18 @@ class DocumentService:
         if len(rows) == 0:
             raise VariablesMismatchError("Excel file has no data rows")
 
-        # Bulk limit check — quota_service takes precedence over legacy _bulk_limit
+        # Absolute hard cap — ALWAYS enforced, independent of the quota flag or
+        # whether tenant_id was threaded through (finding #2). This is the DoS
+        # guardrail: production wires quota_service + tier_id but never passes
+        # tenant_id, so the quota branch below used to skip the check entirely
+        # while the legacy fallback never ran — leaving bulk requests uncapped.
+        # `self._bulk_limit` already reflects the effective per-user/global
+        # limit (see get_document_service). Rejected BEFORE any row is rendered.
+        if len(rows) > self._bulk_limit:
+            raise BulkLimitExceededError(limit=self._bulk_limit)
+
+        # Tier/user quota bulk limit (defense-in-depth). Only ever further
+        # restricts the request; it can never loosen the absolute cap above.
         if self._quota_service is not None and self._tier_id is not None:
             effective_tenant_id = uuid.UUID(tenant_id) if tenant_id else None
             if effective_tenant_id is not None:
@@ -617,9 +680,6 @@ class DocumentService:
                     requested_count=len(rows),
                     user_bulk_override=user_bulk_override,
                 )
-        else:
-            if len(rows) > self._bulk_limit:
-                raise BulkLimitExceededError(limit=self._bulk_limit)
 
         return rows
 
@@ -700,156 +760,152 @@ class DocumentService:
         # Track all MinIO keys uploaded so far for rollback on failure (ADR-PDF-03 bulk)
         uploaded_minio_paths: list[str] = []
 
-        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-            for i, row_data in enumerate(rows):
-                # Resolve computed variables (server-authoritative) — same
-                # rule as generate_single/preview, applied per row so both
-                # the rendered document and the persisted variables_snapshot
-                # reflect resolved values. A ComputedVariableError mid-batch
-                # rolls back every file uploaded for prior rows, mirroring
-                # the PdfConversionError rollback below (no partial batches).
-                try:
+        # Finding #3: wrap the ENTIRE upload + persist region so that ANY
+        # exception after the first upload — a render failure, an upload
+        # failure, a ComputedVariableError, a PdfConversionError, or a failure
+        # while persisting the batch to the DB — best-effort deletes every
+        # object uploaded so far (docx/pdf AND the batch ZIP) and re-raises.
+        # Previously only ComputedVariableError and PdfConversionError rolled
+        # back; every other failure orphaned already-uploaded objects (no DB
+        # rows -> a retry would duplicate them).
+        try:
+            with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+                for i, row_data in enumerate(rows):
+                    # Resolve computed variables (server-authoritative) — same
+                    # rule as generate_single/preview, applied per row so both
+                    # the rendered document and the persisted variables_snapshot
+                    # reflect resolved values. A ComputedVariableError mid-batch
+                    # is caught by the outer handler and rolls the batch back.
                     row_data = resolve_computed(version.variables_meta, row_data)
-                except ComputedVariableError:
-                    for path in uploaded_minio_paths:
-                        try:
-                            await self._storage.delete_file(
-                                self.DOCUMENTS_BUCKET, path
-                            )
-                        except Exception:
-                            logger.warning(
-                                "Failed to delete bulk upload %s during rollback",
-                                path,
-                            )
-                    raise  # propagate — no DB rows persisted
 
-                # Generate the row's base filename from its first variable value
-                first_var = next(iter(row_data.values()), f"doc_{i + 1}")
-                safe_name = "".join(
-                    c for c in str(first_var) if c.isalnum() or c in " _-"
-                ).strip()[:50]
-                base_docx_file_name = (
-                    f"{i + 1:03d}_{safe_name}.docx"
-                    if safe_name
-                    else f"{i + 1:03d}_document.docx"
-                )
-
-                # group_id shared PER ROW when the version has related files
-                row_group_id: uuid.UUID | None = (
-                    uuid.uuid4() if related_specs else None
-                )
-
-                # Primary first, then related files by position — the label
-                # is injected before the extension for related files.
-                file_specs: list[tuple[str | None, bytes]] = [(None, template_bytes)]
-                file_specs += related_specs
-
-                for label, source_bytes in file_specs:
-                    # Render document (fresh DocxTemplate per render — engine)
-                    rendered_bytes = await self._engine.render(source_bytes, row_data)
-
-                    if label is None:
-                        docx_file_name = base_docx_file_name
-                    else:
-                        safe_label = (
-                            "".join(c for c in label if c.isalnum() or c in " _-")
-                            .strip()
-                            .replace(" ", "_")
-                        )
-                        stem = (
-                            base_docx_file_name[:-5]
-                            if base_docx_file_name.endswith(".docx")
-                            else base_docx_file_name
-                        )
-                        docx_file_name = f"{stem}_{safe_label or 'archivo'}.docx"
-
-                    zf.writestr(docx_file_name, rendered_bytes)
-
-                    doc_id = uuid.uuid4()
-                    docx_minio_path = f"{tenant_id}/{batch_id}/{docx_file_name}"
-
-                    # Upload DOCX to MinIO
-                    await self._storage.upload_file(
-                        bucket=self.DOCUMENTS_BUCKET,
-                        path=docx_minio_path,
-                        data=rendered_bytes,
-                        content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    # Generate the row's base filename from its first variable value
+                    first_var = next(iter(row_data.values()), f"doc_{i + 1}")
+                    safe_name = "".join(
+                        c for c in str(first_var) if c.isalnum() or c in " _-"
+                    ).strip()[:50]
+                    base_docx_file_name = (
+                        f"{i + 1:03d}_{safe_name}.docx"
+                        if safe_name
+                        else f"{i + 1:03d}_document.docx"
                     )
-                    uploaded_minio_paths.append(docx_minio_path)
 
-                    # Convert DOCX → PDF (ADR-PDF-03 bulk: atomic, sequential)
-                    pdf_file_name: str | None = None
-                    pdf_minio_path: str | None = None
+                    # group_id shared PER ROW when the version has related files
+                    row_group_id: uuid.UUID | None = (
+                        uuid.uuid4() if related_specs else None
+                    )
 
-                    if self._pdf_converter is not None:
-                        try:
-                            pdf_bytes = await self._pdf_converter.convert(rendered_bytes)
-                        except PdfConversionError:
-                            # Rollback: delete ALL uploaded files for this batch
-                            for path in uploaded_minio_paths:
-                                try:
-                                    await self._storage.delete_file(
-                                        self.DOCUMENTS_BUCKET, path
-                                    )
-                                except Exception:
-                                    logger.warning(
-                                        "Failed to delete bulk upload %s during rollback",
-                                        path,
-                                    )
-                            raise  # propagate — no DB rows persisted
+                    # Primary first, then related files by position — the label
+                    # is injected before the extension for related files.
+                    file_specs: list[tuple[str | None, bytes]] = [(None, template_bytes)]
+                    file_specs += related_specs
 
-                        # Upload PDF to MinIO
-                        pdf_stem = (
-                            docx_file_name[:-5]
-                            if docx_file_name.endswith(".docx")
-                            else f"{doc_id}"
-                        )
-                        pdf_file_name = f"{pdf_stem}.pdf"
-                        pdf_minio_path = f"{tenant_id}/{batch_id}/{pdf_file_name}"
+                    for label, source_bytes in file_specs:
+                        # Render document (fresh DocxTemplate per render — engine)
+                        rendered_bytes = await self._engine.render(source_bytes, row_data)
+
+                        if label is None:
+                            docx_file_name = base_docx_file_name
+                        else:
+                            safe_label = (
+                                "".join(c for c in label if c.isalnum() or c in " _-")
+                                .strip()
+                                .replace(" ", "_")
+                            )
+                            stem = (
+                                base_docx_file_name[:-5]
+                                if base_docx_file_name.endswith(".docx")
+                                else base_docx_file_name
+                            )
+                            docx_file_name = f"{stem}_{safe_label or 'archivo'}.docx"
+
+                        zf.writestr(docx_file_name, rendered_bytes)
+
+                        doc_id = uuid.uuid4()
+                        docx_minio_path = f"{tenant_id}/{batch_id}/{docx_file_name}"
+
+                        # Upload DOCX to MinIO
                         await self._storage.upload_file(
                             bucket=self.DOCUMENTS_BUCKET,
-                            path=pdf_minio_path,
-                            data=pdf_bytes,
-                            content_type="application/pdf",
+                            path=docx_minio_path,
+                            data=rendered_bytes,
+                            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                         )
-                        uploaded_minio_paths.append(pdf_minio_path)
+                        uploaded_minio_paths.append(docx_minio_path)
 
-                    # Build domain entity (not persisted until all rows succeed)
-                    doc = Document(
-                        id=doc_id,
-                        tenant_id=uuid.UUID(tenant_id),
-                        template_version_id=uuid.UUID(template_version_id),
-                        docx_minio_path=docx_minio_path,
-                        docx_file_name=docx_file_name,
-                        pdf_file_name=pdf_file_name,
-                        pdf_minio_path=pdf_minio_path,
-                        generation_type="bulk",
-                        batch_id=batch_id,
-                        group_id=row_group_id,
-                        variables_snapshot=row_data,
-                        created_by=uuid.UUID(created_by),
-                        status="completed",
-                        template_id=version.template_id,
-                        template_name=template_name,
-                        template_version=version.version,
+                        # Convert DOCX → PDF (ADR-PDF-03 bulk: atomic, sequential)
+                        pdf_file_name: str | None = None
+                        pdf_minio_path: str | None = None
+
+                        if self._pdf_converter is not None:
+                            pdf_bytes = await self._pdf_converter.convert(rendered_bytes)
+
+                            # Upload PDF to MinIO
+                            pdf_stem = (
+                                docx_file_name[:-5]
+                                if docx_file_name.endswith(".docx")
+                                else f"{doc_id}"
+                            )
+                            pdf_file_name = f"{pdf_stem}.pdf"
+                            pdf_minio_path = f"{tenant_id}/{batch_id}/{pdf_file_name}"
+                            await self._storage.upload_file(
+                                bucket=self.DOCUMENTS_BUCKET,
+                                path=pdf_minio_path,
+                                data=pdf_bytes,
+                                content_type="application/pdf",
+                            )
+                            uploaded_minio_paths.append(pdf_minio_path)
+
+                        # Build domain entity (not persisted until all rows succeed)
+                        doc = Document(
+                            id=doc_id,
+                            tenant_id=uuid.UUID(tenant_id),
+                            template_version_id=uuid.UUID(template_version_id),
+                            docx_minio_path=docx_minio_path,
+                            docx_file_name=docx_file_name,
+                            pdf_file_name=pdf_file_name,
+                            pdf_minio_path=pdf_minio_path,
+                            generation_type="bulk",
+                            batch_id=batch_id,
+                            group_id=row_group_id,
+                            variables_snapshot=row_data,
+                            created_by=uuid.UUID(created_by),
+                            status="completed",
+                            template_id=version.template_id,
+                            template_name=template_name,
+                            template_version=version.version,
+                        )
+                        documents.append(doc)
+
+            zip_buffer.seek(0)
+            zip_bytes = zip_buffer.read()
+
+            # Upload ZIP to MinIO
+            zip_path = f"{tenant_id}/{batch_id}/bulk.zip"
+            await self._storage.upload_file(
+                bucket=self.DOCUMENTS_BUCKET,
+                path=zip_path,
+                data=zip_bytes,
+                content_type="application/zip",
+            )
+            # Track the ZIP too so a DB-persist failure below rolls it back.
+            uploaded_minio_paths.append(zip_path)
+
+            # Save document records to DB (all rows succeeded — persist atomically)
+            if documents:
+                await self._doc_repo.create_batch(documents)
+        except Exception:
+            # Any failure after the first upload: delete EVERY uploaded object
+            # (docx/pdf/zip) best-effort, then re-raise so no partial batch and
+            # no orphaned MinIO objects survive.
+            for path in uploaded_minio_paths:
+                try:
+                    await self._storage.delete_file(self.DOCUMENTS_BUCKET, path)
+                except Exception:
+                    logger.warning(
+                        "Failed to delete bulk upload %s during rollback",
+                        path,
                     )
-                    documents.append(doc)
-
-        zip_buffer.seek(0)
-        zip_bytes = zip_buffer.read()
-
-        # Upload ZIP to MinIO
-        zip_path = f"{tenant_id}/{batch_id}/bulk.zip"
-        await self._storage.upload_file(
-            bucket=self.DOCUMENTS_BUCKET,
-            path=zip_path,
-            data=zip_bytes,
-            content_type="application/zip",
-        )
-
-        # Save document records to DB (all rows succeeded — persist atomically)
-        if documents:
-            await self._doc_repo.create_batch(documents)
+            raise  # propagate — no DB rows persisted
 
         # Record usage + audit (both optional for backward compat)
         success_count = len(documents)

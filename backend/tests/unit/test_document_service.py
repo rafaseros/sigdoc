@@ -12,12 +12,14 @@ from app.application.services.usage_service import UsageService
 from app.domain.entities import AuditAction, Document, Template, TemplateVersion
 from app.domain.exceptions import (
     BulkLimitExceededError,
+    DocumentNotFoundError,
     TemplateAccessDeniedError,
     TemplateVersionNotFoundError,
 )
 from tests.fakes import (
     FakeAuditRepository,
     FakeDocumentRepository,
+    FakePdfConverter,
     FakeStorageService,
     FakeTemplateEngine,
     FakeTemplateRepository,
@@ -51,12 +53,14 @@ def make_service(
     bulk_limit: int = 10,
     usage_service: UsageService | None = None,
     audit_service: AuditService | None = None,
+    pdf_converter: FakePdfConverter | None = None,
 ) -> DocumentService:
     return DocumentService(
         document_repository=fake_doc_repo,
         template_repository=fake_tpl_repo,
         storage=fake_storage,
         engine=fake_engine,
+        pdf_converter=pdf_converter,
         bulk_generation_limit=bulk_limit,
         usage_service=usage_service,
         audit_service=audit_service,
@@ -343,8 +347,15 @@ class TestDeleteDocument:
         fake_storage: FakeStorageService,
         fake_template_engine: FakeTemplateEngine,
     ):
+        # Wire a PDF converter so the generated document is dual-format
+        # (docx + pdf). delete_document MUST remove BOTH MinIO objects —
+        # the PDF was previously orphaned (finding #4).
         service = make_service(
-            fake_document_repo, fake_template_repo, fake_storage, fake_template_engine
+            fake_document_repo,
+            fake_template_repo,
+            fake_storage,
+            fake_template_engine,
+            pdf_converter=FakePdfConverter(),
         )
         version, version_id, tenant_id, user_id = seed_version(fake_template_repo, fake_storage)
 
@@ -360,19 +371,23 @@ class TestDeleteDocument:
         doc_id = doc.id
 
         assert len(fake_document_repo._documents) == 1
-        # Storage has template file + doc file
-        initial_doc_files = [
-            (b, p) for (b, p) in fake_storage.files if b == "documents"
-        ]
-        assert len(initial_doc_files) >= 1
+        # The dual-format generation uploaded both a docx and a pdf object.
+        assert doc.docx_minio_path is not None
+        assert doc.pdf_minio_path is not None
+        assert ("documents", doc.docx_minio_path) in fake_storage.files
+        assert ("documents", doc.pdf_minio_path) in fake_storage.files
 
-        # Delete
-        await service.delete_document(doc_id)
+        # Delete (owner acting on their own document)
+        await service.delete_document(
+            doc_id, requester_id=uuid.UUID(user_id), role="user"
+        )
 
         # Repo should be empty
         assert len(fake_document_repo._documents) == 0
 
-        # No more documents-bucket files
+        # Both the docx AND the pdf object must be gone (no orphaned PDF).
+        assert ("documents", doc.docx_minio_path) not in fake_storage.files
+        assert ("documents", doc.pdf_minio_path) not in fake_storage.files
         remaining_doc_files = [
             (b, p) for (b, p) in fake_storage.files if b == "documents"
         ]
@@ -385,13 +400,301 @@ class TestDeleteDocument:
         fake_storage: FakeStorageService,
         fake_template_engine: FakeTemplateEngine,
     ):
-        from app.domain.exceptions import DocumentNotFoundError
-
         service = make_service(
             fake_document_repo, fake_template_repo, fake_storage, fake_template_engine
         )
         with pytest.raises(DocumentNotFoundError):
-            await service.delete_document(uuid.uuid4())
+            await service.delete_document(
+                uuid.uuid4(), requester_id=uuid.uuid4(), role="user"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Finding #1 — IDOR / broken access control on generated documents
+#
+# get_document / delete_document / list_documents_by_batch must enforce the
+# SAME ownership rule the list endpoint already applies: a non-admin may only
+# access documents they created; admins (can_view_all_documents) may access
+# all. A non-creator non-admin gets a non-leaking DocumentNotFoundError (404),
+# mirroring the folder/preset "not yours -> NotFound" convention.
+# ---------------------------------------------------------------------------
+
+
+class TestDocumentAccessControl:
+    """Ownership enforcement shared by get/download/delete/batch (finding #1)."""
+
+    async def _seed_owned_document(
+        self,
+        doc_repo: FakeDocumentRepository,
+        tpl_repo: FakeTemplateRepository,
+        storage: FakeStorageService,
+        engine: FakeTemplateEngine,
+    ):
+        """Generate a single document owned by a fresh owner. Returns
+        (service, doc_id, owner_id: UUID)."""
+        service = make_service(doc_repo, tpl_repo, storage, engine)
+        owner_id = uuid.uuid4()
+        _, version_id, tenant_id, _ = seed_version(
+            tpl_repo, storage, owner_id=owner_id
+        )
+        result = await service.generate_single(
+            template_version_id=version_id,
+            variables={"name": "Alice", "company": "ACME"},
+            tenant_id=tenant_id,
+            created_by=str(owner_id),
+        )
+        return service, result["documents"][0].id, owner_id
+
+    # ---- get_document --------------------------------------------------
+
+    async def test_get_document_non_creator_non_admin_raises_not_found(
+        self,
+        fake_document_repo: FakeDocumentRepository,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        service, doc_id, _owner = await self._seed_owned_document(
+            fake_document_repo, fake_template_repo, fake_storage, fake_template_engine
+        )
+        with pytest.raises(DocumentNotFoundError):
+            await service.get_document(
+                doc_id, requester_id=uuid.uuid4(), role="user"
+            )
+
+    async def test_get_document_creator_succeeds(
+        self,
+        fake_document_repo: FakeDocumentRepository,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        service, doc_id, owner_id = await self._seed_owned_document(
+            fake_document_repo, fake_template_repo, fake_storage, fake_template_engine
+        )
+        result = await service.get_document(
+            doc_id, requester_id=owner_id, role="user"
+        )
+        assert result["document"].id == doc_id
+
+    async def test_get_document_admin_succeeds(
+        self,
+        fake_document_repo: FakeDocumentRepository,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        service, doc_id, _owner = await self._seed_owned_document(
+            fake_document_repo, fake_template_repo, fake_storage, fake_template_engine
+        )
+        # A different user, but with the admin role -> full access.
+        result = await service.get_document(
+            doc_id, requester_id=uuid.uuid4(), role="admin"
+        )
+        assert result["document"].id == doc_id
+
+    # ---- delete_document (correctness audit flagged the missing case) ---
+
+    async def test_delete_document_non_creator_non_admin_raises_not_found(
+        self,
+        fake_document_repo: FakeDocumentRepository,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        service, doc_id, _owner = await self._seed_owned_document(
+            fake_document_repo, fake_template_repo, fake_storage, fake_template_engine
+        )
+        with pytest.raises(DocumentNotFoundError):
+            await service.delete_document(
+                doc_id, requester_id=uuid.uuid4(), role="user"
+            )
+        # The document (and its file) must NOT have been deleted.
+        assert doc_id in fake_document_repo._documents
+
+    async def test_delete_document_creator_succeeds(
+        self,
+        fake_document_repo: FakeDocumentRepository,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        service, doc_id, owner_id = await self._seed_owned_document(
+            fake_document_repo, fake_template_repo, fake_storage, fake_template_engine
+        )
+        await service.delete_document(
+            doc_id, requester_id=owner_id, role="user"
+        )
+        assert doc_id not in fake_document_repo._documents
+
+    async def test_delete_document_admin_succeeds(
+        self,
+        fake_document_repo: FakeDocumentRepository,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        service, doc_id, _owner = await self._seed_owned_document(
+            fake_document_repo, fake_template_repo, fake_storage, fake_template_engine
+        )
+        await service.delete_document(
+            doc_id, requester_id=uuid.uuid4(), role="admin"
+        )
+        assert doc_id not in fake_document_repo._documents
+
+    # ---- batch / bulk download scoping --------------------------------
+
+    async def _seed_owned_batch(
+        self,
+        doc_repo: FakeDocumentRepository,
+        tpl_repo: FakeTemplateRepository,
+        storage: FakeStorageService,
+        engine: FakeTemplateEngine,
+    ):
+        """Generate a bulk batch owned by a fresh owner. Returns
+        (service, batch_id, tenant_id: UUID, owner_id: UUID)."""
+        service = make_service(doc_repo, tpl_repo, storage, engine)
+        owner_id = uuid.uuid4()
+        _, version_id, tenant_id, _ = seed_version(
+            tpl_repo, storage, owner_id=owner_id
+        )
+        result = await service.generate_bulk(
+            template_version_id=version_id,
+            rows=[
+                {"name": "Alice", "company": "ACME"},
+                {"name": "Bob", "company": "Corp"},
+            ],
+            tenant_id=tenant_id,
+            created_by=str(owner_id),
+        )
+        return service, result["batch_id"], uuid.UUID(tenant_id), owner_id
+
+    async def test_batch_non_creator_non_admin_sees_nothing(
+        self,
+        fake_document_repo: FakeDocumentRepository,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        service, batch_id, tenant_id, _owner = await self._seed_owned_batch(
+            fake_document_repo, fake_template_repo, fake_storage, fake_template_engine
+        )
+        docs = await service.list_documents_by_batch(
+            batch_id=batch_id,
+            tenant_id=tenant_id,
+            requester_id=uuid.uuid4(),
+            role="user",
+        )
+        # Non-creator non-admin: batch is invisible -> endpoint returns 404.
+        assert docs == []
+
+    async def test_batch_creator_sees_batch(
+        self,
+        fake_document_repo: FakeDocumentRepository,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        service, batch_id, tenant_id, owner_id = await self._seed_owned_batch(
+            fake_document_repo, fake_template_repo, fake_storage, fake_template_engine
+        )
+        docs = await service.list_documents_by_batch(
+            batch_id=batch_id,
+            tenant_id=tenant_id,
+            requester_id=owner_id,
+            role="user",
+        )
+        assert len(docs) == 2
+
+    async def test_batch_admin_sees_batch(
+        self,
+        fake_document_repo: FakeDocumentRepository,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        service, batch_id, tenant_id, _owner = await self._seed_owned_batch(
+            fake_document_repo, fake_template_repo, fake_storage, fake_template_engine
+        )
+        docs = await service.list_documents_by_batch(
+            batch_id=batch_id,
+            tenant_id=tenant_id,
+            requester_id=uuid.uuid4(),
+            role="admin",
+        )
+        assert len(docs) == 2
+
+
+# ---------------------------------------------------------------------------
+# Finding #2 — Unbounded bulk generation (DoS)
+#
+# parse_excel_data MUST enforce an absolute row cap (self._bulk_limit) on
+# every request, independent of the quota flag. Production wires a
+# quota_service + tier_id but never threads tenant_id through, so the
+# quota branch used to skip the check entirely and the legacy fallback never
+# ran -> no cap. The absolute cap closes that hole BEFORE any row is rendered.
+# ---------------------------------------------------------------------------
+
+
+class TestBulkAbsoluteRowCap:
+    async def test_absolute_cap_enforced_even_with_quota_service(
+        self,
+        fake_document_repo: FakeDocumentRepository,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        """Mirrors production wiring: quota_service + tier_id set, but no
+        tenant_id passed (router omits it). The absolute cap must still
+        reject an over-limit request."""
+        cap = 3
+        service = DocumentService(
+            document_repository=fake_document_repo,
+            template_repository=fake_template_repo,
+            storage=fake_storage,
+            engine=fake_template_engine,
+            bulk_generation_limit=cap,
+            quota_service=FakeQuotaService(),  # quota checks are no-ops
+            tier_id=FREE_TIER_ID,
+        )
+        variables = ["name"]
+        _, version_id, _, _ = seed_version(
+            fake_template_repo, fake_storage, variables
+        )
+        # cap + 1 rows -> must be rejected regardless of the quota path.
+        excel_bytes = make_excel_bytes(variables, [["Alice"]] * (cap + 1))
+
+        with pytest.raises(BulkLimitExceededError) as exc_info:
+            await service.parse_excel_data(version_id, excel_bytes)
+
+        assert exc_info.value.limit == cap
+
+    async def test_absolute_cap_allows_request_at_limit_with_quota_service(
+        self,
+        fake_document_repo: FakeDocumentRepository,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        """A request exactly at the cap still succeeds (no false positive)."""
+        cap = 3
+        service = DocumentService(
+            document_repository=fake_document_repo,
+            template_repository=fake_template_repo,
+            storage=fake_storage,
+            engine=fake_template_engine,
+            bulk_generation_limit=cap,
+            quota_service=FakeQuotaService(),
+            tier_id=FREE_TIER_ID,
+        )
+        variables = ["name"]
+        _, version_id, _, _ = seed_version(
+            fake_template_repo, fake_storage, variables
+        )
+        excel_bytes = make_excel_bytes(variables, [["Alice"]] * cap)
+
+        rows = await service.parse_excel_data(version_id, excel_bytes)
+        assert len(rows) == cap
 
 
 # ---------------------------------------------------------------------------
@@ -842,7 +1145,9 @@ class TestDeleteDocumentAudit:
         await _asyncio.sleep(0)
         fake_audit_repo._entries.clear()
 
-        await service.delete_document(doc_id)
+        await service.delete_document(
+            doc_id, requester_id=uuid.UUID(user_id), role="user"
+        )
         # Yield to event loop so fire-and-forget create_task completes
         await _asyncio.sleep(0)
 

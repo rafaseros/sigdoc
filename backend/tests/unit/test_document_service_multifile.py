@@ -648,3 +648,97 @@ class TestGenerateBulkMultiFile:
         doc_files = [(b, p) for (b, p) in fake_storage.files if b == "documents"]
         assert doc_files == [], f"expected full rollback, found {doc_files}"
         assert len(fake_document_repo._documents) == 0
+
+
+# ---------------------------------------------------------------------------
+# Finding #3 — MinIO orphan objects on ANY mid-batch failure
+#
+# generate_bulk previously rolled back uploaded objects only for
+# ComputedVariableError and PdfConversionError. A render failure, an
+# upload failure, or a DB-persist failure left already-uploaded docx/pdf/zip
+# objects orphaned (no DB rows -> a retry duplicates them). Any exception
+# after uploads must best-effort delete every uploaded object, then re-raise.
+# ---------------------------------------------------------------------------
+
+
+class TestGenerateBulkRollbackOnAnyFailure:
+    async def test_rollback_on_render_failure_mid_batch(
+        self,
+        fake_document_repo: FakeDocumentRepository,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+    ):
+        """A render failure at a later row deletes every object uploaded for
+        the prior rows (no orphans, no DB rows)."""
+        call_count = 0
+
+        class FailOnThirdRender(FakeTemplateEngine):
+            async def render(self, file_bytes: bytes, variables: dict) -> bytes:
+                nonlocal call_count
+                call_count += 1
+                # row0 primary (1), row0 related (2), row1 primary (3) -> boom.
+                if call_count == 3:
+                    raise RuntimeError("engine exploded rendering row 2")
+                return await super().render(file_bytes, variables)
+
+        engine = FailOnThirdRender()
+        service = make_service(
+            fake_document_repo, fake_template_repo, fake_storage, engine
+        )
+        _, version_id, tenant_id, user_id = seed_version_with_files(
+            fake_template_repo, fake_storage, labels=["Recibo"]
+        )
+
+        rows = [
+            {"name": "Alice", "company": "ACME"},
+            {"name": "Bob", "company": "Corp"},
+        ]
+        with pytest.raises(RuntimeError):
+            await service.generate_bulk(
+                template_version_id=version_id,
+                rows=rows,
+                tenant_id=tenant_id,
+                created_by=user_id,
+            )
+
+        doc_files = [(b, p) for (b, p) in fake_storage.files if b == "documents"]
+        assert doc_files == [], f"expected full rollback, found {doc_files}"
+        assert len(fake_document_repo._documents) == 0
+
+    async def test_rollback_on_db_persist_failure(
+        self,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+    ):
+        """A failure while persisting the batch to the DB deletes every
+        uploaded object (docx/pdf/zip) — nothing is left orphaned."""
+
+        class FailingCreateBatchRepo(FakeDocumentRepository):
+            async def create_batch(self, documents):
+                raise RuntimeError("DB persist failed")
+
+        doc_repo = FailingCreateBatchRepo()
+        engine = FakeTemplateEngine()
+        service = make_service(
+            doc_repo,
+            fake_template_repo,
+            fake_storage,
+            engine,
+            pdf_converter=FakePdfConverter(),
+        )
+        _, version_id, tenant_id, user_id = seed_version_with_files(
+            fake_template_repo, fake_storage, labels=["Recibo"]
+        )
+
+        rows = [{"name": "Alice", "company": "ACME"}]
+        with pytest.raises(RuntimeError):
+            await service.generate_bulk(
+                template_version_id=version_id,
+                rows=rows,
+                tenant_id=tenant_id,
+                created_by=user_id,
+            )
+
+        doc_files = [(b, p) for (b, p) in fake_storage.files if b == "documents"]
+        assert doc_files == [], f"expected full rollback, found {doc_files}"
+        assert len(doc_repo._documents) == 0

@@ -1515,24 +1515,29 @@ export default function TemplateDetail({
                               Agregar documento relacionado
                             </Button>
                           )}
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            aria-label={`Descargar plantilla v${version.version}`}
-                            title={`Descargar plantilla v${version.version}`}
-                            onClick={() =>
-                              handleDownloadVersion(version.id, version.version)
-                            }
-                            className="shrink-0 text-[var(--fg-2)] hover:bg-[var(--bg-accent)]/60 hover:text-[var(--primary)]"
-                          >
-                            <Download className="size-4" />
-                          </Button>
+                          {/* Raw template download is owner/admin only —
+                              mirrors the backend's owner-or-admin gate. */}
+                          {isOwnerOrAdmin && (
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
+                              aria-label={`Descargar plantilla v${version.version}`}
+                              title={`Descargar plantilla v${version.version}`}
+                              onClick={() =>
+                                handleDownloadVersion(version.id, version.version)
+                              }
+                              className="shrink-0 text-[var(--fg-2)] hover:bg-[var(--bg-accent)]/60 hover:text-[var(--primary)]"
+                            >
+                              <Download className="size-4" />
+                            </Button>
+                          )}
                         </div>
 
                         {/* Related documents of this version — indented
-                            sublist under the version row. Download is open
-                            to anyone with template access; removal only on
-                            the current version for owner/admin. */}
+                            sublist under the version row. Raw .docx download
+                            is owner/admin only (same backend gate as the
+                            primary version download); removal only on the
+                            current version for owner/admin. */}
                         {version.files.length > 0 && (
                           <div className="mt-3 flex flex-col border-t border-[rgba(195,198,215,0.15)] pt-1.5 pl-3 sm:pl-[54px]">
                             {version.files.map((file) => (
@@ -1550,22 +1555,24 @@ export default function TemplateDetail({
                                   {formatFileSize(file.file_size)}
                                 </span>
                                 <span className="flex-1" />
-                                <Button
-                                  variant="ghost"
-                                  size="icon-sm"
-                                  aria-label={`Descargar documento relacionado ${file.label}`}
-                                  title={`Descargar documento relacionado ${file.label}`}
-                                  onClick={() =>
-                                    handleDownloadVersionFile(
-                                      version.id,
-                                      version.version,
-                                      file,
-                                    )
-                                  }
-                                  className="shrink-0 text-[var(--fg-2)] hover:bg-[var(--bg-accent)]/60 hover:text-[var(--primary)]"
-                                >
-                                  <Download className="size-4" />
-                                </Button>
+                                {isOwnerOrAdmin && (
+                                  <Button
+                                    variant="ghost"
+                                    size="icon-sm"
+                                    aria-label={`Descargar documento relacionado ${file.label}`}
+                                    title={`Descargar documento relacionado ${file.label}`}
+                                    onClick={() =>
+                                      handleDownloadVersionFile(
+                                        version.id,
+                                        version.version,
+                                        file,
+                                      )
+                                    }
+                                    className="shrink-0 text-[var(--fg-2)] hover:bg-[var(--bg-accent)]/60 hover:text-[var(--primary)]"
+                                  >
+                                    <Download className="size-4" />
+                                  </Button>
+                                )}
                                 {canManageFiles && (
                                   <Button
                                     variant="ghost"

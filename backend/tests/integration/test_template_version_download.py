@@ -1,8 +1,8 @@
 """Integration tests — GET /templates/{template_id}/versions/{version_id}/download.
 
-Access matrix (same gate as get_version_structure — any user with template
-access): owner OK, shared user OK, unrelated user blocked, admin OK,
-version-of-another-template 404.
+Access matrix (owner-or-admin only — raw stored .docx downloads are NOT
+available to shared users): owner OK, admin OK, shared user blocked (403),
+unrelated user blocked (403), version-of-another-template 404.
 
 Follows the style of test_template_endpoint_gates.py: fakes wired in the
 integration conftest, per-test get_current_user overrides.
@@ -125,9 +125,11 @@ async def test_owner_can_download_template_version(
 
 
 @pytest.mark.asyncio
-async def test_shared_user_can_download_template_version(
+async def test_shared_user_blocked_from_template_version_download(
     async_client, app, auth_headers, fake_template_repo, fake_storage
 ):
+    """Shared users can generate documents but must NOT download the raw
+    stored .docx template — owner-or-admin only."""
     tpl_id, ver_id = _seed_template_with_version(
         fake_template_repo, fake_storage, OWNER_USER_ID
     )
@@ -144,8 +146,7 @@ async def test_shared_user_can_download_template_version(
             headers=auth_headers,
         )
 
-    assert response.status_code == 200, response.text
-    assert response.content == TEMPLATE_BYTES
+    assert response.status_code == 403, response.text
 
 
 @pytest.mark.asyncio

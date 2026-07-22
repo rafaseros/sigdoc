@@ -8,7 +8,8 @@ Routes under test:
 - POST   /api/v1/documents/generate (new {"documents": [...], "group_id"} shape)
 
 Access matrix: attach/detach = owner-or-admin (role-gated by
-require_template_manager first); download/structure = any template access.
+require_template_manager first); download = owner-or-admin (raw stored .docx
+is not available to shared users); structure = any template access.
 
 Follows the style of test_template_version_download.py: fakes wired in the
 integration conftest, per-test get_current_user overrides.
@@ -447,9 +448,11 @@ async def test_owner_can_download_related_file(
 
 
 @pytest.mark.asyncio
-async def test_shared_user_can_download_related_file(
+async def test_shared_user_blocked_from_related_file_download(
     async_client, app, auth_headers, fake_template_repo, fake_storage
 ):
+    """Shared users can generate documents but must NOT download the raw
+    stored .docx of a related file — owner-or-admin only."""
     tpl_id, ver_id = _seed_template(fake_template_repo, fake_storage)
     file = _seed_related_file(fake_template_repo, fake_storage, tpl_id, ver_id)
     await fake_template_repo.add_share(
@@ -464,6 +467,22 @@ async def test_shared_user_can_download_related_file(
             f"/api/v1/templates/{tpl_id}/versions/{ver_id}/files/{file.id}/download",
             headers=auth_headers,
         )
+
+    assert response.status_code == 403, response.text
+
+
+@pytest.mark.asyncio
+async def test_admin_can_download_related_file(
+    async_client, app, auth_headers, fake_template_repo, fake_storage
+):
+    # Conftest default user is admin — no override needed.
+    tpl_id, ver_id = _seed_template(fake_template_repo, fake_storage)
+    file = _seed_related_file(fake_template_repo, fake_storage, tpl_id, ver_id)
+
+    response = await async_client.get(
+        f"/api/v1/templates/{tpl_id}/versions/{ver_id}/files/{file.id}/download",
+        headers=auth_headers,
+    )
 
     assert response.status_code == 200, response.text
     assert response.content == RECIBO_BYTES

@@ -27,6 +27,20 @@ class InvalidTemplateError(DomainError):
     """Invalid template file."""
 
 
+class TemplateRenderError(DomainError):
+    """A template could not be rendered safely.
+
+    Raised by template engines when a template triggers a Jinja error at
+    render time — most importantly a sandbox ``SecurityError`` (e.g. an
+    uploaded .docx containing an unsafe expression such as attribute access
+    into Python internals: ``{{ x.__class__.__mro__ }}`` /
+    ``{{ cycler.__init__.__globals__ }}``), but also ``UndefinedError`` or
+    any other ``TemplateError``. The engine catches the raw Jinja exception
+    and raises this domain error so the API layer can return a non-leaking
+    4xx instead of an uncaught 500. The message is intentionally generic and
+    never echoes the offending expression or internal state."""
+
+
 class BulkLimitExceededError(DomainError):
     """Bulk generation limit exceeded."""
     def __init__(self, limit: int = 10):
