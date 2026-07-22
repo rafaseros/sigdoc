@@ -11,6 +11,7 @@ from app.domain.exceptions import (
     BulkLimitExceededError,
     ComputedVariableError,
     DocumentNotFoundError,
+    InvalidSpreadsheetError,
     PdfConversionError,
     TemplateAccessDeniedError,
     TemplateVersionFileNotFoundError,
@@ -607,7 +608,10 @@ class DocumentService:
         Raises TemplateAccessDeniedError if user lacks access.
         """
         import openpyxl
+        import zipfile
         from io import BytesIO
+
+        from openpyxl.utils.exceptions import InvalidFileException
 
         version = await self._tpl_repo.get_version_by_id(
             uuid.UUID(template_version_id)
@@ -625,11 +629,38 @@ class DocumentService:
             if not has_access:
                 raise TemplateAccessDeniedError("No tenés acceso a esta plantilla")
 
-        wb = openpyxl.load_workbook(BytesIO(excel_bytes))
-        ws = wb.active
+        # Parsing untrusted upload bytes. A .docx renamed to .xlsx passes the
+        # endpoint's extension check but is not a readable workbook, and raw
+        # non-zip bytes fail even earlier. openpyxl surfaces these as
+        # zipfile.BadZipFile / KeyError / InvalidFileException — none of which
+        # are domain errors, so left unwrapped they escaped as an uncaught 500.
+        # Map them to a domain error the API layer turns into a clean 400.
+        try:
+            wb = openpyxl.load_workbook(BytesIO(excel_bytes))
+            ws = wb.active
+            # Read headers from first row
+            headers = [cell.value for cell in ws[1] if cell.value is not None]
+        except (zipfile.BadZipFile, KeyError, InvalidFileException) as exc:
+            raise InvalidSpreadsheetError(
+                "El archivo no es un Excel (.xlsx) válido o está dañado. "
+                "Descargá la plantilla de ejemplo y volvé a intentarlo."
+            ) from exc
 
-        # Read headers from first row
-        headers = [cell.value for cell in ws[1] if cell.value is not None]
+        # Reject duplicate header columns explicitly. The mismatch check below
+        # is set-based, so two columns with the same name would silently
+        # collapse (last-write-wins) instead of failing — a data-loss trap.
+        seen: set = set()
+        duplicates: list = []
+        for header in headers:
+            if header in seen and header not in duplicates:
+                duplicates.append(header)
+            seen.add(header)
+        if duplicates:
+            joined = ", ".join(str(d) for d in duplicates)
+            raise VariablesMismatchError(
+                f"El archivo tiene columnas duplicadas: {joined}. "
+                "Cada variable debe aparecer una sola vez."
+            )
 
         # Validate headers match template variables. Computed variables are
         # server-resolved, never supplied by the user — excluded from the

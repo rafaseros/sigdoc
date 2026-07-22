@@ -329,6 +329,60 @@ async def test_document_generate_bulk_works_for_unverified_user(
 
 
 @pytest.mark.asyncio
+async def test_generate_bulk_with_corrupt_xlsx_returns_400(
+    async_client, auth_headers, fake_template_repo, fake_storage
+):
+    """A file that passes the .xlsx extension check but is not a readable
+    workbook (corrupt / non-zip bytes) must fail as a clean 400, not a 500.
+
+    Regression: openpyxl.load_workbook raised zipfile.BadZipFile, which was not
+    caught by the endpoint's domain-error handlers → uncaught 500.
+    """
+    import io
+
+    version_id = seed_template_version(fake_template_repo, fake_storage, ["name", "date"])
+
+    buf = io.BytesIO(b"not a real xlsx")
+
+    response = await async_client.post(
+        "/api/v1/documents/generate-bulk",
+        headers=auth_headers,
+        data={"template_version_id": version_id},
+        files={"file": ("data.xlsx", buf, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+    )
+    assert response.status_code == 400, (
+        f"Expected 400 for a corrupt .xlsx, got {response.status_code}: {response.text}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_generate_bulk_with_docx_renamed_to_xlsx_returns_400(
+    async_client, auth_headers, fake_template_repo, fake_storage
+):
+    """A .docx renamed to .xlsx is a valid zip missing the workbook parts;
+    openpyxl raised KeyError → uncaught 500. Must be a clean 400 instead."""
+    import io
+    import zipfile
+
+    version_id = seed_template_version(fake_template_repo, fake_storage, ["name", "date"])
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("word/document.xml", "<xml/>")
+    buf.seek(0)
+
+    response = await async_client.post(
+        "/api/v1/documents/generate-bulk",
+        headers=auth_headers,
+        data={"template_version_id": version_id},
+        files={"file": ("data.xlsx", buf, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+    )
+    assert response.status_code == 400, (
+        f"Expected 400 for a docx-renamed-to-xlsx, got {response.status_code}: {response.text}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_generate_document_blocked_for_unverified_user(
     async_client, app, auth_headers, fake_template_repo, fake_storage, monkeypatch
 ):

@@ -13,8 +13,10 @@ from app.domain.entities import AuditAction, Document, Template, TemplateVersion
 from app.domain.exceptions import (
     BulkLimitExceededError,
     DocumentNotFoundError,
+    InvalidSpreadsheetError,
     TemplateAccessDeniedError,
     TemplateVersionNotFoundError,
+    VariablesMismatchError,
 )
 from tests.fakes import (
     FakeAuditRepository,
@@ -229,6 +231,93 @@ class TestParseExcelDataLimitEnforcement:
 
         with pytest.raises(TemplateVersionNotFoundError):
             await service.parse_excel_data(unknown_id, excel_bytes)
+
+
+# ---------------------------------------------------------------------------
+# parse_excel_data — malformed / corrupt spreadsheet input
+# ---------------------------------------------------------------------------
+
+
+def make_docx_like_zip_bytes() -> bytes:
+    """A valid zip that is NOT an .xlsx (simulates a .docx renamed to .xlsx).
+
+    Passes the endpoint's extension check but is missing the workbook parts,
+    so openpyxl raises a KeyError deep in its loader.
+    """
+    import zipfile
+
+    buf = BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("word/document.xml", "<xml/>")
+    buf.seek(0)
+    return buf.read()
+
+
+class TestParseExcelDataCorruptFile:
+    """parse_excel_data must surface a domain error (not a raw openpyxl/zipfile
+    exception) when the uploaded bytes are not a readable .xlsx."""
+
+    async def test_non_zip_bytes_raise_invalid_spreadsheet_error(
+        self,
+        fake_document_repo: FakeDocumentRepository,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        service = make_service(
+            fake_document_repo, fake_template_repo, fake_storage, fake_template_engine
+        )
+        _, version_id, _, _ = seed_version(fake_template_repo, fake_storage)
+
+        with pytest.raises(InvalidSpreadsheetError):
+            await service.parse_excel_data(version_id, b"not a real xlsx")
+
+    async def test_docx_renamed_to_xlsx_raises_invalid_spreadsheet_error(
+        self,
+        fake_document_repo: FakeDocumentRepository,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        service = make_service(
+            fake_document_repo, fake_template_repo, fake_storage, fake_template_engine
+        )
+        _, version_id, _, _ = seed_version(fake_template_repo, fake_storage)
+
+        with pytest.raises(InvalidSpreadsheetError):
+            await service.parse_excel_data(version_id, make_docx_like_zip_bytes())
+
+
+# ---------------------------------------------------------------------------
+# parse_excel_data — duplicate header columns
+# ---------------------------------------------------------------------------
+
+
+class TestParseExcelDataDuplicateHeaders:
+    """Duplicate header columns silently collapse under set-based validation
+    (last-write-wins). parse_excel_data must reject them explicitly."""
+
+    async def test_duplicate_headers_raise_variables_mismatch(
+        self,
+        fake_document_repo: FakeDocumentRepository,
+        fake_template_repo: FakeTemplateRepository,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        service = make_service(
+            fake_document_repo, fake_template_repo, fake_storage, fake_template_engine
+        )
+        _, version_id, _, _ = seed_version(
+            fake_template_repo, fake_storage, variables=["name", "company"]
+        )
+        # Two "name" columns — set-based validation would accept this and
+        # silently drop one column's data.
+        excel_bytes = make_excel_bytes(
+            ["name", "name", "company"], [["A", "B", "ACME"]]
+        )
+
+        with pytest.raises(VariablesMismatchError):
+            await service.parse_excel_data(version_id, excel_bytes)
 
 
 # ---------------------------------------------------------------------------

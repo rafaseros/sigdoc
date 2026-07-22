@@ -52,6 +52,20 @@ class VariablesMismatchError(DomainError):
     """Variables in data don't match template variables."""
 
 
+class InvalidSpreadsheetError(DomainError):
+    """An uploaded spreadsheet could not be opened or parsed.
+
+    Raised by the service layer when ``openpyxl.load_workbook`` (or the
+    subsequent worksheet access) fails on malformed input — e.g. a non-zip
+    file, or a valid zip that is not an .xlsx (a .docx renamed to .xlsx passes
+    the extension check but is missing the required workbook parts). openpyxl
+    surfaces these as ``zipfile.BadZipFile``, ``KeyError``, or
+    ``InvalidFileException``; the service catches the raw exception and raises
+    this domain error so the API layer can return a clean 400 instead of an
+    uncaught 500. The message is user-facing (Spanish) and never echoes
+    internal parser state."""
+
+
 class TemplateAccessDeniedError(DomainError):
     """User does not have access to the requested template."""
 

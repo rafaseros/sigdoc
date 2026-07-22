@@ -14,6 +14,7 @@ from app.domain.exceptions import (
     BulkLimitExceededError,
     ComputedVariableError,
     DocumentNotFoundError,
+    InvalidSpreadsheetError,
     PdfConversionError,
     TemplateAccessDeniedError,
     TemplateRenderError,
@@ -256,6 +257,10 @@ async def generate_bulk(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
     except TemplateVersionNotFoundError:
         raise HTTPException(status_code=404, detail="Template version not found")
+    except InvalidSpreadsheetError as e:
+        # Corrupt / non-.xlsx upload that passed the extension check — a
+        # readable client error, not a server fault.
+        raise HTTPException(status_code=400, detail=str(e))
     except BulkLimitExceededError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except VariablesMismatchError as e:
