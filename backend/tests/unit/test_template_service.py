@@ -246,6 +246,54 @@ class TestUploadNewVersion:
         assert v2["new_version"] == 2
         assert v3["new_version"] == 3
 
+    async def test_concurrent_version_race_maps_to_domain_error_and_cleans_orphan(
+        self,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        """Fix 1 — two concurrent uploads compute the same new_version and
+        collide on uq_template_versions_template_version. The loser's
+        IntegrityError must surface as a DomainError (mapped to 409 by the
+        endpoint), never a raw 500, AND the just-uploaded orphaned MinIO
+        object must be cleaned up (no orphan)."""
+        from sqlalchemy.exc import IntegrityError
+
+        from app.domain.exceptions import DomainError
+
+        class RacingRepo(FakeTemplateRepository):
+            async def create_version(self, version):
+                raise IntegrityError(
+                    "INSERT INTO template_versions ...",
+                    {},
+                    Exception(
+                        "duplicate key value violates unique constraint "
+                        '"uq_template_versions_template_version"'
+                    ),
+                )
+
+        repo = RacingRepo()
+        service = make_service(repo, fake_storage, fake_template_engine)
+        _result, tenant_id, _ = await upload_template_helper(service, variables=["name"])
+
+        template = list(repo._templates.values())[0]
+        template_id = str(template.id)
+        orphan_path = f"{tenant_id}/{template_id}/v2/template.docx"
+        v1_path = f"{tenant_id}/{template_id}/v1/template.docx"
+
+        with pytest.raises(DomainError) as exc_info:
+            await service.upload_new_version(
+                template_id=template_id,
+                file_bytes=b"v2-bytes",
+                file_size=8,
+                tenant_id=tenant_id,
+            )
+
+        assert not isinstance(exc_info.value, IntegrityError)
+        # The just-uploaded v2 object must be cleaned up — no orphan left.
+        assert ("templates", orphan_path) not in fake_storage.files
+        # The existing v1 object is untouched.
+        assert ("templates", v1_path) in fake_storage.files
+
 
 # ---------------------------------------------------------------------------
 # delete_template

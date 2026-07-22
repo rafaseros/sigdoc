@@ -313,8 +313,21 @@ class TemplateService:
 
         # Union: existing names first (order preserved, meta kept as-is),
         # genuinely new names appended with their engine-produced entries.
-        union_vars = list(version.variables or [])
-        union_meta = list(version.variables_meta or [])
+        #
+        # Concurrency: derive the base from the version's PERSISTED state,
+        # re-fetched immediately before the write — NOT from the in-memory
+        # snapshot taken at method entry. Two concurrent attaches (different
+        # labels) both start from the same snapshot; a snapshot-based
+        # read-modify-write lets the later write clobber the earlier one, so
+        # one file's variables silently vanish from the version's set
+        # (generation forms never ask for them → blank docs). Re-reading the
+        # persisted rows here makes the union authoritative: the row this
+        # attach just inserted is committed, and any concurrently-committed
+        # variables are already visible in the re-fetched state.
+        persisted = await self._repository.get_version_by_id(version_id)
+        base = persisted if persisted is not None else version
+        union_vars = list(base.variables or [])
+        union_meta = list(base.variables_meta or [])
         file_meta_by_name = {m["name"]: m for m in file_meta}
         for name in file_variables:
             if name not in union_vars:
@@ -815,7 +828,28 @@ class TemplateService:
             variables_meta=variables_meta,
             file_size=file_size,
         )
-        await self._repository.create_version(version_entity)
+
+        # Concurrent-upload race guard: `new_version = current_version + 1` is
+        # check-then-act, so two uploads can compute the same number and
+        # collide on uq_template_versions_template_version. The loser's
+        # IntegrityError must NOT surface as a 500, and the object we already
+        # uploaded to MinIO above would otherwise be orphaned — best-effort
+        # delete it, then raise the SAME non-leaking DomainError pattern
+        # upload_template uses for its name-collision IntegrityError (mapped
+        # to 409 by the endpoint).
+        from sqlalchemy.exc import IntegrityError
+
+        try:
+            await self._repository.create_version(version_entity)
+        except IntegrityError:
+            try:
+                await self._storage.delete_file(self.TEMPLATES_BUCKET, minio_path)
+            except Exception:
+                pass  # Orphan cleanup is best-effort
+            raise DomainError(
+                "Se subió otra versión de esta plantilla al mismo tiempo. "
+                "Vuelva a intentarlo."
+            )
 
         # Carry related files of the previous current version FORWARD: copy
         # each file's bytes under the new version's files/ key with a NEW id

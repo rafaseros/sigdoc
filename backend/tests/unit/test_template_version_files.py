@@ -343,6 +343,68 @@ class TestAttachVersionFile:
         assert not isinstance(exc_info.value, IntegrityError)
         assert "etiqueta" in str(exc_info.value).lower()
 
+    async def test_variable_union_derives_from_persisted_state_not_stale_snapshot(
+        self,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        """Fix 2 — concurrent attaches must not silently drop variables.
+
+        The version's variable union must be recomputed from the PERSISTED
+        state inside the write, not from the in-memory snapshot captured at
+        method entry. Here a CONCURRENT attach commits 'monto' onto the same
+        version AFTER this call took its snapshot; the resulting union must
+        still keep 'monto' (the concurrent file) alongside 'fecha' (this
+        file). A stale-snapshot union overwrites 'monto' → generation forms
+        never ask for it → blank documents.
+        """
+        import copy
+
+        class ConcurrentPersistRepo(FakeTemplateRepository):
+            """get_version_by_id returns a defensive COPY (like a fresh
+            SELECT) so the caller's snapshot is decoupled from persisted
+            state. When this attach inserts its row, a concurrent attach has
+            ALREADY committed 'monto' onto the same version."""
+
+            async def get_version_by_id(self, version_id):
+                v = self._versions.get(version_id)
+                return copy.deepcopy(v) if v is not None else None
+
+            async def add_version_file(self, file):
+                created = await super().add_version_file(file)
+                version = self._versions[file.version_id]
+                if "monto" not in (version.variables or []):
+                    version.variables = list(version.variables or []) + ["monto"]
+                    version.variables_meta = list(version.variables_meta or []) + [
+                        {"name": "monto", "contexts": ["from concurrent attach"]}
+                    ]
+                return created
+
+        repo = ConcurrentPersistRepo()
+        service = make_service(repo, fake_storage, fake_template_engine)
+        template, version, _, owner_id = await upload_primary(service)
+        assert repo._versions[version.id].variables == ["name", "company"]
+
+        await service.attach_version_file(
+            template.id,
+            version.id,
+            label="Factura",
+            file_bytes=FACTURA_BYTES,  # {{ fecha }}
+            file_size=len(FACTURA_BYTES),
+            user_id=owner_id,
+            role="template_creator",
+        )
+
+        persisted = repo._versions[version.id]
+        # BOTH the concurrent variable and this file's variable must survive.
+        assert "monto" in persisted.variables, (
+            "concurrent variable lost — union used a stale snapshot"
+        )
+        assert "fecha" in persisted.variables
+        meta_names = [m["name"] for m in persisted.variables_meta]
+        assert "monto" in meta_names
+        assert "fecha" in meta_names
+
 
 # ---------------------------------------------------------------------------
 # detach_version_file

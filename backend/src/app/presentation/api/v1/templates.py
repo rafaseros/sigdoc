@@ -58,6 +58,35 @@ ALLOWED_CONTENT_TYPES = {
 }
 
 
+def _content_disposition_attachment(filename: str) -> str:
+    """Build a safe ``Content-Disposition: attachment`` header value.
+
+    Emits an ASCII-safe ``filename`` fallback PLUS the exact UTF-8 name in an
+    RFC 5987 ``filename*`` parameter. The fallback is NFKD-transliterated to
+    ASCII and then stripped of any character that could break out of the
+    quoted value or inject header content (double quotes, backslashes, and
+    non-printable/control chars incl. CR/LF); ``filename*`` percent-encodes
+    the original so those same bytes are preserved but never interpreted as
+    header syntax. Shared by every attachment download so a crafted upload
+    filename can never forge headers.
+    """
+    from urllib.parse import quote
+
+    ascii_name = (
+        unicodedata.normalize("NFKD", filename)
+        .encode("ascii", "ignore")
+        .decode("ascii")
+    )
+    ascii_fallback = (
+        "".join(c for c in ascii_name if c.isprintable() and c not in '"\\')
+        or "download.docx"
+    )
+    return (
+        f'attachment; filename="{ascii_fallback}"; '
+        f"filename*=UTF-8''{quote(filename)}"
+    )
+
+
 def _validate_docx_upload(file: UploadFile) -> None:
     """Raise HTTPException if the uploaded file is not a .docx."""
     if file.content_type not in ALLOWED_CONTENT_TYPES and not (
@@ -139,10 +168,13 @@ async def auto_fix_template(
     if not filename.endswith("_corregido.docx"):
         filename = filename.replace(".docx", "_corregido.docx")
 
+    # The filename derives from the RAW upload name — sanitize identically to
+    # the version-download endpoints so quotes/CRLF/control chars in a crafted
+    # name can't break out of the header.
     return Response(
         content=fixed_bytes,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": _content_disposition_attachment(filename)},
     )
 
 
@@ -394,6 +426,12 @@ async def upload_new_version(
     except InvalidTemplateError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except DomainError as e:
+        # Concurrent-upload version collision (uq_template_versions_template_version).
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
             detail=str(e),
         )
 
@@ -732,21 +770,10 @@ async def download_template_version(
 
     # Template names can contain accents/enie — send an ASCII fallback in
     # `filename` plus the exact UTF-8 name in RFC 5987 `filename*`.
-    from urllib.parse import quote
-
-    ascii_fallback = (
-        unicodedata.normalize("NFKD", filename).encode("ascii", "ignore").decode("ascii")
-        or "template.docx"
-    )
-    content_disposition = (
-        f'attachment; filename="{ascii_fallback}"; '
-        f"filename*=UTF-8''{quote(filename)}"
-    )
-
     return Response(
         content=file_bytes,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={"Content-Disposition": content_disposition},
+        headers={"Content-Disposition": _content_disposition_attachment(filename)},
     )
 
 
@@ -1024,21 +1051,10 @@ async def download_version_file(
 
     # Labels/names can contain accents/enie — send an ASCII fallback in
     # `filename` plus the exact UTF-8 name in RFC 5987 `filename*`.
-    from urllib.parse import quote
-
-    ascii_fallback = (
-        unicodedata.normalize("NFKD", filename).encode("ascii", "ignore").decode("ascii")
-        or "template.docx"
-    )
-    content_disposition = (
-        f'attachment; filename="{ascii_fallback}"; '
-        f"filename*=UTF-8''{quote(filename)}"
-    )
-
     return Response(
         content=file_bytes,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={"Content-Disposition": content_disposition},
+        headers={"Content-Disposition": _content_disposition_attachment(filename)},
     )
 
 

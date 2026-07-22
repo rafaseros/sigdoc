@@ -305,6 +305,56 @@ async def test_private_by_default_user_b_gets_403_on_get(
 
 
 @pytest.mark.asyncio
+async def test_concurrent_new_version_race_returns_409(
+    async_client, app, auth_headers, fake_template_repo, fake_storage, monkeypatch, fake_template_engine
+):
+    """Fix 1 — when two uploads race and the loser hits the version unique
+    constraint, the endpoint returns 409 Conflict (not a 500) and leaves no
+    orphaned MinIO object behind."""
+    from sqlalchemy.exc import IntegrityError
+
+    tpl_id = _upload_template_as_user(
+        "VersionRace409", CONFTEST_USER_ID, fake_template_repo
+    )
+
+    monkeypatch.setattr(
+        "app.presentation.api.v1.templates.get_template_engine",
+        lambda: fake_template_engine,
+    )
+    fake_template_engine.variables_to_return = ["name"]
+
+    async def _raise_integrity(version):
+        raise IntegrityError(
+            "INSERT INTO template_versions ...",
+            {},
+            Exception(
+                "duplicate key value violates unique constraint "
+                '"uq_template_versions_template_version"'
+            ),
+        )
+
+    monkeypatch.setattr(fake_template_repo, "create_version", _raise_integrity)
+
+    orphan_path = f"{CONFTEST_TENANT_ID}/{tpl_id}/v2/template.docx"
+
+    # Conftest default user is admin — owner-or-admin gate passes.
+    response = await async_client.post(
+        f"/api/v1/templates/{tpl_id}/versions",
+        headers=auth_headers,
+        files={
+            "file": (
+                "template.docx",
+                io.BytesIO(b"fake-bytes"),
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+        },
+    )
+
+    assert response.status_code == 409, response.text
+    assert ("templates", orphan_path) not in fake_storage.files
+
+
+@pytest.mark.asyncio
 async def test_after_sharing_user_b_sees_in_list(
     async_client, app, auth_headers, fake_template_repo
 ):
