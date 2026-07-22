@@ -425,6 +425,34 @@ async def test_create_user_with_invalid_role_returns_422(
     assert response.status_code == 422
 
 
+@pytest.mark.asyncio
+async def test_create_user_with_short_password_returns_422(
+    async_client, auth_headers, monkeypatch
+):
+    """Admin POSTs /users with a password < 8 chars → 422.
+
+    The CreateUserRequest schema enforces the same min-length policy as
+    ResetPasswordByAdminRequest, so the request is rejected at body-validation
+    time before the endpoint touches the repository.
+    """
+    fake_repo = FakeUserRepository()
+
+    repo_class = _make_users_repo_class_with_create(fake_repo)
+    monkeypatch.setattr("app.presentation.api.v1.users.SQLAlchemyUserRepository", repo_class)
+
+    response = await async_client.post(
+        "/api/v1/users",
+        headers=auth_headers,
+        json={
+            "email": "shortpw@test.com",
+            "full_name": "Short Password",
+            "password": "short",  # 5 chars, < 8
+            "role": "document_generator",
+        },
+    )
+    assert response.status_code == 422, response.text
+
+
 # ── DELETE /users/{id} with reassign_to (B1) ─────────────────────────────────
 
 

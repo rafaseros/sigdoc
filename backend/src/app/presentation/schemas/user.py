@@ -3,6 +3,17 @@ from datetime import datetime
 
 from pydantic import BaseModel, field_validator
 
+# Minimum password length enforced anywhere a caller sets a password (create
+# user, change password, admin reset). Kept in one place so the three request
+# schemas below can never drift on the policy or its user-facing message.
+_MIN_PASSWORD_LENGTH = 8
+
+
+def _validate_password_min_length(value: str) -> str:
+    if len(value) < _MIN_PASSWORD_LENGTH:
+        raise ValueError("La contraseña debe tener al menos 8 caracteres")
+    return value
+
 
 class CreateUserRequest(BaseModel):
     email: str
@@ -12,6 +23,11 @@ class CreateUserRequest(BaseModel):
     # send a role. Admins creating users via the new RolePicker UI pass
     # one of: "admin", "template_creator", "document_generator".
     role: str = "document_generator"
+
+    @field_validator("password")
+    @classmethod
+    def password_min_length(cls, v: str) -> str:
+        return _validate_password_min_length(v)
 
     @field_validator("email")
     @classmethod
@@ -64,6 +80,11 @@ class ChangePasswordRequest(BaseModel):
     current_password: str
     new_password: str
 
+    @field_validator("new_password")
+    @classmethod
+    def password_min_length(cls, v: str) -> str:
+        return _validate_password_min_length(v)
+
 
 class ResetPasswordByAdminRequest(BaseModel):
     new_password: str
@@ -71,9 +92,7 @@ class ResetPasswordByAdminRequest(BaseModel):
     @field_validator("new_password")
     @classmethod
     def password_min_length(cls, v: str) -> str:
-        if len(v) < 8:
-            raise ValueError("La contraseña debe tener al menos 8 caracteres")
-        return v
+        return _validate_password_min_length(v)
 
 
 class UserResponse(BaseModel):

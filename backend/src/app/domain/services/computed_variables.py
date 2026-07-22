@@ -222,7 +222,15 @@ def _compute_formula(source_value: str | None, operator: str, operand: float) ->
     if source_decimal is None:
         return ""
 
-    op = _OPERATORS[operator]
+    op = _OPERATORS.get(operator)
+    # Defense-in-depth: save-time validation constrains operator to the
+    # supported set, but legacy or out-of-band variables_meta could reach here
+    # with an unknown operator — surface it as a ComputedVariableError (→ 422)
+    # like the other computed-variable failures, never a bare KeyError (→ 500).
+    if op is None:
+        raise ComputedVariableError(
+            f"Operador calculado desconocido: '{operator}'"
+        )
     # Defense-in-depth: save-time validation already rejects operand=0 for
     # "/" (see ComputedFormula schema), but legacy or out-of-band
     # variables_meta could still reach here with a zero operand — guard the

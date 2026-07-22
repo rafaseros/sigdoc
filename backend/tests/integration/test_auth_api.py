@@ -363,3 +363,22 @@ async def test_auth_me_returns_email_verified_true_even_if_db_false(
     assert data["email_verified"] is True, (
         f"Expected email_verified=True regardless of DB value, got: {data['email_verified']}"
     )
+
+
+# ── Change-password password-strength policy ──────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_change_password_too_short_returns_422(async_client, auth_headers):
+    """POST /auth/change-password with new_password < 8 chars → 422.
+
+    The min-length policy is enforced by the ChangePasswordRequest schema
+    validator, so the request is rejected at body-validation time before the
+    endpoint touches the repository.
+    """
+    response = await async_client.post(
+        "/api/v1/auth/change-password",
+        headers=auth_headers,
+        json={"current_password": "original-password", "new_password": "short"},
+    )
+    assert response.status_code == 422, response.text

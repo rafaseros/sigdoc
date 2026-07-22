@@ -186,6 +186,15 @@ class TestResolveComputedFormula:
         with pytest.raises(ComputedVariableError):
             resolve_computed(meta, {"monto": "9"})
 
+    def test_unknown_operator_raises_computed_variable_error(self) -> None:
+        """Defense-in-depth: save-time validation constrains operator to the
+        supported set, but legacy/out-of-band variables_meta could carry an
+        unknown operator. It must raise ComputedVariableError (→ 422), not a
+        bare KeyError (→ 500), like the guarded division path."""
+        meta = _meta_formula("weird", "monto", "%", 2)
+        with pytest.raises(ComputedVariableError):
+            resolve_computed(meta, {"monto": "10"})
+
     def test_overwrites_user_supplied_value_for_computed_name(self) -> None:
         """Server-authoritative: any user-supplied value for a computed name
         must be overwritten by the resolved value."""
