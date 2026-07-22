@@ -387,8 +387,17 @@ export function VariablesTab({ templateId, versionId, variablesMeta, isOwner }: 
         toast.success("Cambios guardados");
         setIsDirty(false);
       },
-      onError: () => {
-        toast.error("Error al guardar los cambios");
+      onError: (error: unknown) => {
+        // Surface the backend's computed-validation `detail` (e.g. a bad
+        // computed source/chaining) instead of a generic message. Same inline
+        // extraction pattern as handleDelete / handleDetachFile below.
+        const detail =
+          error &&
+          typeof error === "object" &&
+          "response" in error &&
+          (error as { response?: { data?: { detail?: string } } }).response
+            ?.data?.detail;
+        toast.error((detail as string) || "Error al guardar los cambios");
       },
     });
   }
@@ -955,7 +964,9 @@ export default function TemplateDetail({
   } | null>(null);
   const [detachConfirm, setDetachConfirm] = useState("");
   const detachVersionFile = useDetachVersionFile();
-  const [activeTab, setActiveTab] = useState<DetailTab>(
+  // Raw tab selection from the `?tab=` deep-link / user clicks. The rendered
+  // `activeTab` below coerces this for viewers who can't see a given tab.
+  const [selectedTab, setSelectedTab] = useState<DetailTab>(
     initialTab ?? "documents",
   );
 
@@ -1097,8 +1108,18 @@ export default function TemplateDetail({
   const canRename = isOwnerOrAdmin;
   const canMove = template.is_owner;
   const canShare = template.is_owner;
-  const canDelete = template.is_owner;
+  // Delete is owner-OR-admin server-side (delete_template → _check_access
+  // require_owner=True, which admits admins). Rename shares that rule; move
+  // and share stay strict-owner (no admin bypass) and keep template.is_owner.
+  const canDelete = isOwnerOrAdmin;
   const hasMenuActions = canRename || canMove || canShare || canDelete;
+
+  // The Compartido tab is owner/admin-only: its sidebar entry is hidden and
+  // its content is gated on isOwnerOrAdmin. Coerce a `?tab=shares` deep-link
+  // back to Documentos for a viewer who is neither, so the pane never renders
+  // blank with no active sidebar item.
+  const activeTab: DetailTab =
+    selectedTab === "shares" && !isOwnerOrAdmin ? "documents" : selectedTab;
 
   return (
     <div className="space-y-5">
@@ -1247,14 +1268,14 @@ export default function TemplateDetail({
             <SidebarItem
               icon={<Files className="size-4" />}
               active={activeTab === "documents"}
-              onClick={() => setActiveTab("documents")}
+              onClick={() => setSelectedTab("documents")}
             >
               Documentos
             </SidebarItem>
             <SidebarItem
               icon={<Bookmark className="size-4" />}
               active={activeTab === "presets"}
-              onClick={() => setActiveTab("presets")}
+              onClick={() => setSelectedTab("presets")}
             >
               Datos guardados
             </SidebarItem>
@@ -1265,7 +1286,7 @@ export default function TemplateDetail({
             <SidebarItem
               icon={<Variable className="size-4" />}
               active={activeTab === "variables"}
-              onClick={() => setActiveTab("variables")}
+              onClick={() => setSelectedTab("variables")}
               count={currentVersion?.variables.length}
             >
               Variables
@@ -1273,7 +1294,7 @@ export default function TemplateDetail({
             <SidebarItem
               icon={<Clock className="size-4" />}
               active={activeTab === "versions"}
-              onClick={() => setActiveTab("versions")}
+              onClick={() => setSelectedTab("versions")}
               count={template.versions.length}
             >
               Versiones
@@ -1282,7 +1303,7 @@ export default function TemplateDetail({
               <SidebarItem
                 icon={<Share2 className="size-4" />}
                 active={activeTab === "shares"}
-                onClick={() => setActiveTab("shares")}
+                onClick={() => setSelectedTab("shares")}
               >
                 Compartido
               </SidebarItem>
@@ -1290,7 +1311,7 @@ export default function TemplateDetail({
             <SidebarItem
               icon={<Info className="size-4" />}
               active={activeTab === "info"}
-              onClick={() => setActiveTab("info")}
+              onClick={() => setSelectedTab("info")}
             >
               Información
             </SidebarItem>
@@ -1365,7 +1386,12 @@ export default function TemplateDetail({
 
           {activeTab === "variables" && (
             currentVersion ? (
+              // Keyed by version id so the tab remounts and re-derives its
+              // local row state from fresh props when a new version is
+              // uploaded (currentVersion.id changes) — otherwise it would keep
+              // showing the previous version's stale variable metadata.
               <VariablesTab
+                key={currentVersion.id}
                 templateId={templateId}
                 versionId={currentVersion.id}
                 variablesMeta={currentVersion.variables_meta}
@@ -1391,7 +1417,9 @@ export default function TemplateDetail({
                     Cada versión preserva las variables y el archivo original.
                   </p>
                 </div>
-                {template.is_owner && (
+                {/* Upload new version is owner-OR-admin server-side
+                    (upload_new_version → _check_access require_owner=True). */}
+                {isOwnerOrAdmin && (
                   <Dialog open={uploadDialogOpen} onOpenChange={setUploadDialogOpen}>
                     <DialogTrigger
                       render={
@@ -1741,8 +1769,10 @@ export default function TemplateDetail({
         />
       )}
 
-      {/* Delete dialog with confirm-by-typing */}
-      {template.is_owner && (
+      {/* Delete dialog with confirm-by-typing — gated on canDelete
+          (owner-or-admin) so an admin's "Eliminar" menu item actually mounts
+          the dialog it opens. */}
+      {canDelete && (
         <Dialog
           open={deleteDialogOpen}
           onOpenChange={(o) => {

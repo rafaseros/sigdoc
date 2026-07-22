@@ -321,4 +321,42 @@ describe("VariablesTab — computed configuration UI", () => {
       "El operando debe ser un número válido.",
     );
   });
+
+  it("surfaces the backend's computed-validation detail when a save fails", async () => {
+    vi.mocked(apiClient.patch).mockRejectedValue({
+      response: { data: { detail: "La variable de origen no es numérica." } },
+    });
+    const user = userEvent.setup();
+    renderTab(variablesMeta);
+
+    // Any edit flips isDirty so the Save button enables — "amount" is the
+    // default-selected row, so its help-text input is already visible.
+    await user.type(
+      screen.getByPlaceholderText("ej. formato DD/MM/YYYY"),
+      "nota",
+    );
+    await user.click(screen.getByRole("button", { name: /guardar cambios/i }));
+
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith(
+        "La variable de origen no es numérica.",
+      ),
+    );
+  });
+
+  it("falls back to a generic message when the save error carries no detail", async () => {
+    vi.mocked(apiClient.patch).mockRejectedValue(new Error("network"));
+    const user = userEvent.setup();
+    renderTab(variablesMeta);
+
+    await user.type(
+      screen.getByPlaceholderText("ej. formato DD/MM/YYYY"),
+      "nota",
+    );
+    await user.click(screen.getByRole("button", { name: /guardar cambios/i }));
+
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith("Error al guardar los cambios"),
+    );
+  });
 });

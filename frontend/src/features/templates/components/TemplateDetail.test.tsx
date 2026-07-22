@@ -3,7 +3,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-import TemplateDetail from "./TemplateDetail";
+import TemplateDetail, { type DetailTab } from "./TemplateDetail";
 import { apiClient } from "@/shared/lib/api-client";
 import type { Template, TemplateVersionFile } from "../api/queries";
 
@@ -67,7 +67,7 @@ function mockDetailResponses(templateOverride: Template = template) {
   });
 }
 
-function renderDetail() {
+function renderDetail(initialTab?: DetailTab) {
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
@@ -76,7 +76,7 @@ function renderDetail() {
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <TemplateDetail templateId="template-1" />
+      <TemplateDetail templateId="template-1" initialTab={initialTab} />
     </QueryClientProvider>,
   );
 }
@@ -252,7 +252,7 @@ describe("TemplateDetail — action row reorganization", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("shows only the permitted 'Renombrar' item for an admin non-owner", async () => {
+  it("shows the permitted 'Renombrar' and 'Eliminar' items for an admin non-owner", async () => {
     const adminTemplate: Template = {
       ...template,
       access_type: "admin",
@@ -268,8 +268,14 @@ describe("TemplateDetail — action row reorganization", () => {
 
     await user.click(screen.getByRole("button", { name: /más acciones/i }));
 
+    // Rename and delete are owner-OR-admin server-side (update_template /
+    // delete_template use require_owner=True, which admits admins). Move and
+    // share stay strict-owner (no admin bypass), so they must not appear.
     expect(
       await screen.findByRole("menuitem", { name: /renombrar/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitem", { name: /eliminar/i }),
     ).toBeInTheDocument();
     expect(
       screen.queryByRole("menuitem", { name: /mover a carpeta/i }),
@@ -277,9 +283,125 @@ describe("TemplateDetail — action row reorganization", () => {
     expect(
       screen.queryByRole("menuitem", { name: /compartir/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it("opens the delete dialog from the 'Más acciones' menu for an admin non-owner", async () => {
+    const adminTemplate: Template = {
+      ...template,
+      access_type: "admin",
+      is_owner: false,
+    };
+    mockDetailResponses(adminTemplate);
+    const user = userEvent.setup();
+    renderDetail();
+
+    await waitFor(() =>
+      expect(screen.getByText("Contrato de Servicios")).toBeInTheDocument(),
+    );
+
+    await user.click(screen.getByRole("button", { name: /más acciones/i }));
+    await user.click(await screen.findByRole("menuitem", { name: /eliminar/i }));
+
+    // The delete dialog is gated on canDelete (owner-or-admin) so it actually
+    // mounts when an admin opens it — otherwise the click would be a no-op.
     expect(
-      screen.queryByRole("menuitem", { name: /eliminar/i }),
+      screen.getByRole("dialog", { name: /eliminar plantilla/i }),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("TemplateDetail — upload new version gating", () => {
+  beforeEach(() => {
+    vi.mocked(apiClient.get).mockReset();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("shows 'Subir Nueva Versión' for an admin non-owner", async () => {
+    const adminTemplate: Template = {
+      ...template,
+      access_type: "admin",
+      is_owner: false,
+    };
+    mockDetailResponses(adminTemplate);
+    const user = userEvent.setup();
+    renderDetail();
+
+    await waitFor(() =>
+      expect(screen.getByText("Contrato de Servicios")).toBeInTheDocument(),
+    );
+    await user.click(screen.getByRole("button", { name: /^versiones/i }));
+
+    // upload_new_version is owner-OR-admin server-side.
+    expect(
+      screen.getByRole("button", { name: /subir nueva versión/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("hides 'Subir Nueva Versión' for a shared (non-owner) viewer", async () => {
+    mockDetailResponses({
+      ...template,
+      access_type: "shared",
+      is_owner: false,
+    });
+    const user = userEvent.setup();
+    renderDetail();
+
+    await waitFor(() =>
+      expect(screen.getByText("Contrato de Servicios")).toBeInTheDocument(),
+    );
+    await user.click(screen.getByRole("button", { name: /^versiones/i }));
+
+    expect(
+      screen.queryByRole("button", { name: /subir nueva versión/i }),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("TemplateDetail — ?tab=shares deep-link coercion", () => {
+  beforeEach(() => {
+    vi.mocked(apiClient.get).mockReset();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("coerces a shares deep-link to Documentos for a shared (non-owner) viewer", async () => {
+    mockDetailResponses({
+      ...template,
+      access_type: "shared",
+      is_owner: false,
+    });
+    renderDetail("shares");
+
+    await waitFor(() =>
+      expect(screen.getByText("Contrato de Servicios")).toBeInTheDocument(),
+    );
+
+    // The Compartido tab is hidden for a non-owner; a `?tab=shares` deep-link
+    // must fall back to Documentos instead of rendering a blank pane.
+    expect(screen.getByText("Documentos generados")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^compartido/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the shares deep-link on the Compartido tab for the owner", async () => {
+    mockDetailResponses();
+    renderDetail("shares");
+
+    await waitFor(() =>
+      expect(screen.getByText("Contrato de Servicios")).toBeInTheDocument(),
+    );
+
+    // Owner keeps the requested tab: SharesTab content renders, not Documentos.
+    expect(
+      screen.getByText(/usuarios que pueden ver y generar desde esta plantilla/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Documentos generados")).not.toBeInTheDocument();
   });
 });
 
