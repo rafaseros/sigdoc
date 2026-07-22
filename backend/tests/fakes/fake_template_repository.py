@@ -89,6 +89,15 @@ class FakeTemplateRepository(TemplateRepository):
     async def get_version_by_id(self, version_id: UUID) -> TemplateVersion | None:
         return self._versions.get(version_id)
 
+    async def get_version_by_id_for_update(
+        self, version_id: UUID
+    ) -> TemplateVersion | None:
+        """Faithful single-threaded stand-in for the FOR UPDATE read: fakes
+        run in one event loop with no real concurrency, so returning the
+        current stored version is equivalent to acquiring an uncontended row
+        lock and reading it."""
+        return self._versions.get(version_id)
+
     async def create_template_with_version(
         self,
         *,

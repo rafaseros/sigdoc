@@ -343,44 +343,41 @@ class TestAttachVersionFile:
         assert not isinstance(exc_info.value, IntegrityError)
         assert "etiqueta" in str(exc_info.value).lower()
 
-    async def test_variable_union_derives_from_persisted_state_not_stale_snapshot(
+    async def test_variable_union_derives_from_locked_state_not_stale_snapshot(
         self,
         fake_storage: FakeStorageService,
         fake_template_engine: FakeTemplateEngine,
     ):
-        """Fix 2 — concurrent attaches must not silently drop variables.
+        """Fix 3 — concurrent attaches must not silently drop variables.
 
-        The version's variable union must be recomputed from the PERSISTED
-        state inside the write, not from the in-memory snapshot captured at
-        method entry. Here a CONCURRENT attach commits 'monto' onto the same
-        version AFTER this call took its snapshot; the resulting union must
-        still keep 'monto' (the concurrent file) alongside 'fecha' (this
-        file). A stale-snapshot union overwrites 'monto' → generation forms
-        never ask for it → blank documents.
+        The version's variable union must be recomputed from the LOCKED
+        (SELECT ... FOR UPDATE) read inside the write, not from the in-memory
+        snapshot captured at method entry. Under real READ COMMITTED, two
+        truly-simultaneous attaches serialize on the row lock: the second
+        blocks until the first commits, then reads the first's committed
+        variables. Here a concurrent attach committed 'monto' onto the same
+        version just before this call acquired the lock, so the locked read
+        sees it; the resulting union must keep 'monto' (the concurrent file)
+        alongside 'fecha' (this file). A stale-snapshot union overwrites
+        'monto' → generation forms never ask for it → blank documents.
         """
-        import copy
 
-        class ConcurrentPersistRepo(FakeTemplateRepository):
-            """get_version_by_id returns a defensive COPY (like a fresh
-            SELECT) so the caller's snapshot is decoupled from persisted
-            state. When this attach inserts its row, a concurrent attach has
-            ALREADY committed 'monto' onto the same version."""
+        class LockedReadRepo(FakeTemplateRepository):
+            """Models FOR UPDATE: a concurrent attach committed 'monto'
+            before this call acquired the row lock, so the LOCKED read (and
+            only the locked read) observes it. The entry-time snapshot
+            (get_version_by_id) still shows the pre-concurrent state."""
 
-            async def get_version_by_id(self, version_id):
-                v = self._versions.get(version_id)
-                return copy.deepcopy(v) if v is not None else None
-
-            async def add_version_file(self, file):
-                created = await super().add_version_file(file)
-                version = self._versions[file.version_id]
-                if "monto" not in (version.variables or []):
+            async def get_version_by_id_for_update(self, version_id):
+                version = self._versions.get(version_id)
+                if version is not None and "monto" not in (version.variables or []):
                     version.variables = list(version.variables or []) + ["monto"]
                     version.variables_meta = list(version.variables_meta or []) + [
                         {"name": "monto", "contexts": ["from concurrent attach"]}
                     ]
-                return created
+                return version
 
-        repo = ConcurrentPersistRepo()
+        repo = LockedReadRepo()
         service = make_service(repo, fake_storage, fake_template_engine)
         template, version, _, owner_id = await upload_primary(service)
         assert repo._versions[version.id].variables == ["name", "company"]
@@ -398,12 +395,64 @@ class TestAttachVersionFile:
         persisted = repo._versions[version.id]
         # BOTH the concurrent variable and this file's variable must survive.
         assert "monto" in persisted.variables, (
-            "concurrent variable lost — union used a stale snapshot"
+            "concurrent variable lost — union used a stale snapshot, not the "
+            "FOR UPDATE-locked read"
         )
         assert "fecha" in persisted.variables
         meta_names = [m["name"] for m in persisted.variables_meta]
         assert "monto" in meta_names
         assert "fecha" in meta_names
+
+    async def test_attach_acquires_for_update_lock_before_writing_union(
+        self,
+        fake_storage: FakeStorageService,
+        fake_template_engine: FakeTemplateEngine,
+    ):
+        """The attach path must acquire the version row lock
+        (get_version_by_id_for_update) BEFORE it writes the union
+        (update_version_variables) — that ordering is what serializes
+        overlapping attaches. Real DB-level blocking is out of scope for a
+        unit test; here we encode the call-ordering invariant plus that the
+        union base is taken from the locked read's return value.
+        """
+
+        class OrderRecordingRepo(FakeTemplateRepository):
+            def __init__(self) -> None:
+                super().__init__()
+                self.calls: list[str] = []
+
+            async def get_version_by_id_for_update(self, version_id):
+                self.calls.append("for_update")
+                return self._versions.get(version_id)
+
+            async def update_version_variables(
+                self, version_id, variables, variables_meta
+            ):
+                self.calls.append("update_variables")
+                return await super().update_version_variables(
+                    version_id, variables, variables_meta
+                )
+
+        repo = OrderRecordingRepo()
+        service = make_service(repo, fake_storage, fake_template_engine)
+        template, version, _, owner_id = await upload_primary(service)
+
+        await service.attach_version_file(
+            template.id,
+            version.id,
+            label="Factura",
+            file_bytes=FACTURA_BYTES,
+            file_size=len(FACTURA_BYTES),
+            user_id=owner_id,
+            role="template_creator",
+        )
+
+        assert "for_update" in repo.calls, (
+            "attach must lock the version with get_version_by_id_for_update"
+        )
+        assert repo.calls.index("for_update") < repo.calls.index(
+            "update_variables"
+        ), "the row lock must be acquired before the union is written"
 
 
 # ---------------------------------------------------------------------------

@@ -314,18 +314,27 @@ class TemplateService:
         # Union: existing names first (order preserved, meta kept as-is),
         # genuinely new names appended with their engine-produced entries.
         #
-        # Concurrency: derive the base from the version's PERSISTED state,
-        # re-fetched immediately before the write — NOT from the in-memory
-        # snapshot taken at method entry. Two concurrent attaches (different
-        # labels) both start from the same snapshot; a snapshot-based
-        # read-modify-write lets the later write clobber the earlier one, so
-        # one file's variables silently vanish from the version's set
-        # (generation forms never ask for them → blank docs). Re-reading the
-        # persisted rows here makes the union authoritative: the row this
-        # attach just inserted is committed, and any concurrently-committed
-        # variables are already visible in the re-fetched state.
-        persisted = await self._repository.get_version_by_id(version_id)
-        base = persisted if persisted is not None else version
+        # Concurrency — why a ROW LOCK, not just a re-fetch: acquire a
+        # row-level write lock on the version (SELECT ... FOR UPDATE) and
+        # derive the union base from that LOCKED read. A plain re-fetch under
+        # READ COMMITTED only sees COMMITTED rows, so two truly-simultaneous
+        # attaches to the same version each re-read the same committed
+        # variables set, each computes its union in isolation, and the later
+        # commit overwrites the earlier — one file's variables silently
+        # vanish from the version's set (generation forms never ask for them
+        # → blank docs). A re-fetch cannot see the other transaction's
+        # UNCOMMITTED changes, so it cannot prevent this. The lock forces the
+        # two attaches to SERIALIZE on this row: the second BLOCKS until the
+        # first commits, then reads the first's committed variables and merges
+        # onto them, so no variables are ever lost. The lock is held (same
+        # transaction) through update_version_variables below.
+        #
+        # attach_version_file_from_example shares this exact path — it
+        # delegates to this method — so it inherits the same lock.
+        locked_version = await self._repository.get_version_by_id_for_update(
+            version_id
+        )
+        base = locked_version if locked_version is not None else version
         union_vars = list(base.variables or [])
         union_meta = list(base.variables_meta or [])
         file_meta_by_name = {m["name"]: m for m in file_meta}

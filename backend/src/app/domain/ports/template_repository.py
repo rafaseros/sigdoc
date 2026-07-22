@@ -40,6 +40,19 @@ class TemplateRepository(ABC):
         ...
 
     @abstractmethod
+    async def get_version_by_id_for_update(
+        self, version_id: UUID
+    ) -> TemplateVersion | None:
+        """Fetch a template version row with a row-level write lock
+        (SELECT ... FOR UPDATE). Concurrent callers requesting the lock on
+        the SAME version block until the holder's transaction commits, then
+        observe its committed state. Used to serialize the variables
+        read-modify-write in attach_version_file so overlapping attaches to
+        the same version never drop each other's variables. Returns None when
+        the version does not exist."""
+        ...
+
+    @abstractmethod
     async def create_template_with_version(
         self,
         *,

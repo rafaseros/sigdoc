@@ -112,6 +112,24 @@ class SQLAlchemyTemplateRepository(TemplateRepositoryPort):
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def get_version_by_id_for_update(self, version_id: UUID):
+        """Fetch a version row under a row-level write lock (FOR UPDATE).
+
+        Serializes concurrent attaches to the SAME version: the second
+        transaction blocks on the row lock until the first commits, then
+        reads the first's committed variables. A plain re-fetch under READ
+        COMMITTED only sees rows committed at statement time and cannot stop
+        two overlapping attaches from each computing their union from the
+        same base and clobbering one another.
+        """
+        stmt = (
+            select(TemplateVersionModel)
+            .where(TemplateVersionModel.id == version_id)
+            .with_for_update()
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
+
     async def create_template_with_version(
         self,
         *,
