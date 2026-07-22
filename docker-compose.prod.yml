@@ -58,11 +58,11 @@ services:
     image: gotenberg/gotenberg:8.16
     container_name: sigdoc-gotenberg
     restart: unless-stopped
-    # Chromium (via Gotenberg) is the service most likely to balloon in RAM/CPU
-    # during PDF conversion — cap it so one large job can't OOM/starve the host.
-    # These are LIMITS (caps), not reservations; tune to the droplet's actual size.
+    # Chromium (via Gotenberg) is the service most likely to balloon in RAM
+    # during PDF conversion — cap it so one large job can't OOM the host.
+    # mem_limit is a cap (not a reservation). No cpus cap: the droplet has a
+    # single CPU, so a cpus limit is either a no-op (1.0) or rejected (>1.0).
     mem_limit: 1g
-    cpus: 1.5
     # Port 3000 is internal-only — Gotenberg must NOT be exposed externally
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
@@ -77,11 +77,11 @@ services:
     image: ghcr.io/rafaseros/sigdoc-api:latest
     container_name: sigdoc-api
     restart: unless-stopped
-    # Resource caps for a single small droplet — prevent one runaway container
-    # from OOM-ing the whole host. These are LIMITS (caps), not reservations.
-    # Assumes a ~2 vCPU / 4 GB droplet; tune to the actual size if needed.
+    # Memory cap for this single small droplet (1 CPU / ~2 GB) — prevent one
+    # runaway container from OOM-ing the whole host. mem_limit is a cap, not a
+    # reservation. No cpus cap: with a single CPU a cpus limit is a no-op at 1.0
+    # or rejected by Docker above 1.0.
     mem_limit: 768m
-    cpus: 1.0
     # env_file forwards ALL variables from /opt/docker/apps/sigdoc/.env to the container.
     # This covers SMTP_*, FRONTEND_URL, EMAIL_BACKEND, GOTENBERG_*, ENABLE_DEV_RESET, etc.
     # The explicit environment block below OVERRIDES compose-computed values that differ
