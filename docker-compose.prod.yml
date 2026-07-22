@@ -58,6 +58,11 @@ services:
     image: gotenberg/gotenberg:8.16
     container_name: sigdoc-gotenberg
     restart: unless-stopped
+    # Chromium (via Gotenberg) is the service most likely to balloon in RAM/CPU
+    # during PDF conversion — cap it so one large job can't OOM/starve the host.
+    # These are LIMITS (caps), not reservations; tune to the droplet's actual size.
+    mem_limit: 1g
+    cpus: 1.5
     # Port 3000 is internal-only — Gotenberg must NOT be exposed externally
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
@@ -72,6 +77,11 @@ services:
     image: ghcr.io/rafaseros/sigdoc-api:latest
     container_name: sigdoc-api
     restart: unless-stopped
+    # Resource caps for a single small droplet — prevent one runaway container
+    # from OOM-ing the whole host. These are LIMITS (caps), not reservations.
+    # Assumes a ~2 vCPU / 4 GB droplet; tune to the actual size if needed.
+    mem_limit: 768m
+    cpus: 1.0
     # env_file forwards ALL variables from /opt/docker/apps/sigdoc/.env to the container.
     # This covers SMTP_*, FRONTEND_URL, EMAIL_BACKEND, GOTENBERG_*, ENABLE_DEV_RESET, etc.
     # The explicit environment block below OVERRIDES compose-computed values that differ
@@ -103,6 +113,19 @@ services:
       # unauthenticated recovery route can never be mounted here regardless of
       # .env drift. Production admin recovery is server-side only (scripts/reset-admin.sh).
       ENABLE_DEV_RESET: "false"
+      # Trust proxy headers from any peer. The api is reachable ONLY through Traefik
+      # on the internal docker network (no host port is published), so X-Forwarded-For
+      # is always set by Traefik. uvicorn runs with --proxy-headers but no
+      # --forwarded-allow-ips (see docker/Dockerfile.api.prod), so without this it
+      # falls back to trusting only 127.0.0.1 and every client is seen as Traefik's
+      # IP — collapsing per-IP rate limiting (login 5/min, signup 3/hour) and audit
+      # logging into one shared bucket. uvicorn reads FORWARDED_ALLOW_IPS from the env.
+      FORWARDED_ALLOW_IPS: "*"
+      # Pin CORS to the production origin (matches the Traefik Host() labels below).
+      # config.py types cors_origins as list[str], which pydantic-settings parses
+      # from the env as JSON — a bare string raises SettingsError at boot, so this
+      # value MUST be a JSON array.
+      CORS_ORIGINS: '["https://sigdoc.devrafaseros.com"]'
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
       interval: 30s

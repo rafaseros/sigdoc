@@ -9,7 +9,13 @@ class Settings(BaseSettings):
     app_name: str = "SigDoc"
     debug: bool = False
     api_v1_prefix: str = "/api/v1"
-    cors_origins: list[str] = ["*"]
+    # Safe local-dev default: the Vite dev-server origin. NEVER default to ["*"] —
+    # main.py sends allow_credentials=True, and wildcard-with-credentials would
+    # reflect any origin. Production pins this via CORS_ORIGINS in
+    # docker-compose.prod.yml. When set from the env, pydantic-settings parses this
+    # list[str] as JSON, so the env value must be a JSON array (e.g.
+    # '["https://sigdoc.devrafaseros.com"]').
+    cors_origins: list[str] = ["http://localhost:5173"]
     bulk_generation_limit: int = 10
 
     # Maximum accepted request body size, in bytes. Enforced globally by
