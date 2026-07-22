@@ -33,7 +33,7 @@ function renderWithClient<TResult>(hook: () => TResult) {
 
 function invalidatedKeys(spy: ReturnType<typeof vi.spyOn>): QueryKey[] {
   return spy.mock.calls.map(
-    (call) => (call[0] as { queryKey: QueryKey }).queryKey,
+    (call: unknown[]) => (call[0] as { queryKey: QueryKey }).queryKey,
   );
 }
 
