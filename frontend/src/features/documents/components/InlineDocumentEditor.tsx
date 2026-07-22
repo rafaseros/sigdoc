@@ -434,37 +434,59 @@ export function InlineDocumentEditor({
     [variablesMeta]
   );
 
-  // Ordered list of unique variable names across the document (for progress counting)
+  // Computed variables are resolved server-side and their submitted values are
+  // discarded — the user must never be required to fill them (mirrors
+  // FullDocumentEditor's `isComputed`/`editableVarNames`/`nonComputedValues`).
+  const isComputed = useCallback(
+    (name: string) => !!metaByName[name]?.computed,
+    [metaByName],
+  );
+
+  // Ordered list of unique EDITABLE variable names across the document (drives
+  // progress counting and the "ready to generate" gate). Computed variables
+  // are excluded so filling them is never demanded before Generate enables.
   const allVarNames = useMemo(() => {
     const result: string[] = [];
     const seen = new Set<string>();
     for (const p of paragraphs) {
       for (const v of p.variableNames) {
-        if (!seen.has(v)) {
-          seen.add(v);
-          result.push(v);
-        }
+        if (seen.has(v)) continue;
+        seen.add(v);
+        if (isComputed(v)) continue;
+        result.push(v);
       }
     }
     return result;
-  }, [paragraphs]);
+  }, [paragraphs, isComputed]);
 
   /**
-   * Flattened ordered list of all placeholder instances across the document.
-   * Each entry carries its instanceKey and varName so "Próximo campo" can walk
-   * by occurrence rather than by variable name.
+   * Flattened ordered list of all EDITABLE placeholder instances across the
+   * document. Each entry carries its instanceKey and varName so "Próximo
+   * campo" auto-jump can walk by occurrence rather than by variable name.
+   * Computed placeholders are skipped so auto-advance never stops on a pill
+   * the user can't meaningfully fill.
    */
   const allInstances = useMemo(() => {
     const result: Array<{ instanceKey: InstanceKey; varName: string }> = [];
     for (const p of paragraphs) {
       p.segments.forEach((seg, i) => {
-        if (seg.type !== "text") {
-          result.push({ instanceKey: `${p.id}::${i}`, varName: seg.content });
-        }
+        if (seg.type === "text") return;
+        if (isComputed(seg.content)) return;
+        result.push({ instanceKey: `${p.id}::${i}`, varName: seg.content });
       });
     }
     return result;
-  }, [paragraphs]);
+  }, [paragraphs, isComputed]);
+
+  // Computed variables are server-owned — never send a value for them, even
+  // if one leaked into `values` (e.g. a computed pill was clicked and filled).
+  const nonComputedValues = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const [name, value] of Object.entries(values)) {
+      if (!isComputed(name)) out[name] = value;
+    }
+    return out;
+  }, [values, isComputed]);
 
   const filledCount = allVarNames.filter(
     (v) => (values[v] ?? "").trim().length > 0
@@ -512,7 +534,7 @@ export function InlineDocumentEditor({
     try {
       const result = await generateMutation.mutateAsync({
         template_version_id: templateVersionId,
-        variables: values,
+        variables: nonComputedValues,
       });
       const docs = result.documents.map((d) => ({
         documentId: d.id,

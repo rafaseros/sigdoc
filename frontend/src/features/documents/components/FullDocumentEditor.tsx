@@ -817,6 +817,16 @@ export function FullDocumentEditor({
 
   const handleCommit = useCallback<CommitHandler>(
     (key, varName, value, advance) => {
+      // Editing a value after a successful generate makes the previously
+      // generated document stale — it no longer matches the form. Drop
+      // `generated` so the sticky bar swaps the Download button back to
+      // Generate: the user can never download a document that doesn't reflect
+      // the current field values. Only reset on an actual change so a no-op
+      // re-commit (e.g. a blur that keeps the same value) doesn't force a
+      // needless re-generate.
+      if ((valuesRef.current[varName] ?? "") !== value) {
+        setGenerated(null);
+      }
       setValues((prev) => ({ ...prev, [varName]: value }));
 
       if (!advance) {
@@ -856,6 +866,9 @@ export function FullDocumentEditor({
         }
         return next;
       });
+      // Loading a preset rewrites the field values, so any document generated
+      // before it is now stale — force a re-generate (see handleCommit).
+      setGenerated(null);
       toast.success(`Datos de «${preset.name}» cargados`);
     },
     [presets, editableVarNames],

@@ -17,6 +17,13 @@ import { InlineDocumentEditor } from "./InlineDocumentEditor";
 interface VariableMeta {
   name: string;
   contexts: string[];
+  /**
+   * Present (non-null) for server-computed variables (formula/function). Their
+   * submitted values are discarded server-side, so the fallback form must
+   * never require, render, or submit them. Structural marker — the concrete
+   * config shape is owned by the API layer; only its presence matters here.
+   */
+  computed?: { kind: string } | null;
 }
 
 interface DynamicFormProps {
@@ -78,12 +85,21 @@ function DynamicFormFlat({
   variables,
   variablesMeta = [],
 }: Omit<DynamicFormProps, "templateName">) {
-  const schema = buildSchema(variables);
+  // Computed variables are resolved server-side and their submitted values are
+  // discarded — exclude them from the required schema, the rendered fields,
+  // and the payload so the user is never forced to invent a value for an
+  // "automatic" variable before Generate enables.
+  const computedNames = new Set(
+    variablesMeta.filter((m) => m.computed).map((m) => m.name),
+  );
+  const editableVariables = variables.filter((v) => !computedNames.has(v));
+
+  const schema = buildSchema(editableVariables);
   type FormData = z.infer<typeof schema>;
 
   const form = useForm<FormData>({
     resolver: zodResolver(schema),
-    defaultValues: Object.fromEntries(variables.map((v) => [v, ""])),
+    defaultValues: Object.fromEntries(editableVariables.map((v) => [v, ""])),
   });
 
   // Watch all values for live preview
@@ -130,7 +146,7 @@ function DynamicFormFlat({
           </p>
         </div>
 
-        {variables.map((variable) => {
+        {editableVariables.map((variable) => {
           const meta = variablesMeta.find((m) => m.name === variable);
           const currentValue = watchedValues[variable] || "";
           return (

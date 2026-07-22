@@ -15,6 +15,15 @@ export interface VariableMeta {
   type?: VariableType;
   options?: string[] | null;
   help_text?: string | null;
+  /**
+   * Present (non-null) when the variable is resolved server-side (a formula
+   * or function). Only its presence matters to the inline editor — the
+   * concrete config shape is owned by the API layer — so consumers treat any
+   * non-null value as "computed" and must never require, count, or submit it.
+   * Kept structural (`{ kind: string }`) to avoid coupling this pure helper
+   * to the feature/API layer while still accepting the real `ComputedConfig`.
+   */
+  computed?: { kind: string } | null;
 }
 
 export interface DocumentSegment {

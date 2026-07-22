@@ -1103,6 +1103,100 @@ describe("FullDocumentEditor — multi-document generate response", () => {
   });
 });
 
+describe("FullDocumentEditor — stale download after editing", () => {
+  beforeEach(() => {
+    vi.mocked(apiClient.post).mockReset();
+    vi.mocked(apiClient.post).mockResolvedValue({
+      data: {
+        documents: [
+          {
+            id: "doc-1",
+            template_version_id: "version-1",
+            docx_file_name: "contrato_acme.docx",
+            pdf_file_name: null,
+            generation_type: "single",
+            status: "completed",
+            download_url: null,
+            variables_snapshot: { amount: "100" },
+            created_at: "2026-01-01T00:00:00Z",
+            group_id: null,
+          },
+        ],
+        group_id: null,
+      },
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("reverts Download to Generate when a value changes after generating, so a stale document can never be downloaded", async () => {
+    const user = userEvent.setup();
+    renderComputedEditor();
+
+    // Fill the single editable variable and generate.
+    await user.click(screen.getByText("{{ amount }}"));
+    await user.type(screen.getByRole("textbox"), "100");
+    await user.keyboard("{Enter}");
+    await user.click(
+      screen.getByRole("button", { name: /generar documento/i }),
+    );
+
+    // Post-generate: the Download button is shown, Generate is gone.
+    expect(
+      await screen.findByRole("button", { name: /descargar pdf/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /generar documento/i }),
+    ).not.toBeInTheDocument();
+
+    // Edit the amount to a different value — the generated document no longer
+    // matches the form.
+    await user.click(screen.getAllByText("100")[0]);
+    const input = screen.getByRole("textbox");
+    await user.clear(input);
+    await user.type(input, "200");
+    await user.keyboard("{Enter}");
+
+    // Download is gone and Generate is back: the user must re-generate before
+    // they can download again.
+    expect(
+      screen.queryByRole("button", { name: /descargar pdf/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /generar documento/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("re-committing the SAME value does not force a re-generate", async () => {
+    const user = userEvent.setup();
+    renderComputedEditor();
+
+    await user.click(screen.getByText("{{ amount }}"));
+    await user.type(screen.getByRole("textbox"), "100");
+    await user.keyboard("{Enter}");
+    await user.click(
+      screen.getByRole("button", { name: /generar documento/i }),
+    );
+    expect(
+      await screen.findByRole("button", { name: /descargar pdf/i }),
+    ).toBeInTheDocument();
+
+    // Re-open the pill and commit the identical value via blur.
+    await user.click(screen.getAllByText("100")[0]);
+    fireEvent.blur(screen.getByRole("textbox"));
+
+    // No value actually changed, so the download stays available.
+    expect(
+      screen.getByRole("button", { name: /descargar pdf/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /generar documento/i }),
+    ).not.toBeInTheDocument();
+  });
+});
+
 describe("FullDocumentEditor — help center mount", () => {
   it("renders a compact Guía trigger that opens directly on 'Generar documentos'", async () => {
     const user = userEvent.setup();
