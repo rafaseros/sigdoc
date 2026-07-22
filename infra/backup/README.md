@@ -67,3 +67,53 @@ off-box regularly, for example:
 
 Either option is enough to survive a total loss of the droplet, which is
 exactly what happened to the previous Contabo VPS.
+
+## Downloadable bundle (`backup-bundle.sh` + `fetch-backup.sh`)
+
+`backup.sh` keeps rolling backups **on the droplet**. When you want a single
+portable copy on your own machine — for cold storage, or to measure how much
+data you would pay to store off-site — use the bundle scripts instead.
+
+**On the droplet**, `backup-bundle.sh` writes ONE self-contained archive to
+`/opt/docker/backups/sigdoc/bundles/sigdoc-backup_<timestamp>.tar.gz`
+containing the Postgres dump, both MinIO buckets, and a `MANIFEST.txt`. It
+keeps the newest 5 bundles and prints a size breakdown, e.g.:
+
+```
+================= SigDoc backup bundle =================
+ Postgres dump   : 12M
+ MinIO templates : 340M (128 objects)
+ MinIO documents : 2.1G (4530 objects)
+ -------------------------------------------------------
+ Bundle (.tar.gz): 2.3G
+========================================================
+```
+
+That bundle size is the number to weigh against a paid target — e.g.
+DigitalOcean Spaces is ~US$5/mo for 250 GB (S3-compatible).
+
+**From your machine**, `fetch-backup.sh` downloads the newest bundle over SSH:
+
+```bash
+# Download the newest existing bundle:
+SIGDOC_SSH=deploy@your-droplet ./infra/backup/fetch-backup.sh
+
+# Or generate a fresh one on the droplet first, then download it:
+SIGDOC_SSH=deploy@your-droplet ./infra/backup/fetch-backup.sh --run
+```
+
+It saves into `./sigdoc-backups/` (override with `SIGDOC_BACKUP_DIR`). The ssh
+user needs docker access on the droplet only when using `--run`.
+
+### Restore from a bundle
+
+```bash
+tar -xzf sigdoc-backup_<timestamp>.tar.gz          # -> postgres/ minio/ MANIFEST.txt
+
+# Postgres:
+gunzip -c postgres/pg_<timestamp>.sql.gz \
+  | docker exec -i sigdoc-postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+
+# MinIO: same as the "Restore" section above, pointing at the extracted
+# minio/templates and minio/documents directories.
+```
