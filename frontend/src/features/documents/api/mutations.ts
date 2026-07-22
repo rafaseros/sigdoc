@@ -30,6 +30,7 @@ export interface GenerateResponse {
 }
 
 export function useGenerateDocument() {
+  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (
       request: GenerateRequest,
@@ -39,6 +40,9 @@ export function useGenerateDocument() {
         request,
       );
       return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: documentKeys.lists() });
     },
   });
 }
@@ -107,6 +111,7 @@ export function useDeleteDocument() {
 }
 
 export function useBulkGenerate() {
+  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async ({
       templateVersionId,
@@ -124,6 +129,9 @@ export function useBulkGenerate() {
         { headers: { "Content-Type": "multipart/form-data" } },
       );
       return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: documentKeys.lists() });
     },
   });
 }
