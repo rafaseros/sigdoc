@@ -132,14 +132,46 @@ FRONTEND_URL=https://sigdoc.devrafaseros.com
 
 Note: the app config key is `SMTP_FROM_ADDRESS`, not `SMTP_FROM`. If your `.env` has `SMTP_FROM`, rename it to `SMTP_FROM_ADDRESS` to avoid a pydantic-settings extra-field validation error inside the container.
 
-### Activating the dev reset endpoint in production
+### Admin recovery
 
-The `POST /api/v1/dev/reset-admin` endpoint is gated behind `ENABLE_DEV_RESET=true`. To use it temporarily on the demo VPS:
+There are two recovery paths — one for local development, one for production. **They are different mechanisms on purpose.**
 
-1. Edit `/opt/docker/apps/sigdoc/.env` and set `ENABLE_DEV_RESET=true`.
-2. Restart the api container: `docker compose -f /opt/docker/apps/sigdoc/docker-compose.prod.yml restart api`.
-3. Issue the reset request.
-4. Set `ENABLE_DEV_RESET=false` again and restart.
+#### Local development — the HTTP dev-reset endpoint (LOCAL ONLY)
+
+`POST /api/v1/dev/reset-admin` resets the canonical admin (`devrafaseros@gmail.com`). It is **local-dev only and must never run in production** — it is pinned OFF in `docker-compose.prod.yml` (`ENABLE_DEV_RESET: "false"`), which overrides any `.env` value, so the route can never be mounted on the VPS. Do not attempt to "temporarily enable" it in production; use the server-side path below instead.
+
+To use it on your local machine:
+
+1. In your local `.env`, set:
+   ```
+   ENABLE_DEV_RESET=true
+   DEV_RESET_TOKEN=<a strong random secret>   # e.g. python -c "import secrets; print(secrets.token_urlsafe(32))"
+   ```
+   Without a `DEV_RESET_TOKEN` the endpoint fails closed (HTTP 403) — being "enabled" is not enough.
+2. Restart the api container.
+3. Call it, echoing the token in the `X-Dev-Reset-Token` header (see `scripts/dev-reset-admin.sh`):
+   ```
+   DEV_RESET_TOKEN=<secret> ./scripts/dev-reset-admin.sh
+   ```
+4. The response returns a **freshly generated random password once** — copy it to log in. There is no hardcoded password.
+
+A missing/wrong token, or a missing `DEV_RESET_TOKEN`, all return the same generic `403 Forbidden`.
+
+#### Production — server-side admin reset via SSH (real security boundary)
+
+Production recovery requires **host access to the droplet** — a genuine security boundary — not an internet-reachable endpoint. Use `scripts/reset-admin.sh`, which runs on the droplet host and:
+
+1. Computes the password hash **inside the api container** using the app's own `hash_password` (`docker exec sigdoc-api ...`), so the hash always matches the running code.
+2. Applies an `UPDATE users ...` via `docker exec sigdoc-postgres psql` using the compose `POSTGRES_USER` / `POSTGRES_DB`.
+
+```
+# SSH into the droplet first, then from the compose project directory:
+sudo ./scripts/reset-admin.sh devrafaseros@gmail.com                 # generates a random password, prints it once
+sudo ./scripts/reset-admin.sh devrafaseros@gmail.com 'MyNewPassw0rd' # or supply one explicitly
+# email/password can also be provided interactively when omitted
+```
+
+The script promotes the target to `role=admin`, `is_active=true`, `email_verified=true` and clears any pending reset/verification tokens.
 
 ### Common .env hygiene
 

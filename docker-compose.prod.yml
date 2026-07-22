@@ -98,6 +98,11 @@ services:
       MINIO_SECURE: "false"
       DEBUG: "false"
       API_V1_PREFIX: /api/v1
+      # SECURITY: pin the dev admin-reset HTTP endpoint OFF in production.
+      # This explicit value OVERRIDES anything in .env (env_file above), so the
+      # unauthenticated recovery route can never be mounted here regardless of
+      # .env drift. Production admin recovery is server-side only (scripts/reset-admin.sh).
+      ENABLE_DEV_RESET: "false"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
       interval: 30s

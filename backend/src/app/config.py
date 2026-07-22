@@ -61,8 +61,15 @@ class Settings(BaseSettings):
     # Operators can override via the PREVIEW_WATERMARK_TEXT env var.
     preview_watermark_text: str = "VISTA PREVIA — SigDoc"
 
-    # Dev recovery endpoint (NEVER enable in production)
+    # Dev recovery endpoint (NEVER enable in production; pinned OFF in
+    # docker-compose.prod.yml regardless of .env drift).
     enable_dev_reset: bool = False
+    # Shared secret required to call the dev reset endpoint. Must be a strong,
+    # random value (e.g. `python -c "import secrets; print(secrets.token_urlsafe(32))"`).
+    # The endpoint fails CLOSED (HTTP 403) when this is unset/empty, so "enabled
+    # but no token configured" is never an open door. Callers must echo it in
+    # the X-Dev-Reset-Token request header.
+    dev_reset_token: str | None = None
 
 
 @lru_cache

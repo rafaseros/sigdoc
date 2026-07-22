@@ -1,9 +1,14 @@
 """Integration tests — POST /api/v1/dev/reset-admin (env-gated dev recovery endpoint).
 
-SCEN-DEVRESET-01: endpoint enabled + canonical admin exists → 200, DB updated
+SCEN-DEVRESET-01: enabled + token configured + correct token + admin exists →
+                  200, DB updated, random password returned (never admin123!)
 SCEN-DEVRESET-02: endpoint disabled (default) → 404 (route not registered)
-SCEN-DEVRESET-03: endpoint enabled + canonical admin missing → 404
+SCEN-DEVRESET-03: enabled + correct token + canonical admin missing → 404
 SCEN-DEVRESET-04: audit log gets DEV_ADMIN_RESET event with correct details
+SCEN-DEVRESET-05: enabled + token configured + NO header → 403 (fail closed)
+SCEN-DEVRESET-06: enabled + token configured + WRONG header → 403 (fail closed)
+SCEN-DEVRESET-07: enabled but dev_reset_token unset/empty → 403 (fail closed,
+                  "enabled but no token configured" is NOT an open door)
 """
 
 from __future__ import annotations
@@ -31,6 +36,15 @@ from tests.fakes import (
 CANONICAL_EMAIL = "devrafaseros@gmail.com"
 CANONICAL_ADMIN_ID = uuid.UUID("11111111-1111-1111-1111-111111111111")
 TEST_TENANT_ID = uuid.UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+
+# Secret token the test app is configured with. The endpoint requires callers to
+# echo this exact value in the X-Dev-Reset-Token header.
+TEST_DEV_RESET_TOKEN = "test-dev-reset-token-super-secret"
+DEV_RESET_HEADER = "X-Dev-Reset-Token"
+
+# The old, publicly-known hardcoded password. The hardened endpoint must NEVER
+# set this again — every reset now uses a freshly generated random password.
+LEGACY_HARDCODED_PASSWORD = "admin123!"
 
 
 def _make_canonical_admin() -> User:
@@ -74,14 +88,26 @@ def _make_fake_repo_class_for_dev(fake_repo: FakeUserRepository):
     return _Repo
 
 
-def _make_dev_enabled_app(fake_user_repo: FakeUserRepository, fake_audit_repo: FakeAuditRepository):
+def _make_dev_enabled_app(
+    fake_user_repo: FakeUserRepository,
+    fake_audit_repo: FakeAuditRepository,
+    dev_reset_token: str | None = TEST_DEV_RESET_TOKEN,
+):
     """Build a fresh FastAPI app with enable_dev_reset=True and all fakes wired.
+
+    ``dev_reset_token`` controls the DEV_RESET_TOKEN env var read into
+    ``settings.dev_reset_token``. Pass ``None`` to simulate the fail-closed
+    "enabled but no token configured" case.
 
     Also patches dev.SQLAlchemyUserRepository to the fake so the session mock
     doesn't interfere.
     """
     import os
     os.environ["ENABLE_DEV_RESET"] = "true"
+    if dev_reset_token is None:
+        os.environ.pop("DEV_RESET_TOKEN", None)
+    else:
+        os.environ["DEV_RESET_TOKEN"] = dev_reset_token
 
     from app.config import get_settings
     get_settings.cache_clear()
@@ -187,16 +213,21 @@ def _make_dev_disabled_app():
 def _cleanup_dev_env():
     import os
     os.environ.pop("ENABLE_DEV_RESET", None)
+    os.environ.pop("DEV_RESET_TOKEN", None)
     from app.config import get_settings
     get_settings.cache_clear()
 
 
-# ── SCEN-DEVRESET-01: enabled + canonical admin exists → 200 ─────────────────
+# ── SCEN-DEVRESET-01: enabled + correct token + canonical admin exists → 200 ──
 
 
 @pytest.mark.asyncio
-async def test_dev_reset_admin_success_when_enabled():
-    """SCEN-DEVRESET-01: endpoint enabled + canonical admin in DB → 200, DB updated."""
+async def test_dev_reset_admin_success_with_correct_token():
+    """SCEN-DEVRESET-01: correct token + canonical admin in DB → 200, DB updated.
+
+    The new password is randomly generated, returned ONCE in the response, and
+    is NEVER the old publicly-known hardcoded password.
+    """
     import app.presentation.api.v1.dev as dev_mod
 
     fake_user_repo = FakeUserRepository()
@@ -223,16 +254,26 @@ async def test_dev_reset_admin_success_when_enabled():
             transport=ASGITransport(app=_app),
             base_url="http://test",
         ) as client:
-            response = await client.post("/api/v1/dev/reset-admin")
+            response = await client.post(
+                "/api/v1/dev/reset-admin",
+                headers={DEV_RESET_HEADER: TEST_DEV_RESET_TOKEN},
+            )
 
         assert response.status_code == 200, response.text
         data = response.json()
         assert data["message"] == "Canonical admin reset"
         assert data["email"] == CANONICAL_EMAIL
 
+        # The generated password is returned once so the operator can log in.
+        generated_password = data["password"]
+        assert isinstance(generated_password, str) and generated_password
+        assert generated_password != LEGACY_HARDCODED_PASSWORD
+
         # Verify DB changes via fake_user_repo
         updated = fake_user_repo._users[canonical_admin.id]
-        assert verify_password("admin123!", updated.hashed_password)
+        # Password is the freshly generated one — NOT the old hardcoded value.
+        assert verify_password(generated_password, updated.hashed_password)
+        assert not verify_password(LEGACY_HARDCODED_PASSWORD, updated.hashed_password)
         assert updated.role == "admin"
         assert updated.is_active is True
         assert updated.email_verified is True
@@ -265,12 +306,12 @@ async def test_dev_reset_admin_returns_404_when_disabled():
     assert response.status_code == 404, response.text
 
 
-# ── SCEN-DEVRESET-03: enabled but canonical admin missing → 404 ───────────────
+# ── SCEN-DEVRESET-03: enabled + correct token but canonical admin missing → 404 ─
 
 
 @pytest.mark.asyncio
 async def test_dev_reset_admin_returns_404_when_canonical_admin_missing():
-    """SCEN-DEVRESET-03: endpoint enabled + canonical admin not in DB → 404."""
+    """SCEN-DEVRESET-03: correct token + canonical admin not in DB → 404."""
     import app.presentation.api.v1.dev as dev_mod
 
     fake_user_repo = FakeUserRepository()  # empty — no canonical admin
@@ -287,7 +328,10 @@ async def test_dev_reset_admin_returns_404_when_canonical_admin_missing():
             transport=ASGITransport(app=_app),
             base_url="http://test",
         ) as client:
-            response = await client.post("/api/v1/dev/reset-admin")
+            response = await client.post(
+                "/api/v1/dev/reset-admin",
+                headers={DEV_RESET_HEADER: TEST_DEV_RESET_TOKEN},
+            )
 
         assert response.status_code == 404, response.text
     finally:
@@ -328,7 +372,10 @@ async def test_dev_reset_admin_logs_audit_event():
             transport=ASGITransport(app=_app),
             base_url="http://test",
         ) as client:
-            response = await client.post("/api/v1/dev/reset-admin")
+            response = await client.post(
+                "/api/v1/dev/reset-admin",
+                headers={DEV_RESET_HEADER: TEST_DEV_RESET_TOKEN},
+            )
 
         assert response.status_code == 200, response.text
 
@@ -348,6 +395,8 @@ async def test_dev_reset_admin_logs_audit_event():
         assert entry.details is not None
         assert entry.details.get("target_email") == CANONICAL_EMAIL
         assert entry.details.get("via") == "dev_endpoint"
+        # The generated password must NEVER be written to the audit trail.
+        assert "password" not in entry.details
         # actor_id should be the canonical admin's own id (self-reset semantics)
         assert entry.actor_id == canonical_admin.id
     finally:
@@ -355,4 +404,133 @@ async def test_dev_reset_admin_logs_audit_event():
             dev_mod.SQLAlchemyUserRepository = original_repo_class
         if original_get_audit is not None:
             dev_mod.get_audit_service = original_get_audit
+        _cleanup_dev_env()
+
+
+# ── SCEN-DEVRESET-05: enabled + token configured + NO header → 403 ───────────
+
+
+@pytest.mark.asyncio
+async def test_dev_reset_admin_returns_403_when_header_missing():
+    """SCEN-DEVRESET-05: token configured but no X-Dev-Reset-Token header → 403.
+
+    Fail closed. The canonical admin exists, but without the header the endpoint
+    must never reveal that fact nor mutate anything.
+    """
+    import app.presentation.api.v1.dev as dev_mod
+
+    fake_user_repo = FakeUserRepository()
+    fake_audit_repo = FakeAuditRepository()
+
+    canonical_admin = _make_canonical_admin()
+    original_hash = canonical_admin.hashed_password
+    fake_user_repo._users[canonical_admin.id] = canonical_admin
+    fake_user_repo._by_email[canonical_admin.email] = canonical_admin.id
+
+    dev_repo_class = _make_fake_repo_class_for_dev(fake_user_repo)
+    original_repo_class = getattr(dev_mod, "SQLAlchemyUserRepository", None)
+    dev_mod.SQLAlchemyUserRepository = dev_repo_class
+
+    _app = _make_dev_enabled_app(fake_user_repo, fake_audit_repo)
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=_app),
+            base_url="http://test",
+        ) as client:
+            response = await client.post("/api/v1/dev/reset-admin")
+
+        assert response.status_code == 403, response.text
+        # Nothing was mutated.
+        assert fake_user_repo._users[canonical_admin.id].hashed_password == original_hash
+        assert fake_user_repo._users[canonical_admin.id].role == "document_generator"
+    finally:
+        if original_repo_class is not None:
+            dev_mod.SQLAlchemyUserRepository = original_repo_class
+        _cleanup_dev_env()
+
+
+# ── SCEN-DEVRESET-06: enabled + token configured + WRONG header → 403 ────────
+
+
+@pytest.mark.asyncio
+async def test_dev_reset_admin_returns_403_when_token_wrong():
+    """SCEN-DEVRESET-06: wrong X-Dev-Reset-Token value → 403 (fail closed)."""
+    import app.presentation.api.v1.dev as dev_mod
+
+    fake_user_repo = FakeUserRepository()
+    fake_audit_repo = FakeAuditRepository()
+
+    canonical_admin = _make_canonical_admin()
+    original_hash = canonical_admin.hashed_password
+    fake_user_repo._users[canonical_admin.id] = canonical_admin
+    fake_user_repo._by_email[canonical_admin.email] = canonical_admin.id
+
+    dev_repo_class = _make_fake_repo_class_for_dev(fake_user_repo)
+    original_repo_class = getattr(dev_mod, "SQLAlchemyUserRepository", None)
+    dev_mod.SQLAlchemyUserRepository = dev_repo_class
+
+    _app = _make_dev_enabled_app(fake_user_repo, fake_audit_repo)
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=_app),
+            base_url="http://test",
+        ) as client:
+            response = await client.post(
+                "/api/v1/dev/reset-admin",
+                headers={DEV_RESET_HEADER: "totally-wrong-token"},
+            )
+
+        assert response.status_code == 403, response.text
+        assert fake_user_repo._users[canonical_admin.id].hashed_password == original_hash
+    finally:
+        if original_repo_class is not None:
+            dev_mod.SQLAlchemyUserRepository = original_repo_class
+        _cleanup_dev_env()
+
+
+# ── SCEN-DEVRESET-07: enabled but dev_reset_token unset/empty → 403 ──────────
+
+
+@pytest.mark.asyncio
+async def test_dev_reset_admin_returns_403_when_token_not_configured():
+    """SCEN-DEVRESET-07: enabled but no dev_reset_token configured → 403.
+
+    "Enabled but no token configured" must NOT be an open door: even supplying a
+    header must fail closed when the server has no secret to compare against.
+    """
+    import app.presentation.api.v1.dev as dev_mod
+
+    fake_user_repo = FakeUserRepository()
+    fake_audit_repo = FakeAuditRepository()
+
+    canonical_admin = _make_canonical_admin()
+    original_hash = canonical_admin.hashed_password
+    fake_user_repo._users[canonical_admin.id] = canonical_admin
+    fake_user_repo._by_email[canonical_admin.email] = canonical_admin.id
+
+    dev_repo_class = _make_fake_repo_class_for_dev(fake_user_repo)
+    original_repo_class = getattr(dev_mod, "SQLAlchemyUserRepository", None)
+    dev_mod.SQLAlchemyUserRepository = dev_repo_class
+
+    # enable_dev_reset=True but NO token configured.
+    _app = _make_dev_enabled_app(fake_user_repo, fake_audit_repo, dev_reset_token=None)
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=_app),
+            base_url="http://test",
+        ) as client:
+            # Even sending *some* header must not open the door.
+            response = await client.post(
+                "/api/v1/dev/reset-admin",
+                headers={DEV_RESET_HEADER: "any-value"},
+            )
+
+        assert response.status_code == 403, response.text
+        assert fake_user_repo._users[canonical_admin.id].hashed_password == original_hash
+    finally:
+        if original_repo_class is not None:
+            dev_mod.SQLAlchemyUserRepository = original_repo_class
         _cleanup_dev_env()
