@@ -4,10 +4,12 @@ AuditService uses asyncio.create_task() for fire-and-forget writes.
 In unit tests we use SyncAuditService — a testable subclass that overrides
 _write() to run synchronously so tests can assert on stored entries.
 """
+import asyncio
 import uuid
 from datetime import datetime, timezone
 import pytest
 
+from app.application.services import audit_service as audit_module
 from app.application.services.audit_service import AuditService
 from app.domain.entities import AuditAction, AuditLog
 from tests.fakes import FakeAuditRepository
@@ -290,3 +292,47 @@ class TestAuditServiceListLogs:
 
         assert total == 3
         assert {e.tenant_id for e in items} == {tenant_a}
+
+
+# ---------------------------------------------------------------------------
+# Fire-and-forget task retention — strong reference until completion
+# ---------------------------------------------------------------------------
+
+
+class TestAuditServiceTaskRetention:
+    async def test_scheduled_write_task_is_retained_until_complete(
+        self,
+        fake_audit_repo: FakeAuditRepository,
+    ):
+        """log() must keep a strong reference to the create_task() task.
+
+        Exercises the REAL AuditService.log() fire-and-forget path (the one that
+        calls asyncio.create_task) — NOT SyncAuditService. Per the documented
+        asyncio pitfall, the event loop keeps only a weak reference to a bare
+        create_task() result, so a pending audit-write task can be garbage
+        collected mid-flight and the write silently dropped. The service must
+        retain each scheduled task in a module-level set until it finishes, then
+        discard it via a done-callback.
+        """
+        # Real fire-and-forget service (create_task path), repo injected.
+        service = AuditService(audit_repo=fake_audit_repo)
+        audit_module._pending_tasks.clear()
+
+        service.log(
+            actor_id=uuid.uuid4(),
+            tenant_id=uuid.uuid4(),
+            action=AuditAction.AUTH_LOGIN,
+        )
+
+        # In flight: the scheduled task is strongly referenced (not GC-able).
+        assert len(audit_module._pending_tasks) == 1
+        in_flight = set(audit_module._pending_tasks)
+
+        # Let the scheduled write run to completion.
+        await asyncio.gather(*in_flight)
+        await asyncio.sleep(0)  # allow the done-callback (discard) to run
+
+        # Completed: the done-callback removed the task from the set.
+        assert len(audit_module._pending_tasks) == 0
+        # And the write actually persisted the entry.
+        assert len(fake_audit_repo._entries) == 1

@@ -19,6 +19,19 @@ from app.domain.ports.audit_repository import AuditRepository
 
 logger = logging.getLogger(__name__)
 
+# Strong references to in-flight fire-and-forget audit-write tasks.
+#
+# asyncio only keeps a *weak* reference to the task returned by
+# create_task(), so without a strong reference elsewhere a pending write can be
+# garbage-collected mid-flight and silently dropped. This set is module-level
+# (not an instance attribute) because get_audit_service() builds a fresh
+# AuditService per call and callers hold it only in a short-lived local — an
+# instance-level set would be collected together with the service the moment
+# the request handler returns, taking the pending task down with it. A
+# module-level set outlives any single instance and the request, so the task is
+# retained until it completes and its done-callback discards it.
+_pending_tasks: set[asyncio.Task] = set()
+
 
 class AuditService:
     def __init__(
@@ -58,7 +71,12 @@ class AuditService:
             details=details,
             ip_address=ip_address,
         )
-        asyncio.create_task(self._write(entry))
+        # Retain a strong reference until the write completes so the event
+        # loop's weak reference cannot let the task be GC'd mid-flight
+        # (fire-and-forget semantics preserved — the caller never awaits it).
+        task = asyncio.create_task(self._write(entry))
+        _pending_tasks.add(task)
+        task.add_done_callback(_pending_tasks.discard)
 
     async def list_audit_logs(
         self,
