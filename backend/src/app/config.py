@@ -12,6 +12,12 @@ class Settings(BaseSettings):
     cors_origins: list[str] = ["*"]
     bulk_generation_limit: int = 10
 
+    # Maximum accepted request body size, in bytes. Enforced globally by
+    # BodySizeLimitMiddleware (HTTP 413 when Content-Length exceeds it) so a
+    # single oversized upload cannot OOM the API. Default matches the dev nginx
+    # `client_max_body_size 50M` (docker/nginx/nginx.conf) so proxy and app agree.
+    max_upload_bytes: int = 50 * 1024 * 1024  # 50 MiB
+
     # Rate limits
     rate_limit_login: str = "5/minute"
     rate_limit_refresh: str = "10/minute"

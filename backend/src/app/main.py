@@ -10,6 +10,7 @@ from slowapi.middleware import SlowAPIMiddleware
 from app.config import get_settings
 from app.domain.exceptions import QuotaExceededError
 from app.presentation.api.v1 import auth, templates, documents, health, users, audit, dev, folders
+from app.presentation.middleware.body_size_limit import BodySizeLimitMiddleware
 from app.presentation.middleware.rate_limit import TierPreloadMiddleware, limiter
 
 
@@ -51,6 +52,16 @@ def create_app() -> FastAPI:
     # TierPreloadMiddleware added AFTER SlowAPIMiddleware → runs BEFORE it (LIFO ordering)
     # Decodes JWT, resolves tenant's tier from DB (with TTL cache), stores on request.state.tier
     app.add_middleware(TierPreloadMiddleware)
+
+    # Body-size cap: reject oversized uploads (HTTP 413) before the body is read.
+    # Added AFTER TierPreloadMiddleware but BEFORE CORSMiddleware so that, with
+    # Starlette's LIFO ordering, the execution chain is:
+    #   CORS → BodySizeLimit → TierPreload → SlowAPI → route
+    # CORS stays OUTERMOST so it answers OPTIONS/preflight itself (which never
+    # reach this middleware) and so the 413 response still carries CORS headers;
+    # yet BodySizeLimit runs BEFORE the tier DB probe, rate-limit check, and the
+    # route's `await file.read()`, rejecting oversized bodies as early as possible.
+    app.add_middleware(BodySizeLimitMiddleware, max_upload_bytes=settings.max_upload_bytes)
 
     # Quota exceeded → HTTP 429
     app.add_exception_handler(QuotaExceededError, _quota_exceeded_handler)
