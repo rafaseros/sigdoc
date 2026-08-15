@@ -71,16 +71,25 @@ afterEach(() => {
 });
 
 describe("GeneratePage — generation mode toggle", () => {
-  it("defaults to the full document editor and switches to the flat form", async () => {
-    const user = userEvent.setup();
+  it("offers three modes and defaults to the full document editor", () => {
     render(<GeneratePage />);
+
+    // All three levels are present, in order.
+    expect(screen.getByRole("button", { name: "Completo" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Guiado" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Rápido" })).toBeInTheDocument();
 
     // Default mode ("full", empty localStorage) shows the full editor.
     expect(screen.getByTestId("full-editor")).toBeInTheDocument();
     expect(screen.queryByTestId("dynamic-form")).not.toBeInTheDocument();
+  });
 
-    // Pick "Formulario" — the flat form (variant="flat") replaces the editor.
-    await user.click(screen.getByRole("button", { name: "Formulario" }));
+  it("switches to the guided form (variant='flat')", async () => {
+    const user = userEvent.setup();
+    render(<GeneratePage />);
+
+    // Pick "Guiado" — the flat form (variant="flat") replaces the editor.
+    await user.click(screen.getByRole("button", { name: "Guiado" }));
 
     const form = screen.getByTestId("dynamic-form");
     expect(form).toBeInTheDocument();
@@ -91,27 +100,66 @@ describe("GeneratePage — generation mode toggle", () => {
     expect(window.localStorage.getItem(GENERATE_MODE_STORAGE_KEY)).toBe("form");
   });
 
-  it("forces the form and disables the full option when the structure fails to load", () => {
+  it("switches to the quick form (variant='fields')", async () => {
+    const user = userEvent.setup();
+    render(<GeneratePage />);
+
+    // Pick "Rápido" — the quick form (variant="fields") replaces the editor.
+    await user.click(screen.getByRole("button", { name: "Rápido" }));
+
+    const form = screen.getByTestId("dynamic-form");
+    expect(form).toBeInTheDocument();
+    expect(form).toHaveAttribute("data-variant", "fields");
+    expect(screen.queryByTestId("full-editor")).not.toBeInTheDocument();
+
+    // Choice is remembered.
+    expect(window.localStorage.getItem(GENERATE_MODE_STORAGE_KEY)).toBe(
+      "fields",
+    );
+  });
+
+  it("disables only 'Completo' and falls back to the guided form when the structure fails to load", () => {
     useTemplateStructureMock.mockReturnValue({
       data: undefined,
       isLoading: false,
       isError: true,
     });
-    // Even with "full" remembered, an unavailable structure forces the form.
+    // Even with "full" remembered, an unavailable structure forces a form mode.
     window.localStorage.setItem(GENERATE_MODE_STORAGE_KEY, "full");
 
     render(<GeneratePage />);
 
+    // "full" is impossible → fall back to the guided flat form.
     expect(screen.getByTestId("dynamic-form")).toHaveAttribute(
       "data-variant",
       "flat",
     );
     expect(screen.queryByTestId("full-editor")).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Documento completo" }),
-    ).toBeDisabled();
+
+    // Only "Completo" is disabled; "Guiado" and "Rápido" stay available.
+    expect(screen.getByRole("button", { name: "Completo" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Guiado" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Rápido" })).toBeEnabled();
     expect(
       screen.getByText(/no disponible para esta plantilla/i),
     ).toBeInTheDocument();
+  });
+
+  it("keeps a remembered 'fields' mode when the structure fails to load", () => {
+    useTemplateStructureMock.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+    });
+    // A remembered "Rápido" preference survives a structure failure unchanged.
+    window.localStorage.setItem(GENERATE_MODE_STORAGE_KEY, "fields");
+
+    render(<GeneratePage />);
+
+    expect(screen.getByTestId("dynamic-form")).toHaveAttribute(
+      "data-variant",
+      "fields",
+    );
+    expect(screen.getByRole("button", { name: "Completo" })).toBeDisabled();
   });
 });

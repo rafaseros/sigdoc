@@ -1,9 +1,10 @@
 /**
  * useGenerateMode — remembers how the user prefers to load data on the
- * single-document generate screen.
+ * single-document generate screen. Three levels, most → least document context:
  *
- * - "full" → FullDocumentEditor (full document view with inline pills).
- * - "form" → plain flat form (variable → value inputs).
+ * - "full"   → FullDocumentEditor (full document view with inline pills).
+ * - "form"   → guided flat form (each field shown with its document context).
+ * - "fields" → quick flat form (each field shown with only its help text).
  *
  * The choice is persisted per browser under `sigdoc:generate-mode`, so it
  * survives reloads and version switches. localStorage access is guarded
@@ -14,7 +15,7 @@
 
 import { useCallback, useState } from "react";
 
-export type GenerateMode = "full" | "form";
+export type GenerateMode = "full" | "form" | "fields";
 
 export const GENERATE_MODE_STORAGE_KEY = "sigdoc:generate-mode";
 
@@ -22,7 +23,7 @@ function readStoredMode(): GenerateMode {
   if (typeof window === "undefined") return "full";
   try {
     const raw = window.localStorage.getItem(GENERATE_MODE_STORAGE_KEY);
-    return raw === "form" || raw === "full" ? raw : "full";
+    return raw === "full" || raw === "form" || raw === "fields" ? raw : "full";
   } catch {
     // localStorage unavailable — fall back to the default for this session.
     return "full";

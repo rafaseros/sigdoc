@@ -23,6 +23,12 @@ describe("useGenerateMode", () => {
     expect(result.current[0]).toBe("form");
   });
 
+  it("reads a previously saved 'fields' value", () => {
+    window.localStorage.setItem(GENERATE_MODE_STORAGE_KEY, "fields");
+    const { result } = renderHook(() => useGenerateMode());
+    expect(result.current[0]).toBe("fields");
+  });
+
   it("persists the choice to localStorage when setMode is called", () => {
     const { result } = renderHook(() => useGenerateMode());
 
@@ -32,6 +38,19 @@ describe("useGenerateMode", () => {
 
     expect(result.current[0]).toBe("form");
     expect(window.localStorage.getItem(GENERATE_MODE_STORAGE_KEY)).toBe("form");
+  });
+
+  it("persists the 'fields' choice to localStorage", () => {
+    const { result } = renderHook(() => useGenerateMode());
+
+    act(() => {
+      result.current[1]("fields");
+    });
+
+    expect(result.current[0]).toBe("fields");
+    expect(window.localStorage.getItem(GENERATE_MODE_STORAGE_KEY)).toBe(
+      "fields",
+    );
   });
 
   it("falls back to 'full' when the stored value is invalid", () => {

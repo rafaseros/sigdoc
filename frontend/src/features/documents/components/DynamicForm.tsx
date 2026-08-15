@@ -18,6 +18,11 @@ interface VariableMeta {
   name: string;
   contexts: string[];
   /**
+   * Optional author-written guidance for the variable. Shown as a small
+   * description under the label in the "help" display mode (variant="fields").
+   */
+  help_text?: string | null;
+  /**
    * Present (non-null) for server-computed variables (formula/function). Their
    * submitted values are discarded server-side, so the fallback form must
    * never require, render, or submit them. Structural marker — the concrete
@@ -34,10 +39,12 @@ interface DynamicFormProps {
   /**
    * - "auto" (default): preserve the historical behavior — switch to the
    *   InlineDocumentEditor for >= 4 variables, plain flat form otherwise.
-   * - "flat": always render the plain flat form, regardless of variable count.
-   *   Used by the generate screen's "Formulario" mode for fast data entry.
+   * - "flat": always render the plain flat form with each field's document
+   *   context ("Guiado" mode), regardless of variable count.
+   * - "fields": always render the plain flat form in "help" display — only the
+   *   label + help text + input, no document context ("Rápido" mode).
    */
-  variant?: "auto" | "flat";
+  variant?: "auto" | "flat" | "fields";
 }
 
 function buildSchema(variables: string[]) {
@@ -50,13 +57,14 @@ function buildSchema(variables: string[]) {
 
 /**
  * Routing wrapper:
- * - variant="flat"                        → always DynamicFormFlat (plain form)
+ * - variant="flat"                        → DynamicFormFlat with document context ("Guiado")
+ * - variant="fields"                      → DynamicFormFlat with help text only ("Rápido")
  * - variant="auto" & meta.length >= 4     → InlineDocumentEditor (document-like inline editing)
  * - variant="auto" & meta.length < 4      → DynamicFormFlat (original flat form, kept as fallback)
  *
  * Threshold of 4 balances UX: fewer variables don't benefit from the
- * document metaphor and are faster to fill with a plain form. "flat" opts out
- * of that switch entirely for callers that want plain, fast data entry.
+ * document metaphor and are faster to fill with a plain form. "flat"/"fields"
+ * opt out of that switch entirely for callers that want plain, fast data entry.
  */
 export function DynamicForm({
   templateVersionId,
@@ -85,19 +93,29 @@ export function DynamicForm({
       templateVersionId={templateVersionId}
       variables={variables}
       variablesMeta={variablesMeta}
+      display={variant === "fields" ? "help" : "context"}
     />
   );
 }
 
 /**
  * Original flat form — used as the < 4-variable fallback for variant="auto"
- * and as the always-on form for variant="flat".
+ * and as the always-on form for variant="flat"/"fields".
+ *
+ * `display` selects how much document context each field carries:
+ * - "context" (default): show the ContextPreview(s) — where the value lands in
+ *   the document — and no help text. Keeps backward compatibility.
+ * - "help": show only the variable's help text (when present) as a small
+ *   description under the label — no document context at all.
  */
 function DynamicFormFlat({
   templateVersionId,
   variables,
   variablesMeta = [],
-}: Omit<DynamicFormProps, "templateName" | "variant">) {
+  display = "context",
+}: Omit<DynamicFormProps, "templateName" | "variant"> & {
+  display?: "context" | "help";
+}) {
   // Computed variables are resolved server-side and their submitted values are
   // discarded — exclude them from the required schema, the rendered fields,
   // and the payload so the user is never forced to invent a value for an
@@ -162,6 +180,7 @@ function DynamicFormFlat({
         {editableVariables.map((variable) => {
           const meta = variablesMeta.find((m) => m.name === variable);
           const currentValue = watchedValues[variable] || "";
+          const helpText = meta?.help_text?.trim();
           return (
             <div key={variable} className="space-y-1.5">
               <Label
@@ -172,7 +191,7 @@ function DynamicFormFlat({
                   {variable}
                 </span>
               </Label>
-              {meta && meta.contexts.length > 0 && (
+              {display === "context" && meta && meta.contexts.length > 0 && (
                 <div className="space-y-1">
                   {meta.contexts.map((ctx, i) => (
                     <ContextPreview
@@ -183,6 +202,11 @@ function DynamicFormFlat({
                     />
                   ))}
                 </div>
+              )}
+              {display === "help" && helpText && (
+                <p className="text-[12px] leading-relaxed text-[var(--fg-3)]">
+                  {helpText}
+                </p>
               )}
               <Input
                 id={variable}

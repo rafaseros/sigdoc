@@ -81,11 +81,16 @@ export function GeneratePage() {
   const variables = currentVersion?.variables ?? template.variables;
   const variablesMeta = currentVersion?.variables_meta ?? [];
 
-  // When the document structure can't load, the full document view is
-  // impossible — force "Formulario" and disable the "Documento completo"
-  // option, preserving today's fallback behavior.
+  // When the document structure can't load, the "Completo" view is impossible.
+  // Only that option is disabled: fall back to "Guiado" when "Completo" was
+  // remembered, but keep a remembered form mode ("form"/"fields") as-is so the
+  // user's "Rápido" preference survives a structure failure.
   const structureReady = !!(structure && !structureError);
-  const effectiveMode: GenerateMode = structureReady ? mode : "form";
+  const effectiveMode: GenerateMode = structureReady
+    ? mode
+    : mode === "full"
+      ? "form"
+      : mode;
 
   return (
     <div className="space-y-5">
@@ -188,10 +193,11 @@ export function GeneratePage() {
               files={currentVersion?.files ?? []}
             />
           ) : (
-            // "Formulario" (or the forced fallback when the structure failed):
+            // "Guiado" ("form") shows each field with its document context;
+            // "Rápido" ("fields") shows only label + help text + input. Both use
             // the plain flat form for fast data entry, regardless of count.
             <DynamicForm
-              variant="flat"
+              variant={effectiveMode === "fields" ? "fields" : "flat"}
               templateVersionId={versionId}
               variables={variables}
               variablesMeta={variablesMeta}
@@ -205,10 +211,12 @@ export function GeneratePage() {
 }
 
 /**
- * Segmented control that lets the user choose how to load the document data:
- * the full document view ("Documento completo") or a plain form
- * ("Formulario"). When the full view is unavailable (structure failed to
- * load) its option is disabled and a short note explains why.
+ * Segmented control that lets the user choose how much document context to
+ * show, from most to least: the full document view ("Completo"), the guided
+ * form with each field's context ("Guiado"), or the bare quick form with just
+ * label + help text ("Rápido"). When the full view is unavailable (structure
+ * failed to load) only the "Completo" option is disabled and a short note
+ * explains why; "Guiado" and "Rápido" stay available.
  *
  * Accessible: a labelled group of toggle buttons (`aria-pressed`) with roving
  * tabindex — only the active option is in the tab order, arrow keys move focus
@@ -231,8 +239,9 @@ function GenerateModeToggle({
     label: string;
     disabled: boolean;
   }> = [
-    { value: "full", label: "Documento completo", disabled: !fullAvailable },
-    { value: "form", label: "Formulario", disabled: false },
+    { value: "full", label: "Completo", disabled: !fullAvailable },
+    { value: "form", label: "Guiado", disabled: false },
+    { value: "fields", label: "Rápido", disabled: false },
   ];
 
   // Roving focus: move to the next enabled option, wrapping around.
@@ -300,11 +309,13 @@ function GenerateModeToggle({
         })}
       </div>
       <p className="text-[12px] text-[var(--fg-3)]">
-        Elegí cómo cargar los datos.
+        Elige cuánto contexto del documento mostrar, de más a menos: «Completo»
+        muestra todo el documento, «Guiado» ubica cada campo y «Rápido» solo
+        pide los datos.
       </p>
       {!fullAvailable && (
         <p id={noteId} className="text-[12px] text-[var(--fg-3)]">
-          «Documento completo»: no disponible para esta plantilla.
+          «Completo»: no disponible para esta plantilla.
         </p>
       )}
     </div>

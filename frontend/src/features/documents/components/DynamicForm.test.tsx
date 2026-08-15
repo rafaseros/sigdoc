@@ -131,6 +131,80 @@ describe("DynamicForm — variant='flat'", () => {
   });
 });
 
+function renderVariant(variant: "flat" | "fields") {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  });
+  // One field carries both a document context and help text so the two display
+  // modes can be told apart; one field is computed (must never render an input).
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <DynamicForm
+        variant={variant}
+        templateVersionId="version-1"
+        variables={["cliente", "monto", "total_letras"]}
+        variablesMeta={[
+          {
+            name: "cliente",
+            contexts: ["Contexto documental: {{cliente}}"],
+            help_text: "Nombre legal completo del cliente",
+          },
+          { name: "monto", contexts: [] },
+          {
+            name: "total_letras",
+            contexts: [],
+            computed: { kind: "function" },
+          },
+        ]}
+        templateName="Test Template"
+      />
+    </QueryClientProvider>,
+  );
+}
+
+describe("DynamicForm — variant='flat' shows document context", () => {
+  it("renders the ContextPreview and not the help text", () => {
+    renderVariant("flat");
+
+    // The document context (where the value lands) is shown...
+    expect(screen.getByText(/Contexto documental/)).toBeInTheDocument();
+    // ...and the help text is NOT shown in the guided/context display.
+    expect(
+      screen.queryByText("Nombre legal completo del cliente"),
+    ).not.toBeInTheDocument();
+
+    // Computed variable is still excluded.
+    expect(
+      screen.queryByPlaceholderText("Ingrese total_letras"),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("DynamicForm — variant='fields' shows help text only", () => {
+  it("renders the help text and hides the ContextPreview", () => {
+    renderVariant("fields");
+
+    // Help text is shown as the field description...
+    expect(
+      screen.getByText("Nombre legal completo del cliente"),
+    ).toBeInTheDocument();
+    // ...and no document context appears at all.
+    expect(screen.queryByText(/Contexto documental/)).not.toBeInTheDocument();
+
+    // Editable fields are still plain inputs.
+    expect(screen.getByPlaceholderText("Ingrese cliente")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Ingrese monto")).toBeInTheDocument();
+
+    // Computed variable is still excluded.
+    expect(
+      screen.queryByPlaceholderText("Ingrese total_letras"),
+    ).not.toBeInTheDocument();
+  });
+});
+
 describe("DynamicForm (flat fallback) — computed variables", () => {
   it("does not render an input for the computed variable", () => {
     renderForm();
