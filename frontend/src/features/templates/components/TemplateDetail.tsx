@@ -83,6 +83,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 
 import { TemplateDetailSkeleton } from "./TemplateDetailSkeleton";
+import { VariableSourceChips } from "./VariableSourceChips";
 import { AttachRelatedFileDialog } from "./AttachRelatedFileDialog";
 import { DocumentsTab } from "./DocumentsTab";
 import { ShareTemplateDialog } from "./ShareTemplateDialog";
@@ -517,14 +518,6 @@ export function VariablesTab({
               filtered.map((m) => {
                 const row = rows[m.name] ?? initRow(m);
                 const isSelected = m.name === activeMeta?.name;
-                // Related documents (if any) that also use this variable.
-                // `variables_meta` is the union across the main document and
-                // every related file, so provenance is derivable from each
-                // file's own `variables` list. A variable used by no related
-                // file gets no chip (it is implicitly primary-only).
-                const usedByFiles = files.filter((f) =>
-                  f.variables.includes(m.name),
-                );
                 return (
                   <button
                     type="button"
@@ -562,19 +555,12 @@ export function VariablesTab({
                         {TYPE_LABELS[row.type]}
                       </Badge>
                     </div>
-                    {usedByFiles.length > 0 && (
-                      <div className="flex w-full flex-wrap gap-1">
-                        {usedByFiles.map((f) => (
-                          <span
-                            key={f.id}
-                            className="var-chip var-chip-muted !font-sans !text-[10px]"
-                            title={`También usada en ${f.label}`}
-                          >
-                            {f.label}
-                          </span>
-                        ))}
-                      </div>
-                    )}
+                    {/* Related documents (if any) that also use this variable.
+                        `variables_meta` is the union across the main document
+                        and every related file, so provenance is derivable from
+                        each file's own `variables` list. A variable used by no
+                        related file renders nothing (implicitly primary-only). */}
+                    <VariableSourceChips variableName={m.name} files={files} />
                   </button>
                 );
               })

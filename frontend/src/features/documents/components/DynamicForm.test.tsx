@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { DynamicForm } from "./DynamicForm";
 import { apiClient } from "@/shared/lib/api-client";
+import type { TemplateVersionFile } from "@/features/templates/api/queries";
 
 // DownloadButton (rendered after a successful generate) reads the current
 // role via useAuth — provide a stub non-admin user.
@@ -202,6 +203,90 @@ describe("DynamicForm — variant='fields' shows help text only", () => {
     expect(
       screen.queryByPlaceholderText("Ingrese total_letras"),
     ).not.toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Related-file provenance — each rendered field surfaces which RELATED files
+// also use its variable (derived from `files[].variables`), in BOTH the guided
+// (variant="flat") and quick (variant="fields") display modes.
+// ---------------------------------------------------------------------------
+
+function renderProvenance(variant: "flat" | "fields") {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  });
+  // 'Anexo A' uses `cliente` (editable) and `total_letras` (computed). `monto`
+  // is used by no related file. The computed variable is never rendered as a
+  // field, so it must never surface a provenance chip either.
+  const files: TemplateVersionFile[] = [
+    {
+      id: "file-1",
+      label: "Anexo A",
+      variables: ["cliente", "total_letras"],
+      file_size: 2048,
+      position: 0,
+      created_at: "2026-01-01T00:00:00Z",
+    },
+  ];
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <DynamicForm
+        variant={variant}
+        templateVersionId="version-1"
+        variables={["cliente", "monto", "total_letras"]}
+        variablesMeta={[
+          {
+            name: "cliente",
+            contexts: ["Contexto documental: {{cliente}}"],
+            help_text: "Nombre legal completo del cliente",
+          },
+          { name: "monto", contexts: [] },
+          {
+            name: "total_letras",
+            contexts: [],
+            computed: { kind: "function" },
+          },
+        ]}
+        templateName="Test Template"
+        files={files}
+      />
+    </QueryClientProvider>,
+  );
+}
+
+describe("DynamicForm — related-file provenance", () => {
+  it("shows the 'También en:' provenance under a field a related file uses (variant='flat'/Guiado)", () => {
+    renderProvenance("flat");
+
+    // 'cliente' is used by 'Anexo A' → its field carries the provenance line.
+    expect(screen.getByText("También en:")).toBeInTheDocument();
+    // Rendered exactly once: 'monto' is in no file and the computed
+    // 'total_letras' field is never rendered, so neither adds a chip.
+    expect(screen.getAllByText("Anexo A")).toHaveLength(1);
+    expect(screen.getAllByText("También en:")).toHaveLength(1);
+  });
+
+  it("shows the 'También en:' provenance under a field a related file uses (variant='fields'/Rápido)", () => {
+    renderProvenance("fields");
+
+    expect(screen.getByText("También en:")).toBeInTheDocument();
+    expect(screen.getAllByText("Anexo A")).toHaveLength(1);
+    expect(screen.getAllByText("También en:")).toHaveLength(1);
+  });
+
+  it("keeps the computed variable excluded even when a related file uses it", () => {
+    renderProvenance("flat");
+
+    // The computed variable is still never rendered as an input, so its
+    // provenance chip is never shown either — only 'cliente' carries one.
+    expect(
+      screen.queryByPlaceholderText("Ingrese total_letras"),
+    ).not.toBeInTheDocument();
+    expect(screen.getAllByText("También en:")).toHaveLength(1);
   });
 });
 

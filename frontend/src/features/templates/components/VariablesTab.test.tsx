@@ -394,6 +394,9 @@ describe("VariablesTab — related-file provenance", () => {
     renderTab(provenanceMeta, [relatedFile]);
 
     const montoRow = screen.getByRole("button", { name: /monto/i });
+    // The compact provenance line carries the muted "También en:" prefix...
+    expect(within(montoRow).getByText("También en:")).toBeInTheDocument();
+    // ...followed by the related file's label as a `.var-chip` badge.
     const chip = within(montoRow).getByText("Anexo A");
     expect(chip).toBeInTheDocument();
     expect(chip.closest(".var-chip")).not.toBeNull();
@@ -402,10 +405,13 @@ describe("VariablesTab — related-file provenance", () => {
   it("shows no related-file chip for a variable no related file uses", () => {
     renderTab(provenanceMeta, [relatedFile]);
 
-    // 'fecha' is used by no related file → its row carries no chip, and the
-    // label appears exactly once overall (only on the 'monto' row).
+    // 'fecha' is used by no related file → its row carries no provenance line
+    // at all, and both the prefix and the label appear exactly once overall
+    // (only on the 'monto' row).
     const fechaRow = screen.getByRole("button", { name: /fecha/i });
+    expect(within(fechaRow).queryByText("También en:")).toBeNull();
     expect(within(fechaRow).queryByText("Anexo A")).toBeNull();
+    expect(screen.getAllByText("También en:")).toHaveLength(1);
     expect(screen.getAllByText("Anexo A")).toHaveLength(1);
   });
 

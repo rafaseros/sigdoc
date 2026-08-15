@@ -13,6 +13,8 @@ import { DownloadButton } from "./DownloadButton";
 import { GeneratedDocumentsList } from "./GeneratedDocumentsList";
 import type { GeneratedDocumentInfo } from "./GeneratedDocumentsList";
 import { InlineDocumentEditor } from "./InlineDocumentEditor";
+import { VariableSourceChips } from "@/features/templates/components/VariableSourceChips";
+import type { TemplateVersionFile } from "@/features/templates/api/queries";
 
 interface VariableMeta {
   name: string;
@@ -45,6 +47,14 @@ interface DynamicFormProps {
    *   label + help text + input, no document context ("Rápido" mode).
    */
   variant?: "auto" | "flat" | "fields";
+  /**
+   * The version's related files. Threaded to DynamicFormFlat so each field can
+   * surface which related documents also use that variable (see
+   * VariableSourceChips). Defaults to `[]` — no provenance chips are shown when
+   * the version has no related files. Ignored by the InlineDocumentEditor
+   * branch, which exposes related documents through its own tabs.
+   */
+  files?: TemplateVersionFile[];
 }
 
 function buildSchema(variables: string[]) {
@@ -72,6 +82,7 @@ export function DynamicForm({
   variablesMeta = [],
   templateName,
   variant = "auto",
+  files = [],
 }: DynamicFormProps) {
   const effectiveMeta =
     variablesMeta.length > 0
@@ -94,6 +105,7 @@ export function DynamicForm({
       variables={variables}
       variablesMeta={variablesMeta}
       display={variant === "fields" ? "help" : "context"}
+      files={files}
     />
   );
 }
@@ -113,6 +125,7 @@ function DynamicFormFlat({
   variables,
   variablesMeta = [],
   display = "context",
+  files = [],
 }: Omit<DynamicFormProps, "templateName" | "variant"> & {
   display?: "context" | "help";
 }) {
@@ -191,6 +204,11 @@ function DynamicFormFlat({
                   {variable}
                 </span>
               </Label>
+              {/* Provenance: which related documents also use this variable.
+                  Shown in both display modes, right under the label so it reads
+                  as belonging to this field. Renders nothing when no related
+                  file uses the variable. */}
+              <VariableSourceChips variableName={variable} files={files} />
               {display === "context" && meta && meta.contexts.length > 0 && (
                 <div className="space-y-1">
                   {meta.contexts.map((ctx, i) => (

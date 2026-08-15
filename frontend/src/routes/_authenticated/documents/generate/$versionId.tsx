@@ -202,6 +202,11 @@ export function GeneratePage() {
               variables={variables}
               variablesMeta={variablesMeta}
               templateName={template.name}
+              // Related files power the per-field provenance chips ("También
+              // en: …"). The "Completo" branch above is intentionally left
+              // without them — it already surfaces related documents via its
+              // own tabs.
+              files={currentVersion?.files ?? []}
             />
           )}
         </div>

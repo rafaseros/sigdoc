@@ -28,8 +28,12 @@ vi.mock("@/features/documents/components/FullDocumentEditor", () => ({
   FullDocumentEditor: () => <div data-testid="full-editor" />,
 }));
 vi.mock("@/features/documents/components/DynamicForm", () => ({
-  DynamicForm: (props: { variant?: string }) => (
-    <div data-testid="dynamic-form" data-variant={props.variant} />
+  DynamicForm: (props: { variant?: string; files?: unknown[] }) => (
+    <div
+      data-testid="dynamic-form"
+      data-variant={props.variant}
+      data-file-count={props.files?.length ?? 0}
+    />
   ),
 }));
 
@@ -143,6 +147,41 @@ describe("GeneratePage — generation mode toggle", () => {
     expect(
       screen.getByText(/no disponible para esta plantilla/i),
     ).toBeInTheDocument();
+  });
+
+  it("threads the version's related files into the form modes", async () => {
+    // A version with one related file — the form must receive it so its
+    // per-field provenance chips can render.
+    useTemplateMock.mockReturnValue({
+      data: {
+        ...template,
+        versions: [
+          {
+            ...template.versions[0],
+            files: [
+              {
+                id: "file-1",
+                label: "Anexo A",
+                variables: ["nombre"],
+                file_size: 1024,
+                position: 0,
+                created_at: "2026-01-01T00:00:00Z",
+              },
+            ],
+          },
+        ],
+      },
+      isLoading: false,
+    });
+    const user = userEvent.setup();
+    render(<GeneratePage />);
+
+    await user.click(screen.getByRole("button", { name: "Guiado" }));
+
+    expect(screen.getByTestId("dynamic-form")).toHaveAttribute(
+      "data-file-count",
+      "1",
+    );
   });
 
   it("keeps a remembered 'fields' mode when the structure fails to load", () => {
