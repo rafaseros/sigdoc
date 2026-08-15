@@ -1,9 +1,15 @@
+import { useId, useRef } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { z } from "zod";
 
 import { useTemplate, useTemplateStructure } from "@/features/templates/api/queries";
 import { DynamicForm } from "@/features/documents/components/DynamicForm";
 import { FullDocumentEditor } from "@/features/documents/components/FullDocumentEditor";
+import {
+  useGenerateMode,
+  type GenerateMode,
+} from "@/features/documents/lib/useGenerateMode";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -27,10 +33,14 @@ export const Route = createFileRoute(
   component: GeneratePage,
 });
 
-function GeneratePage() {
+export function GeneratePage() {
   const { versionId } = Route.useParams();
   const { templateId } = Route.useSearch();
   const navigate = useNavigate();
+
+  // Remembered generation mode (persisted per browser). Declared before any
+  // early return so the hook order stays stable across renders.
+  const [mode, setMode] = useGenerateMode();
 
   const { data: template, isLoading } = useTemplate(templateId);
   const { data: structure, isLoading: structureLoading, isError: structureError } =
@@ -70,6 +80,12 @@ function GeneratePage() {
   const currentVersion = template.versions.find((v) => v.id === versionId);
   const variables = currentVersion?.variables ?? template.variables;
   const variablesMeta = currentVersion?.variables_meta ?? [];
+
+  // When the document structure can't load, the full document view is
+  // impossible — force "Formulario" and disable the "Documento completo"
+  // option, preserving today's fallback behavior.
+  const structureReady = !!(structure && !structureError);
+  const effectiveMode: GenerateMode = structureReady ? mode : "form";
 
   return (
     <div className="space-y-5">
@@ -153,25 +169,143 @@ function GeneratePage() {
           />
         </div>
       ) : structureLoading ? (
+        // Don't render a mode until we know whether the structure is usable.
         <Skeleton className="h-96 w-full rounded-xl" />
-      ) : structure && !structureError ? (
-        <FullDocumentEditor
-          templateId={templateId}
-          templateVersionId={versionId}
-          templateName={template.name}
-          variablesMeta={variablesMeta}
-          structure={structure}
-          files={currentVersion?.files ?? []}
-        />
       ) : (
-        // Structure failed to load — fall back to the legacy variable-form
-        // editor so the user can still generate the document.
-        <DynamicForm
-          templateVersionId={versionId}
-          variables={variables}
-          variablesMeta={variablesMeta}
-          templateName={template.name}
-        />
+        <div className="space-y-4">
+          <GenerateModeToggle
+            mode={effectiveMode}
+            onSelect={setMode}
+            fullAvailable={structureReady}
+          />
+          {effectiveMode === "full" && structure ? (
+            <FullDocumentEditor
+              templateId={templateId}
+              templateVersionId={versionId}
+              templateName={template.name}
+              variablesMeta={variablesMeta}
+              structure={structure}
+              files={currentVersion?.files ?? []}
+            />
+          ) : (
+            // "Formulario" (or the forced fallback when the structure failed):
+            // the plain flat form for fast data entry, regardless of count.
+            <DynamicForm
+              variant="flat"
+              templateVersionId={versionId}
+              variables={variables}
+              variablesMeta={variablesMeta}
+              templateName={template.name}
+            />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Segmented control that lets the user choose how to load the document data:
+ * the full document view ("Documento completo") or a plain form
+ * ("Formulario"). When the full view is unavailable (structure failed to
+ * load) its option is disabled and a short note explains why.
+ *
+ * Accessible: a labelled group of toggle buttons (`aria-pressed`) with roving
+ * tabindex — only the active option is in the tab order, arrow keys move focus
+ * between the enabled options.
+ */
+function GenerateModeToggle({
+  mode,
+  onSelect,
+  fullAvailable,
+}: {
+  mode: GenerateMode;
+  onSelect: (mode: GenerateMode) => void;
+  fullAvailable: boolean;
+}) {
+  const noteId = useId();
+  const buttonsRef = useRef<Array<HTMLButtonElement | null>>([]);
+
+  const options: Array<{
+    value: GenerateMode;
+    label: string;
+    disabled: boolean;
+  }> = [
+    { value: "full", label: "Documento completo", disabled: !fullAvailable },
+    { value: "form", label: "Formulario", disabled: false },
+  ];
+
+  // Roving focus: move to the next enabled option, wrapping around.
+  const focusOption = (from: number, dir: 1 | -1) => {
+    const n = options.length;
+    let i = from;
+    for (let step = 0; step < n; step++) {
+      i = (i + dir + n) % n;
+      if (!options[i].disabled) {
+        buttonsRef.current[i]?.focus();
+        return;
+      }
+    }
+  };
+
+  return (
+    <div className="space-y-1.5">
+      <div
+        role="group"
+        aria-label="Modo de carga de datos"
+        className="inline-flex w-full items-center gap-0.5 rounded-lg bg-[var(--bg-muted)] p-0.5 sm:w-auto"
+      >
+        {options.map((opt, i) => {
+          const active = mode === opt.value;
+          return (
+            <button
+              key={opt.value}
+              ref={(el) => {
+                buttonsRef.current[i] = el;
+              }}
+              type="button"
+              aria-pressed={active}
+              disabled={opt.disabled}
+              // Roving tabindex: only the active option is tabbable.
+              tabIndex={active ? 0 : -1}
+              title={
+                opt.disabled ? "No disponible para esta plantilla" : undefined
+              }
+              aria-describedby={opt.disabled ? noteId : undefined}
+              onClick={() => {
+                if (!opt.disabled) onSelect(opt.value);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+                  e.preventDefault();
+                  focusOption(i, 1);
+                } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+                  e.preventDefault();
+                  focusOption(i, -1);
+                }
+              }}
+              className={cn(
+                "flex-1 rounded-md px-3.5 py-1.5 text-[12.5px] font-semibold transition-all sm:flex-none",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]",
+                active
+                  ? "bg-white text-[var(--primary)] shadow-[var(--shadow-sm)]"
+                  : "text-[var(--fg-3)] hover:text-[var(--fg-2)]",
+                opt.disabled &&
+                  "cursor-not-allowed opacity-50 hover:text-[var(--fg-3)]",
+              )}
+            >
+              {opt.label}
+            </button>
+          );
+        })}
+      </div>
+      <p className="text-[12px] text-[var(--fg-3)]">
+        Elegí cómo cargar los datos.
+      </p>
+      {!fullAvailable && (
+        <p id={noteId} className="text-[12px] text-[var(--fg-3)]">
+          «Documento completo»: no disponible para esta plantilla.
+        </p>
       )}
     </div>
   );

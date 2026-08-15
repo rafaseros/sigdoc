@@ -85,6 +85,52 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+function renderFlatVariant() {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  });
+  // Five variables (>= 4) would normally route to the InlineDocumentEditor,
+  // but variant="flat" must force the plain flat form regardless of count.
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <DynamicForm
+        variant="flat"
+        templateVersionId="version-1"
+        variables={["alpha", "beta", "gamma", "delta", "epsilon"]}
+        variablesMeta={[
+          { name: "alpha", contexts: [] },
+          { name: "beta", contexts: [] },
+          { name: "gamma", contexts: [] },
+          { name: "delta", contexts: [] },
+          { name: "epsilon", contexts: [] },
+        ]}
+        templateName="Big Template"
+      />
+    </QueryClientProvider>,
+  );
+}
+
+describe("DynamicForm — variant='flat'", () => {
+  it("renders the plain flat form (not the inline editor) even with >= 4 variables", () => {
+    renderFlatVariant();
+
+    // Flat-form marker heading.
+    expect(screen.getByText("Complete las variables")).toBeInTheDocument();
+    // InlineDocumentEditor marker header must never appear.
+    expect(screen.queryByText("Completar variables")).not.toBeInTheDocument();
+
+    // Every variable is a plain input in the flat form.
+    for (const name of ["alpha", "beta", "gamma", "delta", "epsilon"]) {
+      expect(
+        screen.getByPlaceholderText(`Ingrese ${name}`),
+      ).toBeInTheDocument();
+    }
+  });
+});
+
 describe("DynamicForm (flat fallback) — computed variables", () => {
   it("does not render an input for the computed variable", () => {
     renderForm();

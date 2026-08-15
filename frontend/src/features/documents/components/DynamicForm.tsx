@@ -31,6 +31,13 @@ interface DynamicFormProps {
   variables: string[];
   variablesMeta?: VariableMeta[];
   templateName: string;
+  /**
+   * - "auto" (default): preserve the historical behavior — switch to the
+   *   InlineDocumentEditor for >= 4 variables, plain flat form otherwise.
+   * - "flat": always render the plain flat form, regardless of variable count.
+   *   Used by the generate screen's "Formulario" mode for fast data entry.
+   */
+  variant?: "auto" | "flat";
 }
 
 function buildSchema(variables: string[]) {
@@ -43,24 +50,27 @@ function buildSchema(variables: string[]) {
 
 /**
  * Routing wrapper:
- * - variablesMeta.length >= 4  → InlineDocumentEditor (document-like inline editing)
- * - variablesMeta.length < 4   → DynamicFormFlat (original flat form, kept as fallback)
+ * - variant="flat"                        → always DynamicFormFlat (plain form)
+ * - variant="auto" & meta.length >= 4     → InlineDocumentEditor (document-like inline editing)
+ * - variant="auto" & meta.length < 4      → DynamicFormFlat (original flat form, kept as fallback)
  *
  * Threshold of 4 balances UX: fewer variables don't benefit from the
- * document metaphor and are faster to fill with a plain form.
+ * document metaphor and are faster to fill with a plain form. "flat" opts out
+ * of that switch entirely for callers that want plain, fast data entry.
  */
 export function DynamicForm({
   templateVersionId,
   variables,
   variablesMeta = [],
   templateName,
+  variant = "auto",
 }: DynamicFormProps) {
   const effectiveMeta =
     variablesMeta.length > 0
       ? variablesMeta
       : variables.map((name) => ({ name, contexts: [] }));
 
-  if (effectiveMeta.length >= 4) {
+  if (variant === "auto" && effectiveMeta.length >= 4) {
     return (
       <InlineDocumentEditor
         templateVersionId={templateVersionId}
@@ -79,12 +89,15 @@ export function DynamicForm({
   );
 }
 
-/** Original flat form — fallback for templates with fewer than 4 variables. */
+/**
+ * Original flat form — used as the < 4-variable fallback for variant="auto"
+ * and as the always-on form for variant="flat".
+ */
 function DynamicFormFlat({
   templateVersionId,
   variables,
   variablesMeta = [],
-}: Omit<DynamicFormProps, "templateName">) {
+}: Omit<DynamicFormProps, "templateName" | "variant">) {
   // Computed variables are resolved server-side and their submitted values are
   // discarded — exclude them from the required schema, the rendered fields,
   // and the payload so the user is never forced to invent a value for an
