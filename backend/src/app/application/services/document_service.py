@@ -171,7 +171,7 @@ class DocumentService:
         pending_documents: list[Document] = []
 
         try:
-            for label, source_path in render_specs:
+            for group_position, (label, source_path) in enumerate(render_specs):
                 # 3. Download the source template from MinIO
                 template_bytes = await self._storage.download_file(
                     bucket=self.TEMPLATES_BUCKET,
@@ -237,6 +237,8 @@ class DocumentService:
                         pdf_minio_path=pdf_minio_path,
                         generation_type="single",
                         group_id=group_id,
+                        related_label=label,
+                        group_position=group_position,
                         variables_snapshot=variables,
                         created_by=uuid.UUID(created_by),
                         status="completed",
@@ -500,6 +502,43 @@ class DocumentService:
         return await self._doc_repo.list_paginated(
             page=page, size=size, template_id=tpl_uuid, created_by=created_by_uuid
         )
+
+    async def list_document_groups(
+        self,
+        page: int = 1,
+        size: int = 20,
+        template_id: str | None = None,
+        created_by: str | None = None,
+    ) -> tuple[list, int]:
+        """List documents grouped by generation, paginated by the group unit.
+
+        Delegates to the repository. The REQ-OWN-DOCS scoping decision (admin
+        sees all / template owner sees all of that template / everyone else
+        sees only their own) is resolved by the presentation layer and passed
+        in via `created_by`, exactly like the flat `list_documents` path.
+        """
+        tpl_uuid = uuid.UUID(template_id) if template_id else None
+        created_by_uuid = uuid.UUID(created_by) if created_by else None
+        return await self._doc_repo.list_document_groups(
+            page=page, size=size, template_id=tpl_uuid, created_by=created_by_uuid
+        )
+
+    async def list_documents_by_group(
+        self, group_id: UUID, tenant_id: UUID, *, requester_id: UUID, role: str
+    ) -> list:
+        """Return the documents for a group, scoped to tenant AND owner.
+
+        Ownership (finding #1): a whole group is created by a single user, so a
+        non-creator non-admin gets an empty list — the ZIP endpoint then
+        returns a non-leaking 404 exactly as it does for a non-existent group.
+        Admins see everything. Documents come primary-first in render order.
+        """
+        docs = await self._doc_repo.list_by_group_id(
+            group_id=group_id, tenant_id=tenant_id
+        )
+        if can_view_all_documents(role):
+            return docs
+        return [d for d in docs if d.created_by == requester_id]
 
     async def list_documents_by_batch(
         self, batch_id: UUID, tenant_id: UUID, *, requester_id: UUID, role: str
@@ -830,7 +869,7 @@ class DocumentService:
                     file_specs: list[tuple[str | None, bytes]] = [(None, template_bytes)]
                     file_specs += related_specs
 
-                    for label, source_bytes in file_specs:
+                    for group_position, (label, source_bytes) in enumerate(file_specs):
                         # Render document (fresh DocxTemplate per render — engine)
                         rendered_bytes = await self._engine.render(source_bytes, row_data)
 
@@ -898,6 +937,8 @@ class DocumentService:
                             generation_type="bulk",
                             batch_id=batch_id,
                             group_id=row_group_id,
+                            related_label=label,
+                            group_position=group_position,
                             variables_snapshot=row_data,
                             created_by=uuid.UUID(created_by),
                             status="completed",
@@ -1125,6 +1166,38 @@ class DocumentService:
                 "document_id": str(batch_id),
                 "via": via,
                 "include_both": include_both,
+            },
+            ip_address=None,
+        )
+
+    async def log_group_download_event(
+        self,
+        *,
+        actor_id: UUID,
+        tenant_id: UUID,
+        group_id: UUID,
+        format: str,
+        document_count: int,
+    ) -> None:
+        """Record a combined group ZIP download in the audit log.
+
+        Reuses DOCUMENT_DOWNLOAD with resource_type="document_group" so the
+        existing audit schema is unchanged. No-op when audit_service is None.
+        """
+        if self._audit_service is None:
+            return
+        from app.domain.entities import AuditAction
+        self._audit_service.log(
+            actor_id=actor_id,
+            tenant_id=tenant_id,
+            action=AuditAction.DOCUMENT_DOWNLOAD,
+            resource_type="document_group",
+            resource_id=group_id,
+            details={
+                "format": format,
+                "group_id": str(group_id),
+                "document_count": document_count,
+                "via": "direct",
             },
             ip_address=None,
         )

@@ -38,6 +38,13 @@ class DocumentModel(UUIDMixin, TenantMixin, Base):
     generation_type: Mapped[str] = mapped_column(String(10), nullable=False)
     batch_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
     group_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    # Role/position within a group: related_label is NULL for the primary and
+    # the related file's label for related documents; group_position is 0 for
+    # the primary and 1..N for related files in render order.
+    related_label: Mapped[str | None] = mapped_column(Text, nullable=True)
+    group_position: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
     variables_snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False)
     status: Mapped[str] = mapped_column(String(20), default="completed", server_default="completed")
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)

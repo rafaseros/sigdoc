@@ -60,6 +60,9 @@ class DocumentResponse(BaseModel):
     # Documents generated together from one multi-file generation share a
     # group_id; null for documents of versions without related files.
     group_id: str | None = None
+    # Role within the group: null for the primary document; the related file's
+    # label for related documents. Backward compatible (defaults to null).
+    related_label: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -80,6 +83,30 @@ class GenerateResponse(BaseModel):
 
 class DocumentListResponse(BaseModel):
     items: list[DocumentResponse]
+    total: int
+    page: int
+    size: int
+
+
+class DocumentGroupResponse(BaseModel):
+    """One group of documents produced by a single generation.
+
+    A group is the primary document plus every related file rendered with the
+    same variable set. `group_id` is the shared group UUID — null for a
+    standalone document (a version without related files), in which case
+    `related` is empty and the document is its own `primary`.
+    """
+
+    group_id: str | None = None
+    primary: DocumentResponse
+    related: list[DocumentResponse] = []
+
+
+class DocumentGroupListResponse(BaseModel):
+    """Paginated list of document groups. The pagination unit is the GROUP:
+    `total` counts distinct group units, not individual documents."""
+
+    items: list[DocumentGroupResponse]
     total: int
     page: int
     size: int

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import io
+import unicodedata
 import uuid
 import zipfile
 from typing import Literal
+from urllib.parse import quote
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
@@ -36,6 +38,8 @@ from app.presentation.middleware.rate_limit import (
 from app.presentation.middleware.tenant import CurrentUser, get_current_user
 from app.presentation.schemas.document import (
     BulkGenerateResponse,
+    DocumentGroupListResponse,
+    DocumentGroupResponse,
     DocumentListResponse,
     DocumentResponse,
     GenerateRequest,
@@ -72,7 +76,69 @@ def _to_document_response(doc, download_url: str | None = None) -> DocumentRespo
         variables_snapshot=doc.variables_snapshot,
         created_at=doc.created_at,
         group_id=str(doc.group_id) if doc.group_id else None,
+        related_label=doc.related_label,
     )
+
+
+def _content_disposition_attachment(filename: str) -> str:
+    """Build a safe ``Content-Disposition: attachment`` header value.
+
+    Emits an ASCII-safe ``filename`` fallback PLUS the exact UTF-8 name in an
+    RFC 5987 ``filename*`` parameter (same shape as the template download
+    endpoints), so a crafted template name can never forge headers.
+    """
+    ascii_name = (
+        unicodedata.normalize("NFKD", filename)
+        .encode("ascii", "ignore")
+        .decode("ascii")
+    )
+    ascii_fallback = (
+        "".join(c for c in ascii_name if c.isprintable() and c not in '"\\')
+        or "download.zip"
+    )
+    return (
+        f'attachment; filename="{ascii_fallback}"; '
+        f"filename*=UTF-8''{quote(filename)}"
+    )
+
+
+def _to_document_group_response(docs) -> DocumentGroupResponse:
+    """Build a DocumentGroupResponse from a group's documents.
+
+    `docs` is expected primary-first in render order (group_position asc). The
+    primary is the group_position 0 document (fallback: the first document,
+    which is already ordered by created_at,id); the rest are the related files.
+    """
+    primary_doc = next((d for d in docs if d.group_position == 0), docs[0])
+    related_docs = [d for d in docs if d is not primary_doc]
+    group_id = primary_doc.group_id
+    return DocumentGroupResponse(
+        group_id=str(group_id) if group_id else None,
+        primary=_to_document_response(primary_doc),
+        related=[_to_document_response(d) for d in related_docs],
+    )
+
+
+async def _resolve_created_by_scope(
+    service: DocumentService, current_user: CurrentUser, template_id: str | None
+) -> str | None:
+    """Resolve the REQ-OWN-DOCS `created_by` scope for a document listing.
+
+    Single source of truth shared by the flat list and the grouped list so the
+    two can never drift:
+      * admin  → None (sees everything)
+      * template owner (when template_id given) → None (sees all docs of that
+        template)
+      * everyone else → their own user id
+    """
+    if can_view_all_documents(current_user.role):
+        return None
+    if template_id is not None:
+        owner_id = await service.get_template_owner_id(template_id)
+        if owner_id == current_user.user_id:
+            return None
+        return str(current_user.user_id)
+    return str(current_user.user_id)
 
 
 @router.post("/generate", response_model=GenerateResponse, status_code=status.HTTP_201_CREATED)
@@ -410,6 +476,122 @@ async def download_bulk(
     )
 
 
+@router.get("/groups", response_model=DocumentGroupListResponse)
+async def list_document_groups(
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+    template_id: str | None = Query(None),
+    current_user: CurrentUser = Depends(get_current_user),
+    service: DocumentService = Depends(get_document_service),
+):
+    """List generated documents grouped by generation, paginated by GROUP.
+
+    Each item is a group: the primary document plus every related file that
+    was rendered with the same variable set. A document from a version without
+    related files is its own single-member group (group_id null, related []).
+
+    REQ-OWN-DOCS: same scoping as GET /documents — admins see all; the
+    template's owner (when template_id is given) sees all groups of that
+    template; everyone else sees only their own.
+    """
+    created_by = await _resolve_created_by_scope(service, current_user, template_id)
+
+    groups, total = await service.list_document_groups(
+        page=page, size=size, template_id=template_id, created_by=created_by
+    )
+
+    items = [_to_document_group_response(g) for g in groups]
+
+    return DocumentGroupListResponse(items=items, total=total, page=page, size=size)
+
+
+@router.get("/groups/{group_id}/download")
+async def download_group(
+    group_id: str,
+    format: Literal["pdf", "docx"] = Query(..., description="File format to download (pdf or docx)"),
+    current_user: CurrentUser = Depends(get_current_user),
+    service: DocumentService = Depends(get_document_service),
+):
+    """Download a single ZIP with every document of a group in one format.
+
+    Streams application/zip named ``{sanitized_template_name}_paquete.zip``.
+    Contains the primary + related documents in the requested format
+    (primary-first, each named by its docx_file_name / pdf_file_name).
+
+    RBAC: format follows can_download_format (non-admin → PDF only; docx → 403,
+    same contract as the single-document download). Ownership: creator-or-admin
+    via the same rule as the other download paths — an empty / foreign group is
+    a non-leaking 404.
+
+    PDF backfill is intentionally NOT performed here (group members are always
+    produced dual-format). A member missing a PDF is skipped best-effort rather
+    than triggering a 503, so one legacy row can never fail the whole download.
+    """
+    # RBAC — same format gate as the single-document download.
+    if not can_download_format(current_user.role, format):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Este formato de descarga no está disponible para tu rol.",
+        )
+
+    try:
+        group_uuid = uuid.UUID(group_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid group_id format")
+
+    docs = await service.list_documents_by_group(
+        group_id=group_uuid,
+        tenant_id=current_user.tenant_id,
+        requester_id=current_user.user_id,
+        role=current_user.role,
+    )
+
+    if not docs:
+        # Empty for a non-existent group OR a group owned by another user
+        # (non-admin) — non-leaking 404 either way (finding #1).
+        raise HTTPException(status_code=404, detail="Document group not found")
+
+    # Build ZIP in memory (primary-first order preserved from the repository).
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        for doc in docs:
+            if format == "pdf":
+                # No backfill — skip a member that has no PDF (best-effort).
+                if doc.pdf_file_name is None or doc.pdf_minio_path is None:
+                    continue
+                pdf_bytes = await service.download_document(doc.pdf_minio_path)
+                zf.writestr(doc.pdf_file_name, pdf_bytes)
+            else:
+                docx_bytes = await service.download_document(doc.docx_minio_path)
+                zf.writestr(doc.docx_file_name, docx_bytes)
+
+    zip_buffer.seek(0)
+    zip_bytes = zip_buffer.read()
+
+    # Filename from the (shared) template name, minimally sanitized.
+    raw_name = docs[0].template_name or "documentos"
+    safe_name = (
+        "".join(c for c in raw_name if c.isalnum() or c in " _-").strip()
+        or "documentos"
+    )
+    filename = f"{safe_name}_paquete.zip"
+
+    # Audit best-effort (reuses DOCUMENT_DOWNLOAD with resource_type group).
+    await service.log_group_download_event(
+        actor_id=current_user.user_id,
+        tenant_id=current_user.tenant_id,
+        group_id=group_uuid,
+        format=format,
+        document_count=len(docs),
+    )
+
+    return Response(
+        content=zip_bytes,
+        media_type=_ZIP_MIME,
+        headers={"Content-Disposition": _content_disposition_attachment(filename)},
+    )
+
+
 @router.get("/{document_id}/download")
 async def download_document(
     document_id: UUID,
@@ -526,20 +708,7 @@ async def list_documents(
     documents from that template (bypasses created_by filter).  Admins always
     see everything.  All other users see only their own documents.
     """
-    if can_view_all_documents(current_user.role):
-        # Admin — no filter
-        created_by = None
-    elif template_id is not None:
-        # Check if the current user owns this template
-        owner_id = await service.get_template_owner_id(template_id)
-        if owner_id == current_user.user_id:
-            # Template owner — see all documents from this template
-            created_by = None
-        else:
-            # Not the owner — only their own documents
-            created_by = str(current_user.user_id)
-    else:
-        created_by = str(current_user.user_id)
+    created_by = await _resolve_created_by_scope(service, current_user, template_id)
 
     documents, total = await service.list_documents(page=page, size=size, template_id=template_id, created_by=created_by)
 

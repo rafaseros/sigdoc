@@ -97,6 +97,18 @@ class FakeDocumentRepository(DocumentRepository):
             if d.batch_id == batch_id and d.tenant_id == tenant_id
         ]
 
+    def _matches_template(self, doc: Document, template_id: UUID) -> bool:
+        """True if doc belongs to template_id.
+
+        Resolves template_version_id → template_id via the registered mapping;
+        falls back to direct comparison for legacy tests that set
+        template_version_id to the template UUID.
+        """
+        mapped = self._version_to_template.get(doc.template_version_id)
+        if mapped is not None:
+            return mapped == template_id
+        return doc.template_version_id == template_id
+
     async def list_paginated(
         self,
         page: int = 1,
@@ -107,17 +119,7 @@ class FakeDocumentRepository(DocumentRepository):
         items = list(self._documents.values())
 
         if template_id is not None:
-            # Resolve template_id → set of version_ids using the registered mapping.
-            # If no mapping is registered for a version, fall back to direct comparison
-            # (legacy behaviour for tests that set template_version_id to the template UUID).
-            def _matches_template(doc: Document) -> bool:
-                mapped = self._version_to_template.get(doc.template_version_id)
-                if mapped is not None:
-                    return mapped == template_id
-                # Fallback: direct comparison (backwards-compat with old tests)
-                return doc.template_version_id == template_id
-
-            items = [d for d in items if _matches_template(d)]
+            items = [d for d in items if self._matches_template(d, template_id)]
 
         if created_by is not None:
             items = [d for d in items if d.created_by == created_by]
@@ -127,3 +129,62 @@ class FakeDocumentRepository(DocumentRepository):
         page_items = [self._enrich(d) for d in items[offset : offset + size]]
 
         return page_items, total
+
+    async def list_by_group_id(self, group_id: UUID, tenant_id: UUID) -> list[Document]:
+        """Return documents for group_id scoped to tenant_id, primary-first.
+
+        Ordered by (group_position, created_at, id). Standalone documents
+        (group_id None) are never returned.
+        """
+        _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+        docs = [
+            d
+            for d in self._documents.values()
+            if d.group_id == group_id and d.tenant_id == tenant_id
+        ]
+        docs.sort(key=lambda d: (d.group_position, d.created_at or _EPOCH, str(d.id)))
+        return [self._enrich(d) for d in docs]
+
+    async def list_document_groups(
+        self,
+        page: int = 1,
+        size: int = 20,
+        template_id: UUID | None = None,
+        created_by: UUID | None = None,
+    ) -> tuple[list[list[Document]], int]:
+        """Group documents by COALESCE(group_id, id), paginated by group unit.
+
+        Groups ordered by latest created_at DESC; each group's documents
+        ordered by (group_position, created_at, id).
+        """
+        _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+        items = list(self._documents.values())
+
+        if template_id is not None:
+            items = [d for d in items if self._matches_template(d, template_id)]
+        if created_by is not None:
+            items = [d for d in items if d.created_by == created_by]
+
+        buckets: dict = {}
+        for d in items:
+            key = d.group_id if d.group_id is not None else d.id
+            buckets.setdefault(key, []).append(d)
+
+        # Order group units by their latest created_at DESC.
+        def _latest(key):
+            return max((d.created_at or _EPOCH) for d in buckets[key])
+
+        ordered_keys = sorted(buckets.keys(), key=_latest, reverse=True)
+        total = len(ordered_keys)
+
+        offset = (page - 1) * size
+        page_keys = ordered_keys[offset : offset + size]
+
+        groups: list[list[Document]] = []
+        for key in page_keys:
+            members = sorted(
+                buckets[key],
+                key=lambda d: (d.group_position, d.created_at or _EPOCH, str(d.id)),
+            )
+            groups.append([self._enrich(d) for d in members])
+        return groups, total

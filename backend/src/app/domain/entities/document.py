@@ -41,6 +41,12 @@ class Document:
     # Documents generated together from one multi-file generation share a
     # group_id (None when the version had no related files).
     group_id: UUID | None = None
+    # Role/position WITHIN a group. related_label is None for the primary
+    # document and the related file's label for each related document.
+    # group_position is 0 for the primary and 1..N for related files in
+    # render (position) order. Pre-migration rows default to (None, 0).
+    related_label: str | None = None
+    group_position: int = 0
     status: str = "completed"  # "completed" or "failed"
     error_message: str | None = None
     created_at: datetime | None = None
