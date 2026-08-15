@@ -84,7 +84,6 @@ import { Textarea } from "@/components/ui/textarea";
 
 import { TemplateDetailSkeleton } from "./TemplateDetailSkeleton";
 import { AttachRelatedFileDialog } from "./AttachRelatedFileDialog";
-import { RelatedFileVariables } from "./RelatedFileVariables";
 import { DocumentsTab } from "./DocumentsTab";
 import { ShareTemplateDialog } from "./ShareTemplateDialog";
 import { RenameTemplateDialog } from "./RenameTemplateDialog";
@@ -229,6 +228,10 @@ interface VariablesTabProps {
   templateId: string;
   versionId: string;
   variablesMeta: VariableMeta[];
+  /** The version's related files. Each variable row uses `files[].variables`
+   * to show which related documents also use that variable. Defaults to `[]`
+   * so the tab renders unchanged for versions without related files. */
+  files?: TemplateVersionFile[];
   isOwner: boolean;
 }
 
@@ -261,7 +264,13 @@ function ParagraphPreview({ text, active }: { text: string; active: string }) {
   );
 }
 
-export function VariablesTab({ templateId, versionId, variablesMeta, isOwner }: VariablesTabProps) {
+export function VariablesTab({
+  templateId,
+  versionId,
+  variablesMeta,
+  files = [],
+  isOwner,
+}: VariablesTabProps) {
   const [rows, setRows] = useState<Record<string, VariableRowState>>(() =>
     Object.fromEntries(variablesMeta.map((m) => [m.name, initRow(m)]))
   );
@@ -472,6 +481,16 @@ export function VariablesTab({ templateId, versionId, variablesMeta, isOwner }: 
           </Button>
         </div>
       )}
+      {files.length > 0 && (
+        <div className="mb-4 flex items-start gap-2.5 rounded-[10px] bg-[var(--bg-muted)] px-3.5 py-2.5 text-[12.5px] leading-[1.45] text-[var(--fg-2)]">
+          <Info className="mt-px size-4 shrink-0 text-[var(--fg-3)]" />
+          <div className="flex-1">
+            Las variables se comparten entre el documento principal y sus
+            documentos relacionados. Al configurar una variable, el cambio se
+            aplica en todos los documentos donde aparece.
+          </div>
+        </div>
+      )}
       <div className="grid gap-4 lg:grid-cols-[280px_1fr]">
         {/* Left rail — variable list */}
         <div className="flex max-h-[calc(100vh-280px)] flex-col overflow-hidden rounded-xl bg-white shadow-[var(--shadow-sm)] ring-1 ring-[rgba(195,198,215,0.30)]">
@@ -498,41 +517,64 @@ export function VariablesTab({ templateId, versionId, variablesMeta, isOwner }: 
               filtered.map((m) => {
                 const row = rows[m.name] ?? initRow(m);
                 const isSelected = m.name === activeMeta?.name;
+                // Related documents (if any) that also use this variable.
+                // `variables_meta` is the union across the main document and
+                // every related file, so provenance is derivable from each
+                // file's own `variables` list. A variable used by no related
+                // file gets no chip (it is implicitly primary-only).
+                const usedByFiles = files.filter((f) =>
+                  f.variables.includes(m.name),
+                );
                 return (
                   <button
                     type="button"
                     key={m.name}
                     onClick={() => setSelectedName(m.name)}
-                    className={`flex w-full items-center gap-2 border-b border-[rgba(195,198,215,0.15)] px-4 py-2.5 text-left transition-colors last:border-b-0 ${
+                    className={`flex w-full flex-col gap-1.5 border-b border-[rgba(195,198,215,0.15)] px-4 py-2.5 text-left transition-colors last:border-b-0 ${
                       isSelected
                         ? "bg-[var(--bg-accent)]"
                         : "hover:bg-[var(--bg-page)]"
                     }`}
                   >
-                    <span
-                      className={`min-w-0 flex-1 truncate font-mono text-[12.5px] ${
-                        isSelected
-                          ? "font-semibold text-[var(--primary)]"
-                          : "text-[var(--fg-1)]"
-                      }`}
-                    >
-                      {m.name}
-                    </span>
-                    <Badge
-                      variant="outline"
-                      className="rounded-full border-[rgba(195,198,215,0.40)] px-1.5 text-[10.5px] text-[var(--fg-3)]"
-                    >
-                      {m.contexts.length}×
-                    </Badge>
-                    <Badge
-                      className={`rounded-full border-0 px-1.5 text-[10.5px] font-semibold ${
-                        isSelected
-                          ? "bg-white text-[var(--primary)]"
-                          : "bg-[var(--bg-muted)] text-[var(--fg-3)]"
-                      }`}
-                    >
-                      {TYPE_LABELS[row.type]}
-                    </Badge>
+                    <div className="flex w-full items-center gap-2">
+                      <span
+                        className={`min-w-0 flex-1 truncate font-mono text-[12.5px] ${
+                          isSelected
+                            ? "font-semibold text-[var(--primary)]"
+                            : "text-[var(--fg-1)]"
+                        }`}
+                      >
+                        {m.name}
+                      </span>
+                      <Badge
+                        variant="outline"
+                        className="rounded-full border-[rgba(195,198,215,0.40)] px-1.5 text-[10.5px] text-[var(--fg-3)]"
+                      >
+                        {m.contexts.length}×
+                      </Badge>
+                      <Badge
+                        className={`rounded-full border-0 px-1.5 text-[10.5px] font-semibold ${
+                          isSelected
+                            ? "bg-white text-[var(--primary)]"
+                            : "bg-[var(--bg-muted)] text-[var(--fg-3)]"
+                        }`}
+                      >
+                        {TYPE_LABELS[row.type]}
+                      </Badge>
+                    </div>
+                    {usedByFiles.length > 0 && (
+                      <div className="flex w-full flex-wrap gap-1">
+                        {usedByFiles.map((f) => (
+                          <span
+                            key={f.id}
+                            className="var-chip var-chip-muted !font-sans !text-[10px]"
+                            title={`También usada en ${f.label}`}
+                          >
+                            {f.label}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </button>
                 );
               })
@@ -1396,6 +1438,7 @@ export default function TemplateDetail({
                 templateId={templateId}
                 versionId={currentVersion.id}
                 variablesMeta={currentVersion.variables_meta}
+                files={currentVersion.files}
                 isOwner={template.is_owner}
               />
             ) : (
@@ -1572,63 +1615,55 @@ export default function TemplateDetail({
                             {version.files.map((file) => (
                               <div
                                 key={file.id}
-                                className="flex flex-col gap-1 py-1.5"
+                                className="flex items-center gap-2.5 py-1.5"
                               >
-                                <div className="flex items-center gap-2.5">
-                                  <FileText className="size-3.5 shrink-0 text-[var(--fg-3)]" />
-                                  <span className="min-w-0 truncate text-[12.5px] font-medium text-[var(--fg-1)]">
-                                    {file.label}
-                                  </span>
-                                  <span className="shrink-0 text-[11.5px] text-[var(--fg-3)]">
-                                    {formatFileSize(file.file_size)}
-                                  </span>
-                                  <span className="flex-1" />
-                                  {isOwnerOrAdmin && (
-                                    <Button
-                                      variant="ghost"
-                                      size="icon-sm"
-                                      aria-label={`Descargar documento relacionado ${file.label}`}
-                                      title={`Descargar documento relacionado ${file.label}`}
-                                      onClick={() =>
-                                        handleDownloadVersionFile(
-                                          version.id,
-                                          version.version,
-                                          file,
-                                        )
-                                      }
-                                      className="shrink-0 text-[var(--fg-2)] hover:bg-[var(--bg-accent)]/60 hover:text-[var(--primary)]"
-                                    >
-                                      <Download className="size-4" />
-                                    </Button>
-                                  )}
-                                  {canManageFiles && (
-                                    <Button
-                                      variant="ghost"
-                                      size="icon-sm"
-                                      aria-label={`Eliminar documento relacionado ${file.label}`}
-                                      title={`Eliminar documento relacionado ${file.label}`}
-                                      onClick={() => {
-                                        setDetachConfirm("");
-                                        setFileToDetach({
-                                          versionId: version.id,
-                                          versionNumber: version.version,
-                                          file,
-                                        });
-                                      }}
-                                      className="shrink-0 text-[var(--fg-2)] hover:bg-[#ffdad6]/50 hover:text-[var(--destructive)]"
-                                    >
-                                      <Trash2 className="size-4" />
-                                    </Button>
-                                  )}
-                                </div>
-                                {/* Read-only, expandable view of this related
-                                    file's variables — safe for any version. */}
-                                <div className="pl-6">
-                                  <RelatedFileVariables
-                                    file={file}
-                                    variablesMeta={version.variables_meta}
-                                  />
-                                </div>
+                                <FileText className="size-3.5 shrink-0 text-[var(--fg-3)]" />
+                                <span className="min-w-0 truncate text-[12.5px] font-medium text-[var(--fg-1)]">
+                                  {file.label}
+                                </span>
+                                <span className="shrink-0 text-[11.5px] text-[var(--fg-3)]">
+                                  {file.variables.length} variable
+                                  {file.variables.length !== 1 ? "s" : ""} ·{" "}
+                                  {formatFileSize(file.file_size)}
+                                </span>
+                                <span className="flex-1" />
+                                {isOwnerOrAdmin && (
+                                  <Button
+                                    variant="ghost"
+                                    size="icon-sm"
+                                    aria-label={`Descargar documento relacionado ${file.label}`}
+                                    title={`Descargar documento relacionado ${file.label}`}
+                                    onClick={() =>
+                                      handleDownloadVersionFile(
+                                        version.id,
+                                        version.version,
+                                        file,
+                                      )
+                                    }
+                                    className="shrink-0 text-[var(--fg-2)] hover:bg-[var(--bg-accent)]/60 hover:text-[var(--primary)]"
+                                  >
+                                    <Download className="size-4" />
+                                  </Button>
+                                )}
+                                {canManageFiles && (
+                                  <Button
+                                    variant="ghost"
+                                    size="icon-sm"
+                                    aria-label={`Eliminar documento relacionado ${file.label}`}
+                                    title={`Eliminar documento relacionado ${file.label}`}
+                                    onClick={() => {
+                                      setDetachConfirm("");
+                                      setFileToDetach({
+                                        versionId: version.id,
+                                        versionNumber: version.version,
+                                        file,
+                                      });
+                                    }}
+                                    className="shrink-0 text-[var(--fg-2)] hover:bg-[#ffdad6]/50 hover:text-[var(--destructive)]"
+                                  >
+                                    <Trash2 className="size-4" />
+                                  </Button>
+                                )}
                               </div>
                             ))}
                           </div>

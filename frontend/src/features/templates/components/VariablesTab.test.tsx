@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
@@ -11,7 +11,10 @@ import {
   type VariableRowState,
 } from "./TemplateDetail";
 import { apiClient } from "@/shared/lib/api-client";
-import type { VariableMeta } from "@/features/templates/api/queries";
+import type {
+  TemplateVersionFile,
+  VariableMeta,
+} from "@/features/templates/api/queries";
 import type { VariableTypeOverrideInput } from "@/features/templates/api/mutations";
 
 vi.mock("@/shared/lib/api-client", () => ({
@@ -158,7 +161,10 @@ describe("initRow / buildComputedConfig / buildVariableOverrides (pure payload b
 // operand → save" flow, asserting the exact PATCH payload built by handleSave.
 // ---------------------------------------------------------------------------
 
-function renderTab(variablesMeta: VariableMeta[]) {
+function renderTab(
+  variablesMeta: VariableMeta[],
+  files: TemplateVersionFile[] = [],
+) {
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
@@ -171,6 +177,7 @@ function renderTab(variablesMeta: VariableMeta[]) {
         templateId="template-1"
         versionId="version-1"
         variablesMeta={variablesMeta}
+        files={files}
         isOwner
       />
     </QueryClientProvider>,
@@ -358,5 +365,61 @@ describe("VariablesTab — computed configuration UI", () => {
     await waitFor(() =>
       expect(toastError).toHaveBeenCalledWith("Error al guardar los cambios"),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Related-file provenance — each variable row surfaces which RELATED files use
+// it (derived from `files[].variables`), plus a one-line explainer that the
+// variable set is shared between the main document and its related documents.
+// ---------------------------------------------------------------------------
+
+describe("VariablesTab — related-file provenance", () => {
+  const provenanceMeta: VariableMeta[] = [
+    { name: "monto", contexts: [], type: "decimal" },
+    { name: "fecha", contexts: [], type: "text" },
+  ];
+
+  // 'Anexo A' uses `monto` but not `fecha`.
+  const relatedFile: TemplateVersionFile = {
+    id: "file-1",
+    label: "Anexo A",
+    variables: ["monto"],
+    file_size: 2048,
+    position: 0,
+    created_at: "2026-01-01T00:00:00Z",
+  };
+
+  it("shows a related file's label chip on the row of each variable it uses", () => {
+    renderTab(provenanceMeta, [relatedFile]);
+
+    const montoRow = screen.getByRole("button", { name: /monto/i });
+    const chip = within(montoRow).getByText("Anexo A");
+    expect(chip).toBeInTheDocument();
+    expect(chip.closest(".var-chip")).not.toBeNull();
+  });
+
+  it("shows no related-file chip for a variable no related file uses", () => {
+    renderTab(provenanceMeta, [relatedFile]);
+
+    // 'fecha' is used by no related file → its row carries no chip, and the
+    // label appears exactly once overall (only on the 'monto' row).
+    const fechaRow = screen.getByRole("button", { name: /fecha/i });
+    expect(within(fechaRow).queryByText("Anexo A")).toBeNull();
+    expect(screen.getAllByText("Anexo A")).toHaveLength(1);
+  });
+
+  it("shows the shared-variables explainer only when the version has related files", () => {
+    const { unmount } = renderTab(provenanceMeta, [relatedFile]);
+    expect(
+      screen.getByText(/se comparten entre el documento principal/i),
+    ).toBeInTheDocument();
+
+    unmount();
+
+    renderTab(provenanceMeta, []);
+    expect(
+      screen.queryByText(/se comparten entre el documento principal/i),
+    ).toBeNull();
   });
 });
