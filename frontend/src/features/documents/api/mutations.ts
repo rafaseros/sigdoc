@@ -43,6 +43,7 @@ export function useGenerateDocument() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: documentKeys.lists() });
+      queryClient.invalidateQueries({ queryKey: documentKeys.groupLists() });
     },
   });
 }
@@ -106,6 +107,7 @@ export function useDeleteDocument() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: documentKeys.lists() });
+      queryClient.invalidateQueries({ queryKey: documentKeys.groupLists() });
     },
   });
 }
@@ -132,6 +134,7 @@ export function useBulkGenerate() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: documentKeys.lists() });
+      queryClient.invalidateQueries({ queryKey: documentKeys.groupLists() });
     },
   });
 }

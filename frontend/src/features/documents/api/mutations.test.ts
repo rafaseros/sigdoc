@@ -7,13 +7,18 @@ import {
 } from "@tanstack/react-query";
 import { createElement, type ReactNode } from "react";
 
-import { useBulkGenerate, useGenerateDocument } from "./mutations";
+import {
+  useBulkGenerate,
+  useDeleteDocument,
+  useGenerateDocument,
+} from "./mutations";
 import { documentKeys } from "./keys";
 import { apiClient } from "@/shared/lib/api-client";
 
 vi.mock("@/shared/lib/api-client", () => ({
   apiClient: {
     post: vi.fn(),
+    delete: vi.fn(),
   },
 }));
 
@@ -40,6 +45,7 @@ function invalidatedKeys(spy: ReturnType<typeof vi.spyOn>): QueryKey[] {
 describe("documents mutations invalidation", () => {
   beforeEach(() => {
     vi.mocked(apiClient.post).mockReset();
+    vi.mocked(apiClient.delete).mockReset();
   });
 
   afterEach(() => {
@@ -60,9 +66,23 @@ describe("documents mutations invalidation", () => {
     });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(invalidatedKeys(invalidateSpy)).toContainEqual(
-      documentKeys.lists(),
+    const keys = invalidatedKeys(invalidateSpy);
+    expect(keys).toContainEqual(documentKeys.lists());
+    expect(keys).toContainEqual(documentKeys.groupLists());
+  });
+
+  it("useDeleteDocument invalidates both flat and grouped lists on success", async () => {
+    vi.mocked(apiClient.delete).mockResolvedValue({ data: undefined });
+    const { result, invalidateSpy } = renderWithClient(() =>
+      useDeleteDocument(),
     );
+
+    result.current.mutate("doc-1");
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    const keys = invalidatedKeys(invalidateSpy);
+    expect(keys).toContainEqual(documentKeys.lists());
+    expect(keys).toContainEqual(documentKeys.groupLists());
   });
 
   it("useBulkGenerate invalidates the documents list on success", async () => {
