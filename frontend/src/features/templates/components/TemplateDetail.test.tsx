@@ -563,8 +563,12 @@ describe("TemplateDetail — related documents per version", () => {
 
     expect(screen.getByText("Recibo de pago")).toBeInTheDocument();
     expect(screen.getByText("Recibo antiguo")).toBeInTheDocument();
-    // Variable count + file size meta line.
-    expect(screen.getAllByText(/1 variable · 2\.0 KB/)).toHaveLength(2);
+    // File size stays on the row; the variable count now lives in a
+    // "Ver variables (N)" toggle under each related file.
+    expect(screen.getAllByText(/2\.0 KB/)).toHaveLength(2);
+    expect(
+      screen.getAllByRole("button", { name: /ver variables \(1\)/i }),
+    ).toHaveLength(2);
   });
 
   it("shows 'Agregar documento relacionado' only on the current version row, for the owner", async () => {

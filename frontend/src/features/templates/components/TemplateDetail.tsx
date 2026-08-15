@@ -84,6 +84,7 @@ import { Textarea } from "@/components/ui/textarea";
 
 import { TemplateDetailSkeleton } from "./TemplateDetailSkeleton";
 import { AttachRelatedFileDialog } from "./AttachRelatedFileDialog";
+import { RelatedFileVariables } from "./RelatedFileVariables";
 import { DocumentsTab } from "./DocumentsTab";
 import { ShareTemplateDialog } from "./ShareTemplateDialog";
 import { RenameTemplateDialog } from "./RenameTemplateDialog";
@@ -1571,55 +1572,63 @@ export default function TemplateDetail({
                             {version.files.map((file) => (
                               <div
                                 key={file.id}
-                                className="flex items-center gap-2.5 py-1.5"
+                                className="flex flex-col gap-1 py-1.5"
                               >
-                                <FileText className="size-3.5 shrink-0 text-[var(--fg-3)]" />
-                                <span className="min-w-0 truncate text-[12.5px] font-medium text-[var(--fg-1)]">
-                                  {file.label}
-                                </span>
-                                <span className="shrink-0 text-[11.5px] text-[var(--fg-3)]">
-                                  {file.variables.length} variable
-                                  {file.variables.length !== 1 ? "s" : ""} ·{" "}
-                                  {formatFileSize(file.file_size)}
-                                </span>
-                                <span className="flex-1" />
-                                {isOwnerOrAdmin && (
-                                  <Button
-                                    variant="ghost"
-                                    size="icon-sm"
-                                    aria-label={`Descargar documento relacionado ${file.label}`}
-                                    title={`Descargar documento relacionado ${file.label}`}
-                                    onClick={() =>
-                                      handleDownloadVersionFile(
-                                        version.id,
-                                        version.version,
-                                        file,
-                                      )
-                                    }
-                                    className="shrink-0 text-[var(--fg-2)] hover:bg-[var(--bg-accent)]/60 hover:text-[var(--primary)]"
-                                  >
-                                    <Download className="size-4" />
-                                  </Button>
-                                )}
-                                {canManageFiles && (
-                                  <Button
-                                    variant="ghost"
-                                    size="icon-sm"
-                                    aria-label={`Eliminar documento relacionado ${file.label}`}
-                                    title={`Eliminar documento relacionado ${file.label}`}
-                                    onClick={() => {
-                                      setDetachConfirm("");
-                                      setFileToDetach({
-                                        versionId: version.id,
-                                        versionNumber: version.version,
-                                        file,
-                                      });
-                                    }}
-                                    className="shrink-0 text-[var(--fg-2)] hover:bg-[#ffdad6]/50 hover:text-[var(--destructive)]"
-                                  >
-                                    <Trash2 className="size-4" />
-                                  </Button>
-                                )}
+                                <div className="flex items-center gap-2.5">
+                                  <FileText className="size-3.5 shrink-0 text-[var(--fg-3)]" />
+                                  <span className="min-w-0 truncate text-[12.5px] font-medium text-[var(--fg-1)]">
+                                    {file.label}
+                                  </span>
+                                  <span className="shrink-0 text-[11.5px] text-[var(--fg-3)]">
+                                    {formatFileSize(file.file_size)}
+                                  </span>
+                                  <span className="flex-1" />
+                                  {isOwnerOrAdmin && (
+                                    <Button
+                                      variant="ghost"
+                                      size="icon-sm"
+                                      aria-label={`Descargar documento relacionado ${file.label}`}
+                                      title={`Descargar documento relacionado ${file.label}`}
+                                      onClick={() =>
+                                        handleDownloadVersionFile(
+                                          version.id,
+                                          version.version,
+                                          file,
+                                        )
+                                      }
+                                      className="shrink-0 text-[var(--fg-2)] hover:bg-[var(--bg-accent)]/60 hover:text-[var(--primary)]"
+                                    >
+                                      <Download className="size-4" />
+                                    </Button>
+                                  )}
+                                  {canManageFiles && (
+                                    <Button
+                                      variant="ghost"
+                                      size="icon-sm"
+                                      aria-label={`Eliminar documento relacionado ${file.label}`}
+                                      title={`Eliminar documento relacionado ${file.label}`}
+                                      onClick={() => {
+                                        setDetachConfirm("");
+                                        setFileToDetach({
+                                          versionId: version.id,
+                                          versionNumber: version.version,
+                                          file,
+                                        });
+                                      }}
+                                      className="shrink-0 text-[var(--fg-2)] hover:bg-[#ffdad6]/50 hover:text-[var(--destructive)]"
+                                    >
+                                      <Trash2 className="size-4" />
+                                    </Button>
+                                  )}
+                                </div>
+                                {/* Read-only, expandable view of this related
+                                    file's variables — safe for any version. */}
+                                <div className="pl-6">
+                                  <RelatedFileVariables
+                                    file={file}
+                                    variablesMeta={version.variables_meta}
+                                  />
+                                </div>
                               </div>
                             ))}
                           </div>
